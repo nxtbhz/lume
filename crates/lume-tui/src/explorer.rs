@@ -864,4 +864,101 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&tmp_dir);
     }
+
+    #[test]
+    fn test_explorer_file_colors_and_char_width() {
+        assert_ne!(get_file_color("main.rs"), Color::White);
+        assert_ne!(get_file_color("main.c"), Color::White);
+        assert_ne!(get_file_color("main.cpp"), Color::White);
+        assert_ne!(get_file_color("script.py"), Color::White);
+        assert_ne!(get_file_color("App.java"), Color::White);
+        assert_ne!(get_file_color("index.js"), Color::White);
+        assert_ne!(get_file_color("index.ts"), Color::White);
+        assert_ne!(get_file_color("boot.asm"), Color::White);
+        assert_ne!(get_file_color("boot.s"), Color::White);
+        assert_ne!(get_file_color("Cargo.toml"), Color::White);
+        assert_ne!(get_file_color("data.json"), Color::White);
+        assert_ne!(get_file_color("config.yaml"), Color::White);
+        assert_ne!(get_file_color("README.md"), Color::White);
+        assert_eq!(get_file_color("Makefile"), Color::White);
+        assert_eq!(get_file_color("no_ext"), Color::White);
+
+        assert_eq!(char_display_width('a'), 1);
+        assert_eq!(char_display_width('\0'), 0);
+        assert_eq!(char_display_width('\u{0080}'), 0);
+    }
+
+    #[test]
+    fn test_explorer_navigation_click_and_render() {
+        let tmp_dir = std::env::temp_dir().join(format!("lume_test_nav_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        std::fs::create_dir_all(tmp_dir.join("sub_dir")).unwrap();
+        std::fs::write(tmp_dir.join("sub_dir/inner.txt"), "hello").unwrap();
+        std::fs::write(tmp_dir.join("root.txt"), "world").unwrap();
+
+        let mut explorer = FileExplorer::new(tmp_dir.clone());
+        assert!(!explorer.items.is_empty());
+
+        // Navigation
+        explorer.move_down(10);
+        assert!(explorer.selected_idx > 0 || explorer.items.len() == 1);
+        explorer.move_up();
+
+        // Selection queries
+        assert!(explorer.selected_item().is_some());
+        let _target = explorer.target_folder_for_creation();
+
+        // Activate directory to expand, then activate again to collapse
+        assert!(explorer.activate_selected().is_none());
+        assert!(explorer.activate_selected().is_none());
+
+        // Move to file and activate
+        explorer.move_down(2);
+        let _activated_file = explorer.activate_selected();
+
+        // Expansion / Collapse
+        explorer.expand_selected();
+        explorer.collapse_selected();
+
+        // Test collapse on nested item to jump to parent
+        explorer.expand_selected();
+        explorer.move_down(1);
+        explorer.collapse_selected();
+
+        // Empty explorer edge cases
+        let mut empty_explorer = FileExplorer::new(tmp_dir.join("non_existent"));
+        empty_explorer.items.clear();
+        empty_explorer.move_up();
+        empty_explorer.move_down(5);
+        assert!(empty_explorer.activate_selected().is_none());
+        empty_explorer.collapse_selected();
+        empty_explorer.expand_selected();
+
+        // Click at row
+        let _ = explorer.click_at(0);
+        let out_of_bounds = explorer.click_at(999);
+        assert!(out_of_bounds.is_none());
+
+        // Render explorer
+        let mut buf = Vec::new();
+        assert!(explorer.render(&mut buf, 0, 24, true).is_ok());
+        assert!(!buf.is_empty());
+
+        buf.clear();
+        assert!(explorer.render(&mut buf, 0, 24, false).is_ok());
+
+        // Invisible render
+        explorer.is_visible = false;
+        buf.clear();
+        assert!(explorer.render(&mut buf, 0, 24, false).is_ok());
+        assert!(buf.is_empty());
+
+        // Zero height render
+        explorer.is_visible = true;
+        buf.clear();
+        assert!(explorer.render(&mut buf, 0, 0, false).is_ok());
+        assert!(buf.is_empty());
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
 }
