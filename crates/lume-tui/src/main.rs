@@ -165,6 +165,11 @@ const COMMANDS: &[CommandItem] = &[
         shortcut: "Ctrl+H",
     },
     CommandItem {
+        id: "navigation.match_bracket",
+        title: "Navigation: Jump to Matching Bracket",
+        shortcut: "Ctrl+M",
+    },
+    CommandItem {
         id: "view.which_key",
         title: "View: Which-Key Shortcuts",
         shortcut: "F1",
@@ -621,6 +626,25 @@ impl App {
             None
         };
 
+        let min_visible_char = self
+            .editor
+            .buffer()
+            .rope()
+            .line_to_char(self.scroll_row.min(total_lines));
+        let max_visible_line = (self.scroll_row + text_h).min(total_lines);
+        let max_visible_char = self
+            .editor
+            .buffer()
+            .rope()
+            .line_to_char(max_visible_line);
+
+        let bracket_pair = if selection_range.is_none() {
+            self.editor
+                .matching_bracket_for_cursor(min_visible_char, max_visible_char)
+        } else {
+            None
+        };
+
         // 4. Render Text Area (Rows 1..1+text_h)
         for screen_row in 0..text_h {
             let buffer_line = self.scroll_row + screen_row;
@@ -693,6 +717,8 @@ impl App {
                         let search_match = line_matches
                             .iter()
                             .find(|(s, e)| *s <= char_byte && char_byte < *e);
+                        let is_bracket_match = bracket_pair
+                            .is_some_and(|(b1, b2)| char_byte == b1 || char_byte == b2);
 
                         if let (Some(ref _search), Some(&(ms, me))) =
                             (&self.search_state, search_match)
@@ -723,6 +749,16 @@ impl App {
                             queue!(
                                 writer,
                                 SetBackgroundColor(Color::DarkBlue),
+                                SetForegroundColor(Color::White)
+                            )?;
+                        } else if is_bracket_match {
+                            queue!(
+                                writer,
+                                SetBackgroundColor(Color::Rgb {
+                                    r: 70,
+                                    g: 70,
+                                    b: 110
+                                }),
                                 SetForegroundColor(Color::White)
                             )?;
                         } else {
@@ -1171,6 +1207,14 @@ impl App {
                     self.adjust_viewport();
                 }
                 self.search_state = Some(state);
+            }
+            "navigation.match_bracket" => {
+                if self.editor.jump_to_matching_bracket() {
+                    self.adjust_viewport();
+                    self.set_status("Jumped to matching bracket");
+                } else {
+                    self.set_status("No matching bracket found");
+                }
             }
             "view.which_key" => {
                 self.which_key_open = true;
@@ -1737,6 +1781,10 @@ impl App {
                 }
                 KeyCode::Char('h') => {
                     self.execute_command("edit.replace");
+                    return Ok(());
+                }
+                KeyCode::Char('m') => {
+                    self.execute_command("navigation.match_bracket");
                     return Ok(());
                 }
                 _ => {}
@@ -2976,6 +3024,71 @@ mod tests {
         assert_eq!(
             app.status_message.as_ref().map(|(s, _)| s.as_str()),
             Some("Smart unindent: Disabled")
+        );
+    }
+
+    #[test]
+    fn test_app_bracket_matching_ctrl_m() {
+        let mut app = App::new(None).unwrap();
+        app.editor.insert_str("fn main() { return; }").unwrap();
+        // Index of '(' is 7, ')' is 8
+        app.editor.cursors_mut().set_single(7);
+
+        // Press Ctrl+M
+        app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert_eq!(app.editor.cursors().primary().head, 8);
+        assert_eq!(
+            app.status_message.as_ref().map(|(s, _)| s.as_str()),
+            Some("Jumped to matching bracket")
+        );
+
+        // Press Ctrl+M again: jumps back to '('
+        app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert_eq!(app.editor.cursors().primary().head, 7);
+    }
+
+    #[test]
+    fn test_app_bracket_matching_command_palette() {
+        let mut app = App::new(None).unwrap();
+        app.editor.insert_str("{ let a = 1; }").unwrap();
+        // Index of '{' is 0, '}' is 13
+        app.editor.cursors_mut().set_single(0);
+
+        app.execute_command("navigation.match_bracket");
+        assert_eq!(app.editor.cursors().primary().head, 13);
+        assert_eq!(
+            app.status_message.as_ref().map(|(s, _)| s.as_str()),
+            Some("Jumped to matching bracket")
+        );
+
+        // If cursor has no matching bracket
+        let mut app_none = App::new(None).unwrap();
+        app_none.editor.insert_str("hello").unwrap();
+        app_none.editor.cursors_mut().set_single(0);
+        app_none.execute_command("navigation.match_bracket");
+        assert_eq!(
+            app_none.status_message.as_ref().map(|(s, _)| s.as_str()),
+            Some("No matching bracket found")
+        );
+    }
+
+    #[test]
+    fn test_app_bracket_matching_render_highlight() {
+        let mut app = App::new(None).unwrap();
+        app.editor.insert_str("fn test() {}").unwrap();
+        // Place cursor on '(' (offset 7)
+        app.editor.cursors_mut().set_single(7);
+
+        let mut out = Vec::new();
+        app.render(&mut out).unwrap();
+        let rendered = String::from_utf8_lossy(&out);
+
+        // Should contain 48;2;70;70;110 (the RGB escape sequence for matching bracket highlight)
+        assert!(
+            rendered.contains("48;2;70;70;110"),
+            "Render output should contain bracket matching highlight RGB 70;70;110"
         );
     }
 }
