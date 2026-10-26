@@ -330,4 +330,79 @@ mod tests {
         state.toggle_field();
         assert_eq!(state.active_field, SearchField::Replacement);
     }
+
+    #[test]
+    fn test_search_state_replacement_field_operations() {
+        let mut state = SearchState::new_replace(Cursor::new(0), (0, 0), Some("target"));
+        assert_eq!(state.active_field, SearchField::Replacement);
+        state.handle_char('n');
+        state.handle_char('e');
+        state.handle_char('w');
+        assert_eq!(state.replacement, "new");
+        assert_eq!(state.replacement_cursor, 3);
+
+        // Left, Right, Home, End
+        state.move_left();
+        assert_eq!(state.replacement_cursor, 2);
+        state.move_home();
+        assert_eq!(state.replacement_cursor, 0);
+        state.move_end();
+        assert_eq!(state.replacement_cursor, 3);
+        state.move_right();
+        assert_eq!(state.replacement_cursor, 3);
+
+        // Backspace & Delete
+        state.handle_backspace();
+        assert_eq!(state.replacement, "ne");
+        state.move_home();
+        state.handle_delete();
+        assert_eq!(state.replacement, "e");
+    }
+
+    #[test]
+    fn test_search_state_query_field_operations() {
+        let mut state = SearchState::new_find(Cursor::new(0), (0, 0), None);
+        state.handle_char('h');
+        state.handle_char('i');
+        state.move_left();
+        state.handle_delete();
+        assert_eq!(state.query, "h");
+        state.move_home();
+        assert_eq!(state.query_cursor, 0);
+        state.move_end();
+        assert_eq!(state.query_cursor, 1);
+        state.move_right();
+        assert_eq!(state.query_cursor, 1);
+    }
+
+    #[test]
+    fn test_search_state_render_find_and_replace_modes() {
+        let mut buf = Vec::new();
+        let mut state = SearchState::new_find(Cursor::new(0), (0, 0), Some("query"));
+        state.match_count = 3;
+        state.active_match_idx = 1;
+        assert!(state.render(&mut buf, 80, 24).is_ok());
+        assert!(!buf.is_empty());
+
+        // Empty query find
+        buf.clear();
+        let empty_state = SearchState::new_find(Cursor::new(0), (0, 0), None);
+        assert!(empty_state.render(&mut buf, 80, 24).is_ok());
+
+        // Zero matches find
+        buf.clear();
+        let mut zero_state = SearchState::new_find(Cursor::new(0), (0, 0), Some("notfound"));
+        zero_state.match_count = 0;
+        assert!(zero_state.render(&mut buf, 80, 24).is_ok());
+
+        // Replace mode with query active & replacement active
+        buf.clear();
+        let mut replace_state = SearchState::new_replace(Cursor::new(0), (0, 0), Some("find_me"));
+        replace_state.replacement = "replace_me".to_string();
+        replace_state.match_count = 2;
+        assert!(replace_state.render(&mut buf, 80, 24).is_ok());
+        replace_state.toggle_field();
+        buf.clear();
+        assert!(replace_state.render(&mut buf, 80, 24).is_ok());
+    }
 }
