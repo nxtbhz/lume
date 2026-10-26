@@ -1405,6 +1405,11 @@ impl Editor {
             return None;
         }
 
+        // Ensure starting bracket is strictly inside the bounded char range
+        if char_idx < min_char || char_idx >= max_char {
+            return None;
+        }
+
         let start_char = tab.buffer.rope().char(char_idx);
         let (target_char, is_opening) = matching_bracket_char(start_char)?;
 
@@ -1489,7 +1494,7 @@ impl Editor {
         let line_start_char = tab.buffer.rope().line_to_char(current_line);
         let line_len_chars = tab.buffer.line_len_chars(current_line);
         let head_char = tab.buffer.byte_to_char(head);
-        let start_char_idx = head_char;
+        let start_char_idx = head_char.saturating_add(1);
         let end_char_idx = line_start_char + line_len_chars;
 
         for ch_idx in start_char_idx..end_char_idx {
@@ -1519,6 +1524,7 @@ impl Editor {
 
         let head = primary.head;
         let len = tab.buffer.len_bytes();
+        let head_char = tab.buffer.byte_to_char(head);
 
         // 1. Check char under cursor
         if head < len {
@@ -1529,7 +1535,7 @@ impl Editor {
 
         // 2. Check char immediately before cursor if at closing bracket
         if head > 0 {
-            let prev_char_idx = tab.buffer.byte_to_char(head).saturating_sub(1);
+            let prev_char_idx = head_char.saturating_sub(1);
             let prev_byte = tab.buffer.char_to_byte(prev_char_idx);
             let prev_char = tab.buffer.rope().char(prev_char_idx);
             if matches!(prev_char, ')' | ']' | '}') {
@@ -2564,6 +2570,30 @@ mod tests {
         // If range excludes close_char: returns None
         assert_eq!(
             ed.find_matching_bracket_in_range(open_byte, open_char, close_char),
+            None
+        );
+
+        // If range excludes open_char (start bracket outside range): returns None
+        assert_eq!(
+            ed.find_matching_bracket_in_range(open_byte, open_char + 1, close_char + 1),
+            None
+        );
+
+        // Backward scan: if range covers both chars: found
+        assert_eq!(
+            ed.find_matching_bracket_in_range(close_byte, open_char, close_char + 1),
+            Some(open_byte)
+        );
+
+        // Backward scan: if range excludes open_char: returns None
+        assert_eq!(
+            ed.find_matching_bracket_in_range(close_byte, open_char + 1, close_char + 1),
+            None
+        );
+
+        // Backward scan: if range excludes close_char (close_char >= max_char): returns None
+        assert_eq!(
+            ed.find_matching_bracket_in_range(close_byte, open_char, close_char),
             None
         );
     }
