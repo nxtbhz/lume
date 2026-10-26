@@ -3091,4 +3091,308 @@ mod tests {
             "Render output should contain bracket matching highlight RGB 70;70;110"
         );
     }
+
+    #[test]
+    fn test_app_execute_all_commands() {
+        let mut app = App::new(None).unwrap();
+
+        // File & Tabs
+        app.execute_command("file.new_tab");
+        assert_eq!(app.editor.tabs().len(), 2);
+        app.execute_command("file.prev_tab");
+        assert_eq!(app.editor.active_tab_idx(), 0);
+        app.execute_command("file.next_tab");
+        assert_eq!(app.editor.active_tab_idx(), 1);
+        app.execute_command("file.close_tab");
+        assert_eq!(app.editor.tabs().len(), 1);
+
+        // Explorer commands
+        assert!(app.explorer.is_visible);
+        app.execute_command("view.toggle_explorer");
+        assert!(!app.explorer.is_visible);
+        assert_eq!(app.focus, ActiveFocus::Editor);
+        app.execute_command("view.toggle_explorer");
+        assert!(app.explorer.is_visible);
+        assert_eq!(app.focus, ActiveFocus::Explorer);
+        app.execute_command("explorer.refresh");
+        app.execute_command("explorer.new_folder");
+        assert!(app.prompt.is_some());
+        app.prompt = None;
+        app.execute_command("explorer.delete_folder");
+
+        // Prompts
+        app.execute_command("file.open");
+        assert!(app.prompt.is_some());
+        app.prompt = None;
+
+        app.execute_command("file.save");
+        assert!(app.prompt.is_some()); // untitled file triggers save_as prompt
+        app.prompt = None;
+
+        app.execute_command("file.save_as");
+        assert!(app.prompt.is_some());
+        app.prompt = None;
+
+        app.execute_command("language.set_mode");
+        assert!(app.prompt.is_some());
+        app.prompt = None;
+
+        // Undo & Redo
+        app.editor.insert_str("test").unwrap();
+        app.execute_command("edit.undo");
+        assert_eq!(app.editor.buffer().len_bytes(), 0);
+        app.execute_command("edit.redo");
+        assert_eq!(app.editor.buffer().len_bytes(), 4);
+
+        // Find & Replace
+        app.execute_command("edit.find");
+        assert!(app.search_state.is_some());
+        app.search_state = None;
+
+        app.execute_command("edit.replace");
+        assert!(app.search_state.is_some());
+        app.search_state = None;
+
+        // Which-Key & Line Numbers
+        assert!(!app.which_key_open);
+        app.execute_command("view.which_key");
+        assert!(app.which_key_open);
+        app.which_key_open = false;
+
+        assert!(app.show_line_numbers);
+        app.execute_command("view.toggle_line_numbers");
+        assert!(!app.show_line_numbers);
+        app.execute_command("view.toggle_line_numbers");
+        assert!(app.show_line_numbers);
+    }
+
+    #[test]
+    fn test_app_palette_lifecycle_and_rendering() {
+        let mut app = App::new(None).unwrap();
+
+        // Open palette with Ctrl+P
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)).unwrap();
+        assert!(app.palette_open);
+
+        // Filter commands
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE)).unwrap();
+        assert!(!app.filtered_commands().is_empty());
+
+        // Navigate up & down
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)).unwrap();
+
+        // Backspace on query
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)).unwrap();
+
+        // Render full frame with palette open
+        let mut buf = Vec::new();
+        assert!(app.render(&mut buf).is_ok());
+        assert!(!buf.is_empty());
+
+        // Close palette with Esc
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        assert!(!app.palette_open);
+
+        // Open palette and execute command via Enter
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)).unwrap();
+        app.palette_query = "New Tab".to_string();
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        assert!(!app.palette_open);
+        assert_eq!(app.editor.tabs().len(), 2);
+    }
+
+    #[test]
+    fn test_app_key_navigation_and_tab_shortcuts() {
+        let mut app = App::new(None).unwrap();
+        app.editor.insert_str("line 1\nline 2\nline 3").unwrap();
+        app.editor.cursors_mut().set_single(0);
+
+        // Arrow keys
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)).unwrap();
+
+        // Shift + Arrow keys (Selection)
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT)).unwrap();
+        assert!(app.editor.cursors().primary().is_selection());
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)).unwrap(); // collapses
+        assert!(!app.editor.cursors().primary().is_selection());
+
+        // Tab navigation shortcuts
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)).unwrap();
+        assert_eq!(app.editor.tabs().len(), 2);
+
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)).unwrap();
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)).unwrap();
+        assert_eq!(app.editor.tabs().len(), 1);
+
+        // Open Which-Key via F1, render, and close via Esc
+        app.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE)).unwrap();
+        assert!(app.which_key_open);
+        let mut buf = Vec::new();
+        assert!(app.render(&mut buf).is_ok());
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        assert!(!app.which_key_open);
+
+        // Toggle explorer via F2
+        assert!(app.explorer.is_visible);
+        app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE)).unwrap();
+        assert!(!app.explorer.is_visible);
+        app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE)).unwrap();
+        assert!(app.explorer.is_visible);
+    }
+
+    #[test]
+    fn test_app_explorer_keyboard_navigation() {
+        let mut app = App::new(None).unwrap();
+        app.focus = ActiveFocus::Explorer;
+        assert!(app.explorer.is_visible);
+
+        // Explorer key events
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)).unwrap();
+
+        // Switch focus back to Editor
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)).unwrap();
+        assert_eq!(app.focus, ActiveFocus::Editor);
+    }
+
+    #[test]
+    fn test_app_mouse_interaction_and_scrolling() {
+        use crossterm::event::{MouseEvent, MouseEventKind, MouseButton};
+
+        let mut app = App::new(None).unwrap();
+        app.editor.insert_str("word1 word2\nline2\nline3").unwrap();
+        app.terminal_width = 80;
+        app.terminal_height = 24;
+
+        let status_row = app.terminal_height.saturating_sub(1);
+
+        // 1. Click on Status bar to trigger language prompt
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 70,
+            row: status_row,
+            modifiers: KeyModifiers::NONE,
+        }).unwrap();
+        assert!(app.prompt.is_some());
+        app.prompt = None;
+
+        // 2. Click on Tab Bar
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 30,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        }).unwrap();
+
+        // 3. Click in Editor area (single, double, triple click)
+        let text_row = app.text_area_top() as u16;
+        let text_col = (app.text_area_left() + 5) as u16;
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: text_col,
+            row: text_row,
+            modifiers: KeyModifiers::NONE,
+        }).unwrap();
+        assert!(app.mouse_dragging);
+
+        // Drag
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: text_col + 3,
+            row: text_row,
+            modifiers: KeyModifiers::NONE,
+        }).unwrap();
+
+        // Mouse Up
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: text_col + 3,
+            row: text_row,
+            modifiers: KeyModifiers::NONE,
+        }).unwrap();
+        assert!(!app.mouse_dragging);
+
+        // Double click on same spot
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: text_col,
+            row: text_row,
+            modifiers: KeyModifiers::NONE,
+        }).unwrap();
+        assert_eq!(app.click_count, 2);
+
+        // Triple click
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: text_col,
+            row: text_row,
+            modifiers: KeyModifiers::NONE,
+        }).unwrap();
+        assert_eq!(app.click_count, 3);
+
+        // 4. Scroll events
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: text_col,
+            row: text_row,
+            modifiers: KeyModifiers::NONE,
+        }).unwrap();
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: text_col,
+            row: text_row,
+            modifiers: KeyModifiers::NONE,
+        }).unwrap();
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollLeft,
+            column: text_col,
+            row: text_row,
+            modifiers: KeyModifiers::NONE,
+        }).unwrap();
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollRight,
+            column: text_col,
+            row: text_row,
+            modifiers: KeyModifiers::NONE,
+        }).unwrap();
+    }
+
+    #[test]
+    fn test_app_f3_and_alt_tab_navigation() {
+        let mut app = App::new(None).unwrap();
+        app.editor.insert_str("foo bar foo baz foo").unwrap();
+        app.last_search_query = Some("foo".to_string());
+
+        // F3 forward search
+        app.handle_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE)).unwrap();
+        assert!(app.editor.cursors().primary().is_selection());
+
+        // Shift+F3 backward search
+        app.handle_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::SHIFT)).unwrap();
+
+        // Alt+Right and Alt+Left tab switching
+        app.editor.new_tab();
+        assert_eq!(app.editor.tabs().len(), 2);
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT)).unwrap();
+    }
 }
