@@ -1278,7 +1278,9 @@ mod tests {
         json_hl.update(json_code);
         let tokens = json_hl.highlight_range(0, json_code.len(), json_code);
         assert!(!tokens.is_empty());
-        assert!(tokens.iter().any(|t| t.token_type == TokenType::String || t.token_type == TokenType::Function));
+        assert!(tokens
+            .iter()
+            .any(|t| t.token_type == TokenType::String || t.token_type == TokenType::Function));
         assert!(tokens.iter().any(|t| t.token_type == TokenType::Number));
         assert!(tokens.iter().any(|t| t.token_type == TokenType::Keyword));
 

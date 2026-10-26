@@ -1416,8 +1416,9 @@ impl Editor {
         let mut depth: usize = 1;
 
         if is_opening {
-            let mut current_char_idx = char_idx + 1;
-            for ch in tab.buffer.rope().chars_at(char_idx + 1) {
+            for (current_char_idx, ch) in
+                (char_idx + 1..).zip(tab.buffer.rope().chars_at(char_idx + 1))
+            {
                 if current_char_idx >= max_char {
                     break;
                 }
@@ -1429,7 +1430,6 @@ impl Editor {
                         return Some(tab.buffer.char_to_byte(current_char_idx));
                     }
                 }
-                current_char_idx += 1;
             }
         } else {
             if char_idx == 0 || char_idx <= min_char {
@@ -1471,7 +1471,10 @@ impl Editor {
         // 1. Check char under cursor
         if head < len {
             if let Some(target) = self.find_matching_bracket(head) {
-                self.tabs[self.active_tab].cursors.primary_mut().move_to(target);
+                self.tabs[self.active_tab]
+                    .cursors
+                    .primary_mut()
+                    .move_to(target);
                 return true;
             }
         }
@@ -1483,7 +1486,10 @@ impl Editor {
             let prev_char = tab.buffer.rope().char(prev_char_idx);
             if matches!(prev_char, ')' | ']' | '}') {
                 if let Some(target) = self.find_matching_bracket(prev_byte) {
-                    self.tabs[self.active_tab].cursors.primary_mut().move_to(target);
+                    self.tabs[self.active_tab]
+                        .cursors
+                        .primary_mut()
+                        .move_to(target);
                     return true;
                 }
             }
@@ -1502,7 +1508,10 @@ impl Editor {
             if matches!(ch, '(' | ')' | '[' | ']' | '{' | '}') {
                 let b_idx = tab.buffer.char_to_byte(ch_idx);
                 if let Some(target) = self.find_matching_bracket(b_idx) {
-                    self.tabs[self.active_tab].cursors.primary_mut().move_to(target);
+                    self.tabs[self.active_tab]
+                        .cursors
+                        .primary_mut()
+                        .move_to(target);
                     return true;
                 }
             }
@@ -2522,8 +2531,16 @@ mod tests {
         // 'O'=1, 'l'=1, 'á'=2 -> 4 bytes before ' ' (byte 4) and '(' (byte 5)
         // 🚀 is 4 bytes
         let ed = Editor::from_str("Olá (Mundo! 🚀) Fim");
-        let open_pos = ed.buffer().slice_to_cow(0, ed.buffer().len_bytes()).find('(').unwrap();
-        let close_pos = ed.buffer().slice_to_cow(0, ed.buffer().len_bytes()).find(')').unwrap();
+        let open_pos = ed
+            .buffer()
+            .slice_to_cow(0, ed.buffer().len_bytes())
+            .find('(')
+            .unwrap();
+        let close_pos = ed
+            .buffer()
+            .slice_to_cow(0, ed.buffer().len_bytes())
+            .find(')')
+            .unwrap();
 
         assert_eq!(ed.find_matching_bracket(open_pos), Some(close_pos));
         assert_eq!(ed.find_matching_bracket(close_pos), Some(open_pos));
@@ -2537,13 +2554,21 @@ mod tests {
         // Vim % motion: jumping when not on bracket finds first bracket '(' and jumps to ')'
         let jumped = ed.jump_to_matching_bracket();
         assert!(jumped);
-        let close_paren_byte = ed.buffer().slice_to_cow(0, ed.buffer().len_bytes()).find(')').unwrap();
+        let close_paren_byte = ed
+            .buffer()
+            .slice_to_cow(0, ed.buffer().len_bytes())
+            .find(')')
+            .unwrap();
         assert_eq!(ed.cursors().primary().head, close_paren_byte);
 
         // Jump again while on ')' jumps back to '('
         let jumped_back = ed.jump_to_matching_bracket();
         assert!(jumped_back);
-        let open_paren_byte = ed.buffer().slice_to_cow(0, ed.buffer().len_bytes()).find('(').unwrap();
+        let open_paren_byte = ed
+            .buffer()
+            .slice_to_cow(0, ed.buffer().len_bytes())
+            .find('(')
+            .unwrap();
         assert_eq!(ed.cursors().primary().head, open_paren_byte);
 
         // When no brackets on line
@@ -2555,8 +2580,16 @@ mod tests {
     fn test_bracket_matching_bounded_range() {
         let ed = Editor::from_str("line 0\n{\n    line 2\n}\nline 4");
         // '{' is at line 1, '}' is at line 3
-        let open_byte = ed.buffer().slice_to_cow(0, ed.buffer().len_bytes()).find('{').unwrap();
-        let close_byte = ed.buffer().slice_to_cow(0, ed.buffer().len_bytes()).find('}').unwrap();
+        let open_byte = ed
+            .buffer()
+            .slice_to_cow(0, ed.buffer().len_bytes())
+            .find('{')
+            .unwrap();
+        let close_byte = ed
+            .buffer()
+            .slice_to_cow(0, ed.buffer().len_bytes())
+            .find('}')
+            .unwrap();
 
         let open_char = ed.buffer().byte_to_char(open_byte);
         let close_char = ed.buffer().byte_to_char(close_byte);
@@ -2606,12 +2639,20 @@ mod tests {
 
         // Single delete forwards: deletes 'c'
         editor.delete_forwards().unwrap();
-        assert_eq!(editor.buffer().slice_to_cow(0, editor.buffer().len_bytes()), "abdef");
+        assert_eq!(
+            editor.buffer().slice_to_cow(0, editor.buffer().len_bytes()),
+            "abdef"
+        );
 
         // Selection delete forwards
-        editor.cursors_mut().set_cursors(vec![Cursor::with_anchor(1, 3)]); // "bd"
+        editor
+            .cursors_mut()
+            .set_cursors(vec![Cursor::with_anchor(1, 3)]); // "bd"
         editor.delete_forwards().unwrap();
-        assert_eq!(editor.buffer().slice_to_cow(0, editor.buffer().len_bytes()), "aef");
+        assert_eq!(
+            editor.buffer().slice_to_cow(0, editor.buffer().len_bytes()),
+            "aef"
+        );
 
         // Delete forwards at EOF
         editor.cursors_mut().set_single(3);
@@ -2623,13 +2664,20 @@ mod tests {
         ed_utf8.insert_str("A🚀B").unwrap();
         ed_utf8.cursors_mut().set_single(1); // right before 🚀
         ed_utf8.delete_forwards().unwrap();
-        assert_eq!(ed_utf8.buffer().slice_to_cow(0, ed_utf8.buffer().len_bytes()), "AB");
+        assert_eq!(
+            ed_utf8
+                .buffer()
+                .slice_to_cow(0, ed_utf8.buffer().len_bytes()),
+            "AB"
+        );
     }
 
     #[test]
     fn test_editor_selection_movements_and_tab_cycle() {
         let mut editor = Editor::new();
-        editor.insert_str("line 1\nline 2 with more words\nline 3").unwrap();
+        editor
+            .insert_str("line 1\nline 2 with more words\nline 3")
+            .unwrap();
         editor.cursors_mut().set_single(0);
 
         // move_right with selection

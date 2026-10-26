@@ -429,7 +429,8 @@ mod tests {
         assert!(lang_prompt.render(&mut buf, 80, 24).is_ok());
 
         buf.clear();
-        let delete_prompt = InputPrompt::confirm_delete_folder(std::path::PathBuf::from("dummy_dir"));
+        let delete_prompt =
+            InputPrompt::confirm_delete_folder(std::path::PathBuf::from("dummy_dir"));
         assert!(delete_prompt.render(&mut buf, 80, 24).is_ok());
 
         buf.clear();

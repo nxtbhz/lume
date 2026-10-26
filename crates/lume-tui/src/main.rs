@@ -632,11 +632,7 @@ impl App {
             .rope()
             .line_to_char(self.scroll_row.min(total_lines));
         let max_visible_line = (self.scroll_row + text_h).min(total_lines);
-        let max_visible_char = self
-            .editor
-            .buffer()
-            .rope()
-            .line_to_char(max_visible_line);
+        let max_visible_char = self.editor.buffer().rope().line_to_char(max_visible_line);
 
         let bracket_pair = if selection_range.is_none() {
             self.editor
@@ -717,8 +713,8 @@ impl App {
                         let search_match = line_matches
                             .iter()
                             .find(|(s, e)| *s <= char_byte && char_byte < *e);
-                        let is_bracket_match = bracket_pair
-                            .is_some_and(|(b1, b2)| char_byte == b1 || char_byte == b2);
+                        let is_bracket_match =
+                            bracket_pair.is_some_and(|(b1, b2)| char_byte == b1 || char_byte == b2);
 
                         if let (Some(ref _search), Some(&(ms, me))) =
                             (&self.search_state, search_match)
@@ -3171,21 +3167,28 @@ mod tests {
         let mut app = App::new(None).unwrap();
 
         // Open palette with Ctrl+P
-        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL))
+            .unwrap();
         assert!(app.palette_open);
 
         // Filter commands
-        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE))
+            .unwrap();
         assert!(!app.filtered_commands().is_empty());
 
         // Navigate up & down
-        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+            .unwrap();
 
         // Backspace on query
-        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))
+            .unwrap();
 
         // Render full frame with palette open
         let mut buf = Vec::new();
@@ -3193,13 +3196,16 @@ mod tests {
         assert!(!buf.is_empty());
 
         // Close palette with Esc
-        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+            .unwrap();
         assert!(!app.palette_open);
 
         // Open palette and execute command via Enter
-        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL))
+            .unwrap();
         app.palette_query = "New Tab".to_string();
-        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .unwrap();
         assert!(!app.palette_open);
         assert_eq!(app.editor.tabs().len(), 2);
     }
@@ -3211,42 +3217,58 @@ mod tests {
         app.editor.cursors_mut().set_single(0);
 
         // Arrow keys
-        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))
+            .unwrap();
 
         // Shift + Arrow keys (Selection)
-        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT))
+            .unwrap();
         assert!(app.editor.cursors().primary().is_selection());
-        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)).unwrap(); // collapses
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+            .unwrap(); // collapses
         assert!(!app.editor.cursors().primary().is_selection());
 
         // Tab navigation shortcuts
-        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL))
+            .unwrap();
         assert_eq!(app.editor.tabs().len(), 2);
 
-        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT))
+            .unwrap();
 
-        app.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL))
+            .unwrap();
         assert_eq!(app.editor.tabs().len(), 1);
 
         // Open Which-Key via F1, render, and close via Esc
-        app.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE))
+            .unwrap();
         assert!(app.which_key_open);
         let mut buf = Vec::new();
         assert!(app.render(&mut buf).is_ok());
-        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+            .unwrap();
         assert!(!app.which_key_open);
 
         // Toggle explorer via F2
         assert!(app.explorer.is_visible);
-        app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE))
+            .unwrap();
         assert!(!app.explorer.is_visible);
-        app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE))
+            .unwrap();
         assert!(app.explorer.is_visible);
     }
 
@@ -3257,22 +3279,30 @@ mod tests {
         assert!(app.explorer.is_visible);
 
         // Explorer key events
-        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE))
+            .unwrap();
 
         // Switch focus back to Editor
-        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+            .unwrap();
         assert_eq!(app.focus, ActiveFocus::Editor);
     }
 
     #[test]
     fn test_app_mouse_interaction_and_scrolling() {
-        use crossterm::event::{MouseEvent, MouseEventKind, MouseButton};
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
         let mut app = App::new(None).unwrap();
         app.editor.insert_str("word1 word2\nline2\nline3").unwrap();
@@ -3287,7 +3317,8 @@ mod tests {
             column: 70,
             row: status_row,
             modifiers: KeyModifiers::NONE,
-        }).unwrap();
+        })
+        .unwrap();
         assert!(app.prompt.is_some());
         app.prompt = None;
 
@@ -3297,7 +3328,8 @@ mod tests {
             column: 30,
             row: 0,
             modifiers: KeyModifiers::NONE,
-        }).unwrap();
+        })
+        .unwrap();
 
         // 3. Click in Editor area (single, double, triple click)
         let text_row = app.text_area_top() as u16;
@@ -3308,7 +3340,8 @@ mod tests {
             column: text_col,
             row: text_row,
             modifiers: KeyModifiers::NONE,
-        }).unwrap();
+        })
+        .unwrap();
         assert!(app.mouse_dragging);
 
         // Drag
@@ -3317,7 +3350,8 @@ mod tests {
             column: text_col + 3,
             row: text_row,
             modifiers: KeyModifiers::NONE,
-        }).unwrap();
+        })
+        .unwrap();
 
         // Mouse Up
         app.handle_mouse(MouseEvent {
@@ -3325,7 +3359,8 @@ mod tests {
             column: text_col + 3,
             row: text_row,
             modifiers: KeyModifiers::NONE,
-        }).unwrap();
+        })
+        .unwrap();
         assert!(!app.mouse_dragging);
 
         // Double click on same spot
@@ -3334,7 +3369,8 @@ mod tests {
             column: text_col,
             row: text_row,
             modifiers: KeyModifiers::NONE,
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(app.click_count, 2);
 
         // Triple click
@@ -3343,7 +3379,8 @@ mod tests {
             column: text_col,
             row: text_row,
             modifiers: KeyModifiers::NONE,
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(app.click_count, 3);
 
         // 4. Scroll events
@@ -3352,28 +3389,32 @@ mod tests {
             column: text_col,
             row: text_row,
             modifiers: KeyModifiers::NONE,
-        }).unwrap();
+        })
+        .unwrap();
 
         app.handle_mouse(MouseEvent {
             kind: MouseEventKind::ScrollUp,
             column: text_col,
             row: text_row,
             modifiers: KeyModifiers::NONE,
-        }).unwrap();
+        })
+        .unwrap();
 
         app.handle_mouse(MouseEvent {
             kind: MouseEventKind::ScrollLeft,
             column: text_col,
             row: text_row,
             modifiers: KeyModifiers::NONE,
-        }).unwrap();
+        })
+        .unwrap();
 
         app.handle_mouse(MouseEvent {
             kind: MouseEventKind::ScrollRight,
             column: text_col,
             row: text_row,
             modifiers: KeyModifiers::NONE,
-        }).unwrap();
+        })
+        .unwrap();
     }
 
     #[test]
@@ -3383,17 +3424,21 @@ mod tests {
         app.last_search_query = Some("foo".to_string());
 
         // F3 forward search
-        app.handle_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE))
+            .unwrap();
         assert!(app.editor.cursors().primary().is_selection());
 
         // Shift+F3 backward search
-        app.handle_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::SHIFT)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::SHIFT))
+            .unwrap();
 
         // Alt+Right and Alt+Left tab switching
         app.editor.new_tab();
         assert_eq!(app.editor.tabs().len(), 2);
-        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT))
+            .unwrap();
     }
 
     #[test]
@@ -3402,14 +3447,22 @@ mod tests {
 
         // 1. Open prompt and test keys: Char, Left, Right, Backspace, Down, Up, Tab
         app.prompt = Some(InputPrompt::set_language(&["Rust", "Python", "C", "Go"]));
-        app.handle_key(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .unwrap();
         assert!(app.prompt.is_none());
 
         // 2. Save file when file path exists
@@ -3426,43 +3479,86 @@ mod tests {
     #[test]
     fn test_app_search_key_routing_and_syntax_viewport_render() {
         let mut app = App::new(None).unwrap();
-        app.editor.insert_str("fn main() {\n    let count = 42;\n    // comment\n    println!(\"hello\");\n}\n").unwrap();
+        app.editor
+            .insert_str(
+                "fn main() {\n    let count = 42;\n    // comment\n    println!(\"hello\");\n}\n",
+            )
+            .unwrap();
         app.editor.cursors_mut().set_single(0);
 
         // Open search state and test key routing
-        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL))
+            .unwrap();
         assert!(app.search_state.is_some());
 
-        app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE)).unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE))
+            .unwrap();
 
         // Switch to replace via Ctrl+H and back via Ctrl+F
-        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL))
+            .unwrap();
         assert_eq!(app.search_state.as_ref().unwrap().mode, SearchMode::Replace);
-        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL))
+            .unwrap();
         assert_eq!(app.search_state.as_ref().unwrap().mode, SearchMode::Find);
 
-        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+            .unwrap();
         assert!(app.search_state.is_none());
 
         // Populate syntax cache with diverse tokens and render viewport
         use lume_syntax::HighlightToken;
         let tokens = vec![
-            HighlightToken { start_byte: 0, end_byte: 2, token_type: TokenType::Keyword },
-            HighlightToken { start_byte: 3, end_byte: 7, token_type: TokenType::Function },
-            HighlightToken { start_byte: 16, end_byte: 21, token_type: TokenType::Type },
-            HighlightToken { start_byte: 24, end_byte: 26, token_type: TokenType::Number },
-            HighlightToken { start_byte: 31, end_byte: 41, token_type: TokenType::Comment },
-            HighlightToken { start_byte: 46, end_byte: 54, token_type: TokenType::Macro },
-            HighlightToken { start_byte: 55, end_byte: 62, token_type: TokenType::String },
+            HighlightToken {
+                start_byte: 0,
+                end_byte: 2,
+                token_type: TokenType::Keyword,
+            },
+            HighlightToken {
+                start_byte: 3,
+                end_byte: 7,
+                token_type: TokenType::Function,
+            },
+            HighlightToken {
+                start_byte: 16,
+                end_byte: 21,
+                token_type: TokenType::Type,
+            },
+            HighlightToken {
+                start_byte: 24,
+                end_byte: 26,
+                token_type: TokenType::Number,
+            },
+            HighlightToken {
+                start_byte: 31,
+                end_byte: 41,
+                token_type: TokenType::Comment,
+            },
+            HighlightToken {
+                start_byte: 46,
+                end_byte: 54,
+                token_type: TokenType::Macro,
+            },
+            HighlightToken {
+                start_byte: 55,
+                end_byte: 62,
+                token_type: TokenType::String,
+            },
         ];
         let buf_id = app.editor.active_tab().id;
         let rev = app.editor.active_tab().revision;
-        app.syntax_cache.insert(buf_id, (rev, std::sync::Arc::new(tokens)));
+        app.syntax_cache
+            .insert(buf_id, (rev, std::sync::Arc::new(tokens)));
 
         let mut out = Vec::new();
         assert!(app.render(&mut out).is_ok());
