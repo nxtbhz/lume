@@ -2693,20 +2693,41 @@ mod tests {
         assert_eq!(app.editor.cursor_line_col().0, 0);
     }
 
+    struct TestDir(PathBuf);
+    impl TestDir {
+        fn new(prefix: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "{}_{}_{:?}",
+                prefix,
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            TestDir(path)
+        }
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     #[test]
     fn test_app_open_directory_workspace() {
-        let tmp_dir = std::env::temp_dir().join(format!("lume_test_ws_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&tmp_dir);
+        let test_dir = TestDir::new("lume_test_ws");
+        let tmp_dir = test_dir.path();
         let sub_file = tmp_dir.join("workspace_sample.txt");
         std::fs::write(&sub_file, "sample in ws").unwrap();
 
-        let app = App::from_paths(&[&tmp_dir]).unwrap();
-        assert_eq!(app.explorer.root, std::fs::canonicalize(&tmp_dir).unwrap());
+        let app = App::from_paths(&[tmp_dir]).unwrap();
+        assert_eq!(app.explorer.root, std::fs::canonicalize(tmp_dir).unwrap());
         // Editor should have 1 untitled clean tab
         assert_eq!(app.editor.tabs().len(), 1);
         assert!(app.editor.file_path().is_none());
-
-        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     #[test]
@@ -2728,8 +2749,8 @@ mod tests {
 
     #[test]
     fn test_app_open_multiple_files_tabs() {
-        let tmp_dir = std::env::temp_dir().join(format!("lume_multi_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&tmp_dir);
+        let test_dir = TestDir::new("lume_multi");
+        let tmp_dir = test_dir.path();
         let file1 = tmp_dir.join("file1.txt");
         let file2 = tmp_dir.join("file2.txt");
         std::fs::write(&file1, "file1 content").unwrap();
@@ -2746,19 +2767,17 @@ mod tests {
                 .slice_to_cow(0, app.editor.buffer().len_bytes()),
             "file1 content"
         );
-
-        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     #[test]
     fn test_app_open_directory_and_file() {
-        let tmp_dir = std::env::temp_dir().join(format!("lume_ws_file_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&tmp_dir);
+        let test_dir = TestDir::new("lume_ws_file");
+        let tmp_dir = test_dir.path();
         let file = tmp_dir.join("hello.txt");
         std::fs::write(&file, "hello world").unwrap();
 
-        let app = App::from_paths(&[&tmp_dir, &file]).unwrap();
-        assert_eq!(app.explorer.root, std::fs::canonicalize(&tmp_dir).unwrap());
+        let app = App::from_paths(&[tmp_dir, &file]).unwrap();
+        assert_eq!(app.explorer.root, std::fs::canonicalize(tmp_dir).unwrap());
         assert_eq!(app.editor.tabs().len(), 1);
         assert_eq!(
             app.editor
@@ -2766,14 +2785,12 @@ mod tests {
                 .slice_to_cow(0, app.editor.buffer().len_bytes()),
             "hello world"
         );
-
-        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     #[test]
     fn test_app_open_wildcard_glob() {
-        let tmp_dir = std::env::temp_dir().join(format!("lume_glob_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&tmp_dir);
+        let test_dir = TestDir::new("lume_glob");
+        let tmp_dir = test_dir.path();
         let f1 = tmp_dir.join("test_a.txt");
         let f2 = tmp_dir.join("test_b.txt");
         std::fs::write(&f1, "content a").unwrap();
@@ -2783,17 +2800,14 @@ mod tests {
         let app = App::from_paths(&[&pattern]).unwrap();
         assert_eq!(app.editor.tabs().len(), 2);
         assert_eq!(app.editor.active_tab_idx(), 0);
-
-        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     #[test]
     fn test_app_explorer_create_nested_folder_via_prompt() {
-        let tmp_dir = std::env::temp_dir().join(format!("lume_app_mkdir_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let test_dir = TestDir::new("lume_app_mkdir");
+        let tmp_dir = test_dir.path();
 
-        let mut app = App::from_paths(&[&tmp_dir]).unwrap();
+        let mut app = App::from_paths(&[tmp_dir]).unwrap();
         app.focus = ActiveFocus::Explorer;
 
         // Press 'n' in Explorer to open new folder prompt
@@ -2815,22 +2829,19 @@ mod tests {
         let created_path = app.explorer.root.join("deep/nested/pkg");
         assert!(created_path.exists());
         assert!(created_path.is_dir());
-
-        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     #[test]
     fn test_app_explorer_delete_folder_and_unlinks_open_tab() {
-        let tmp_dir = std::env::temp_dir().join(format!("lume_app_rmdir_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let test_dir = TestDir::new("lume_app_rmdir");
+        let tmp_dir = test_dir.path();
 
         let folder = tmp_dir.join("submodule");
         std::fs::create_dir_all(&folder).unwrap();
         let sub_file = folder.join("file.rs");
         std::fs::write(&sub_file, "fn test() {}").unwrap();
 
-        let mut app = App::from_paths(&[&tmp_dir, &sub_file]).unwrap();
+        let mut app = App::from_paths(&[tmp_dir, &sub_file]).unwrap();
         assert_eq!(app.editor.tabs().len(), 1);
         assert_eq!(
             app.editor.file_path(),
@@ -2863,22 +2874,19 @@ mod tests {
 
         // Open tab for file inside deleted directory must have its file_path unlinked
         assert!(app.editor.file_path().is_none());
-
-        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     #[test]
     fn test_delete_folder_unlinks_relative_path_tabs_and_cleans_journal() {
-        let tmp_dir = std::env::temp_dir().join(format!("lume_rel_unlink_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let test_dir = TestDir::new("lume_rel_unlink");
+        let tmp_dir = test_dir.path();
 
         let sub_folder = tmp_dir.join("pkg");
         std::fs::create_dir_all(&sub_folder).unwrap();
         let sub_file = sub_folder.join("lib.rs");
         std::fs::write(&sub_file, "pub fn hello() {}").unwrap();
 
-        let mut app = App::from_paths(&[&tmp_dir]).unwrap();
+        let mut app = App::from_paths(&[tmp_dir]).unwrap();
         // Open tab with a relative path: "pkg/lib.rs"
         let rel_file = PathBuf::from("pkg/lib.rs");
         app.editor.open_or_load(tmp_dir.join(&rel_file)).unwrap();
@@ -2900,8 +2908,6 @@ mod tests {
         assert!(app.editor.is_dirty());
         // Journal must have been removed
         assert!(!lume_core::Journal::has_journal(&canon_file));
-
-        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     #[test]
@@ -3433,12 +3439,16 @@ mod tests {
             .unwrap();
 
         // Alt+Right and Alt+Left tab switching
+        assert_eq!(app.editor.active_tab_idx(), 0);
         app.editor.new_tab();
         assert_eq!(app.editor.tabs().len(), 2);
+        assert_eq!(app.editor.active_tab_idx(), 1);
         app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT))
             .unwrap();
+        assert_eq!(app.editor.active_tab_idx(), 0);
         app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT))
             .unwrap();
+        assert_eq!(app.editor.active_tab_idx(), 1);
     }
 
     #[test]
@@ -3466,14 +3476,16 @@ mod tests {
         assert!(app.prompt.is_none());
 
         // 2. Save file when file path exists
-        let tmp = std::env::temp_dir().join(format!("lume_save_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&tmp);
-        let file_path = tmp.join("test.txt");
+        let test_dir = TestDir::new("lume_save");
+        let file_path = test_dir.path().join("test.txt");
         app.editor.set_file_path(Some(file_path.clone()));
         app.editor.insert_str("saved content").unwrap();
         app.execute_command("file.save");
         assert!(file_path.exists());
-        let _ = std::fs::remove_dir_all(&tmp);
+        assert_eq!(
+            std::fs::read_to_string(&file_path).unwrap(),
+            "saved content"
+        );
     }
 
     #[test]

@@ -649,6 +649,29 @@ fn truncate_to_width(s: &str, max_width: usize) -> String {
 mod tests {
     use super::*;
 
+    struct TestDir(PathBuf);
+    impl TestDir {
+        fn new(prefix: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "{}_{}_{:?}",
+                prefix,
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            TestDir(path)
+        }
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     #[test]
     fn test_explorer_creation_and_refresh() {
         let current = std::env::current_dir().unwrap();
@@ -697,12 +720,11 @@ mod tests {
 
     #[test]
     fn test_create_single_and_nested_folder() {
-        let tmp_dir = std::env::temp_dir().join(format!("lume_test_mkdir_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let test_dir = TestDir::new("lume_test_mkdir");
+        let tmp_dir = test_dir.path();
 
-        let mut explorer = FileExplorer::new(tmp_dir.clone());
-        let root_canon = std::fs::canonicalize(&tmp_dir).unwrap();
+        let mut explorer = FileExplorer::new(tmp_dir.to_path_buf());
+        let root_canon = std::fs::canonicalize(tmp_dir).unwrap();
 
         // 1. Create a single folder in root
         let created_single = explorer.create_folder(&root_canon, "alpha").unwrap();
@@ -728,33 +750,27 @@ mod tests {
         // Selection should point to the new directory
         let sel_item = explorer.selected_item().expect("Must have selected item");
         assert_eq!(sel_item.name, "gamma");
-
-        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     #[test]
     fn test_create_folder_prevents_escaping_root() {
-        let tmp_dir = std::env::temp_dir().join(format!("lume_test_escape_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let test_dir = TestDir::new("lume_test_escape");
+        let tmp_dir = test_dir.path();
 
-        let mut explorer = FileExplorer::new(tmp_dir.clone());
-        let root_canon = std::fs::canonicalize(&tmp_dir).unwrap();
+        let mut explorer = FileExplorer::new(tmp_dir.to_path_buf());
+        let root_canon = std::fs::canonicalize(tmp_dir).unwrap();
 
         let res = explorer.create_folder(&root_canon, "../outside_secret");
         assert!(res.is_err(), "Must reject path traversal escaping root");
-
-        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     #[test]
     fn test_delete_folder_recursive_and_prunes_expanded() {
-        let tmp_dir = std::env::temp_dir().join(format!("lume_test_rmdir_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let test_dir = TestDir::new("lume_test_rmdir");
+        let tmp_dir = test_dir.path();
 
-        let mut explorer = FileExplorer::new(tmp_dir.clone());
-        let root_canon = std::fs::canonicalize(&tmp_dir).unwrap();
+        let mut explorer = FileExplorer::new(tmp_dir.to_path_buf());
+        let root_canon = std::fs::canonicalize(tmp_dir).unwrap();
 
         // Create folder with contents: parent/child/grandchild
         let grandchild = explorer
@@ -784,19 +800,15 @@ mod tests {
             .items
             .iter()
             .any(|it| it.path.starts_with(&parent_path)));
-
-        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     #[test]
     fn test_delete_root_folder_prevented() {
-        let tmp_dir =
-            std::env::temp_dir().join(format!("lume_test_root_del_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let test_dir = TestDir::new("lume_test_root_del");
+        let tmp_dir = test_dir.path();
 
-        let mut explorer = FileExplorer::new(tmp_dir.clone());
-        let root_canon = std::fs::canonicalize(&tmp_dir).unwrap();
+        let mut explorer = FileExplorer::new(tmp_dir.to_path_buf());
+        let root_canon = std::fs::canonicalize(tmp_dir).unwrap();
 
         let res = explorer.delete_folder(&root_canon);
         assert!(res.is_err());
@@ -805,33 +817,27 @@ mod tests {
             std::io::ErrorKind::PermissionDenied
         );
         assert!(tmp_dir.exists());
-
-        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     #[test]
     fn test_create_folder_prevents_absolute_and_prefix_paths() {
-        let tmp_dir = std::env::temp_dir().join(format!("lume_test_abs_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let test_dir = TestDir::new("lume_test_abs");
+        let tmp_dir = test_dir.path();
 
-        let mut explorer = FileExplorer::new(tmp_dir.clone());
-        let root_canon = std::fs::canonicalize(&tmp_dir).unwrap();
+        let mut explorer = FileExplorer::new(tmp_dir.to_path_buf());
+        let root_canon = std::fs::canonicalize(tmp_dir).unwrap();
 
         let res = explorer.create_folder(&root_canon, "/absolute_outside");
         assert!(res.is_err(), "Must reject absolute paths");
-
-        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     #[test]
     fn test_explorer_delete_preserves_scroll_offset_no_blank_sidebar() {
-        let tmp_dir = std::env::temp_dir().join(format!("lume_test_scroll_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let test_dir = TestDir::new("lume_test_scroll");
+        let tmp_dir = test_dir.path();
 
-        let mut explorer = FileExplorer::new(tmp_dir.clone());
-        let root_canon = std::fs::canonicalize(&tmp_dir).unwrap();
+        let mut explorer = FileExplorer::new(tmp_dir.to_path_buf());
+        let root_canon = std::fs::canonicalize(tmp_dir).unwrap();
 
         // Create 10 directories
         for i in 0..10 {
@@ -861,8 +867,6 @@ mod tests {
             explorer.scroll_offset <= explorer.selected_idx,
             "scroll_offset must not exceed selected_idx"
         );
-
-        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 
     #[test]
@@ -890,13 +894,13 @@ mod tests {
 
     #[test]
     fn test_explorer_navigation_click_and_render() {
-        let tmp_dir = std::env::temp_dir().join(format!("lume_test_nav_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp_dir);
+        let test_dir = TestDir::new("lume_test_nav");
+        let tmp_dir = test_dir.path();
         std::fs::create_dir_all(tmp_dir.join("sub_dir")).unwrap();
         std::fs::write(tmp_dir.join("sub_dir/inner.txt"), "hello").unwrap();
         std::fs::write(tmp_dir.join("root.txt"), "world").unwrap();
 
-        let mut explorer = FileExplorer::new(tmp_dir.clone());
+        let mut explorer = FileExplorer::new(tmp_dir.to_path_buf());
         assert!(!explorer.items.is_empty());
 
         // Navigation
@@ -958,7 +962,5 @@ mod tests {
         buf.clear();
         assert!(explorer.render(&mut buf, 0, 0, false).is_ok());
         assert!(buf.is_empty());
-
-        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 }
