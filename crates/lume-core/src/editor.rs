@@ -1533,17 +1533,11 @@ impl Editor {
         let line = tab.buffer.byte_to_line(head);
         let line_start_byte = tab.buffer.line_to_byte(line);
 
-        let line_end_byte = if line + 1 < total_lines {
-            tab.buffer.line_to_byte(line + 1)
-        } else {
-            total_bytes
-        };
-
-        let (delete_start, delete_end) = if line + 1 >= total_lines
-            && line > 0
-            && line_start_byte > 0
-            && line_end_byte == total_bytes
-        {
+        let (delete_start, delete_end) = if line_start_byte == total_bytes && line > 0 {
+            let prev_line = line - 1;
+            let prev_line_start = tab.buffer.line_to_byte(prev_line);
+            (prev_line_start, total_bytes)
+        } else if line + 1 >= total_lines && line > 0 && line_start_byte > 0 {
             let last_char = tab
                 .buffer
                 .rope()
@@ -1555,17 +1549,29 @@ impl Editor {
                     .char_to_byte(tab.buffer.byte_to_char(prev_line_end).saturating_sub(1));
                 (prev_newline_byte, total_bytes)
             } else {
-                (line_start_byte, line_end_byte)
+                (line_start_byte, total_bytes)
             }
         } else {
+            let line_end_byte = if line + 1 < total_lines {
+                tab.buffer.line_to_byte(line + 1)
+            } else {
+                total_bytes
+            };
             (line_start_byte, line_end_byte)
         };
 
         let cursors_before = tab.cursors.cursors().to_vec();
-        let deleted_slice = tab
+        let mut deleted_slice = tab
             .buffer
             .slice_to_cow(delete_start, delete_end)
             .into_owned();
+
+        if deleted_slice.starts_with('\n') {
+            deleted_slice = deleted_slice[1..].to_string();
+        }
+        if !deleted_slice.ends_with('\n') {
+            deleted_slice.push('\n');
+        }
 
         let delta = tab.buffer.delete(delete_start, delete_end)?;
         let deltas = vec![delta];
@@ -3144,5 +3150,26 @@ mod tests {
         editor.insert_str("last line without newline").unwrap();
         let deleted_last = editor.delete_line().unwrap();
         assert!(deleted_last.contains("last line without newline"));
+    }
+
+    #[test]
+    fn test_delete_line_eof_and_paste_normalization() {
+        let mut editor = Editor::new();
+        editor.insert_str("line 1\nline 2\n").unwrap();
+        editor.move_to_end(false);
+        let deleted = editor.delete_line().unwrap();
+        assert_eq!(deleted, "line 2\n");
+        assert_eq!(editor.buffer().rope().to_string(), "line 1\n");
+
+        let mut editor2 = Editor::new();
+        editor2.insert_str("line A\nline B").unwrap();
+        editor2.move_to_end(false);
+        let deleted2 = editor2.delete_line().unwrap();
+        assert_eq!(deleted2, "line B\n");
+        assert_eq!(editor2.buffer().rope().to_string(), "line A");
+
+        editor2.move_to_start(false);
+        editor2.paste_yank(&deleted2, true).unwrap();
+        assert_eq!(editor2.buffer().rope().to_string(), "line A\nline B\n");
     }
 }

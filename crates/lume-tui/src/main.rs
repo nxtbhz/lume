@@ -900,9 +900,11 @@ impl App {
                     cursor_col + 1,
                     lang_str
                 );
-                let left_len =
-                    prefix.len() + badge_str.len() + suffix_badge.len() + rest_left.len();
-                let spaces = width.saturating_sub(left_len + right_status.len());
+                let badge_prefix_len = prefix.chars().count()
+                    + badge_str.chars().count()
+                    + suffix_badge.chars().count();
+                let left_len = badge_prefix_len + rest_left.chars().count();
+                let spaces = width.saturating_sub(left_len + right_status.chars().count());
                 let tail = format!(
                     "{}{:spaces$}{}",
                     rest_left,
@@ -910,22 +912,27 @@ impl App {
                     right_status,
                     spaces = spaces
                 );
-                let tail_cap =
-                    width.saturating_sub(prefix.len() + badge_str.len() + suffix_badge.len());
+                let tail_cap = width.saturating_sub(badge_prefix_len);
                 let tail_trimmed: String = tail.chars().take(tail_cap).collect();
 
-                queue!(
-                    writer,
-                    Print(prefix),
-                    SetBackgroundColor(badge_bg),
-                    SetForegroundColor(badge_fg),
-                    Print(&badge_str),
-                    SetBackgroundColor(Color::DarkBlue),
-                    SetForegroundColor(Color::White),
-                    Print(suffix_badge),
-                    Print(tail_trimmed),
-                    ResetColor
-                )?;
+                if width < badge_prefix_len {
+                    let full_badge = format!("{}{}{}", prefix, badge_str, suffix_badge);
+                    let trimmed: String = full_badge.chars().take(width).collect();
+                    queue!(writer, Print(trimmed), ResetColor)?;
+                } else {
+                    queue!(
+                        writer,
+                        Print(prefix),
+                        SetBackgroundColor(badge_bg),
+                        SetForegroundColor(badge_fg),
+                        Print(&badge_str),
+                        SetBackgroundColor(Color::DarkBlue),
+                        SetForegroundColor(Color::White),
+                        Print(suffix_badge),
+                        Print(tail_trimmed),
+                        ResetColor
+                    )?;
+                }
             } else {
                 let left_status = format!(
                     " LUME │ {}{} │ Tab {}/{} │ {}{} │ Ln {}, Col {} │ {}",
@@ -1329,7 +1336,17 @@ impl App {
                 let status = if new_val { "Enabled" } else { "Disabled" };
                 self.set_status(format!("Smart unindent: {}", status));
             }
-            "settings.toggle_modal" | ":set modal" | ":set modal!" => {
+            ":set modal" => {
+                self.modal_enabled = true;
+                self.vim_state.set_mode(VimMode::Normal);
+                self.set_status("Modal mode (Vim Motions): ON [NORMAL]");
+            }
+            ":set nomodal" => {
+                self.modal_enabled = false;
+                self.vim_state.set_mode(VimMode::Normal);
+                self.set_status("Modal mode (Vim Motions): OFF");
+            }
+            "settings.toggle_modal" | ":set modal!" => {
                 self.modal_enabled = !self.modal_enabled;
                 if self.modal_enabled {
                     self.vim_state.set_mode(VimMode::Normal);
@@ -1338,11 +1355,6 @@ impl App {
                     self.vim_state.set_mode(VimMode::Normal);
                     self.set_status("Modal mode (Vim Motions): OFF");
                 }
-            }
-            ":set nomodal" => {
-                self.modal_enabled = false;
-                self.vim_state.set_mode(VimMode::Normal);
-                self.set_status("Modal mode (Vim Motions): OFF");
             }
             "app.quit" => {
                 self.running = false;
@@ -2070,6 +2082,13 @@ impl App {
                 _ => {}
             },
             VimMode::Visual => {
+                if let Some(op) = self.vim_state.clear_pending() {
+                    if op == 'g' && key.code == KeyCode::Char('g') {
+                        self.editor.move_to_start(true);
+                        return Ok(());
+                    }
+                }
+
                 if !ctrl && !alt {
                     match key.code {
                         KeyCode::Esc | KeyCode::Char('v') => {
@@ -2087,12 +2106,7 @@ impl App {
                         KeyCode::Char('$') | KeyCode::End => self.editor.move_end(true),
                         KeyCode::Char('G') => self.editor.move_to_end(true),
                         KeyCode::Char('g') => {
-                            if self.vim_state.pending_operator == Some('g') {
-                                self.vim_state.clear_pending();
-                                self.editor.move_to_start(true);
-                            } else {
-                                self.vim_state.set_pending('g');
-                            }
+                            self.vim_state.set_pending('g');
                         }
                         KeyCode::Char('d') | KeyCode::Char('x') => {
                             let cur = *self.editor.cursors().primary();
@@ -2122,9 +2136,7 @@ impl App {
                             self.vim_state.set_mode(VimMode::Normal);
                             self.set_status("Yanked selection");
                         }
-                        _ => {
-                            self.vim_state.clear_pending();
-                        }
+                        _ => {}
                     }
                 }
             }
@@ -2191,6 +2203,15 @@ impl App {
                                     .editor
                                     .buffer()
                                     .slice_to_cow(cur.min(), cur.max())
+                                    .into_owned();
+                                self.vim_state.yank(text, false);
+                            } else if cur.head < self.editor.buffer().len_bytes() {
+                                let char_idx = self.editor.buffer().byte_to_char(cur.head);
+                                let next_byte = self.editor.buffer().char_to_byte(char_idx + 1);
+                                let text = self
+                                    .editor
+                                    .buffer()
+                                    .slice_to_cow(cur.head, next_byte)
                                     .into_owned();
                                 self.vim_state.yank(text, false);
                             }
@@ -3505,6 +3526,19 @@ mod tests {
         let mut app = App::new(None).unwrap();
         assert!(!app.modal_enabled);
 
+        // Test :set modal command idempotently enables
+        app.execute_command(":set modal");
+        assert!(app.modal_enabled);
+        assert_eq!(app.vim_state.mode, VimMode::Normal);
+        app.execute_command(":set modal");
+        assert!(app.modal_enabled);
+
+        // Test :set nomodal command idempotently disables
+        app.execute_command(":set nomodal");
+        assert!(!app.modal_enabled);
+        app.execute_command(":set nomodal");
+        assert!(!app.modal_enabled);
+
         // Test Ctrl+Alt+V shortcut toggle
         let key_v = KeyEvent::new(
             KeyCode::Char('v'),
@@ -3730,6 +3764,35 @@ mod tests {
         assert_eq!(app.vim_state.pending_operator, Some('d'));
         app.handle_key(key_esc).unwrap();
         assert_eq!(app.vim_state.pending_operator, None);
+
+        // Visual mode: 'g' pending operator cleared by non-'g' key
+        app.handle_key(key_v).unwrap();
+        assert_eq!(app.vim_state.mode, VimMode::Visual);
+        app.handle_key(key_g).unwrap();
+        assert_eq!(app.vim_state.pending_operator, Some('g'));
+        app.handle_key(key_w).unwrap(); // another key clears pending 'g'
+        assert_eq!(app.vim_state.pending_operator, None);
+        app.handle_key(key_esc).unwrap();
+
+        // Test xp character transposition in Normal mode
+        let mut app_xp = App::new(None).unwrap();
+        app_xp.execute_command(":set modal");
+        app_xp.handle_key(key_i).unwrap();
+        for c in "ab".chars() {
+            app_xp
+                .handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+                .unwrap();
+        }
+        app_xp.handle_key(key_esc).unwrap();
+        app_xp.handle_key(key_g).unwrap();
+        app_xp.handle_key(key_g).unwrap(); // cursor at 0 ('a')
+        app_xp.handle_key(key_x).unwrap(); // cuts 'a'
+        assert_eq!(
+            app_xp.vim_state.yank_register,
+            Some(("a".to_string(), false))
+        );
+        app_xp.handle_key(key_p).unwrap(); // pastes 'a' after 'b' -> "ba"
+        assert_eq!(app_xp.editor.buffer().rope().to_string(), "ba");
     }
 
     #[test]
