@@ -374,4 +374,66 @@ mod tests {
         );
         assert!(prompt.title.contains("old_module"));
     }
+
+    #[test]
+    fn test_prompt_autocomplete_and_navigation() {
+        let mut prompt = InputPrompt::set_language(&["Rust", "Python", "C", "Go"]);
+        prompt.handle_char('R');
+        prompt.suggestions = vec!["Rust".to_string()];
+        prompt.autocomplete();
+        assert_eq!(prompt.value, "Rust");
+        assert_eq!(prompt.cursor_pos, 4);
+
+        // Cursor navigation bounds
+        prompt.move_right(); // already at end
+        assert_eq!(prompt.cursor_pos, 4);
+        prompt.move_left();
+        assert_eq!(prompt.cursor_pos, 3);
+        prompt.move_left();
+        prompt.move_left();
+        prompt.move_left();
+        prompt.move_left(); // already at 0
+        assert_eq!(prompt.cursor_pos, 0);
+
+        prompt.handle_backspace(); // at 0 does nothing
+        assert_eq!(prompt.value, "Rust");
+    }
+
+    #[test]
+    fn test_prompt_autocomplete_file_paths() {
+        let mut prompt = InputPrompt::open_file();
+        prompt.value = "crates/l".to_string();
+        prompt.cursor_pos = prompt.value.len();
+        prompt.suggestions = vec!["lume-core".to_string(), "lume-tui".to_string()];
+        prompt.selected_suggestion = 0;
+        prompt.autocomplete();
+        assert_eq!(prompt.value, "crates/lume-core");
+
+        // Autocomplete with empty suggestions does nothing
+        let mut empty_sugg_prompt = InputPrompt::open_file();
+        empty_sugg_prompt.suggestions.clear();
+        empty_sugg_prompt.autocomplete();
+        assert_eq!(empty_sugg_prompt.value, "");
+    }
+
+    #[test]
+    fn test_prompt_render_modal() {
+        let mut buf = Vec::new();
+        let mut prompt = InputPrompt::open_file();
+        prompt.suggestions = vec!["file1.rs".to_string(), "file2.rs".to_string()];
+        assert!(prompt.render(&mut buf, 100, 30).is_ok());
+        assert!(!buf.is_empty());
+
+        buf.clear();
+        let lang_prompt = InputPrompt::set_language(&["Rust", "C++", "Python"]);
+        assert!(lang_prompt.render(&mut buf, 80, 24).is_ok());
+
+        buf.clear();
+        let delete_prompt = InputPrompt::confirm_delete_folder(std::path::PathBuf::from("dummy_dir"));
+        assert!(delete_prompt.render(&mut buf, 80, 24).is_ok());
+
+        buf.clear();
+        let create_prompt = InputPrompt::create_folder(std::path::PathBuf::from("."), "root");
+        assert!(create_prompt.render(&mut buf, 80, 24).is_ok());
+    }
 }
