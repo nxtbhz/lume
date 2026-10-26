@@ -130,6 +130,18 @@ fn is_closing_pair(c: char) -> bool {
     matches!(c, ')' | ']' | '}' | '"' | '\'')
 }
 
+fn matching_bracket_char(c: char) -> Option<(char, bool)> {
+    match c {
+        '(' => Some((')', true)),
+        '[' => Some((']', true)),
+        '{' => Some(('}', true)),
+        ')' => Some(('(', false)),
+        ']' => Some(('[', false)),
+        '}' => Some(('{', false)),
+        _ => None,
+    }
+}
+
 impl Editor {
     pub fn new() -> Self {
         Self {
@@ -1375,6 +1387,163 @@ impl Editor {
         self.move_lines(lines as isize, select);
     }
 
+    pub fn find_matching_bracket_in_range(
+        &self,
+        pos: usize,
+        min_char: usize,
+        max_char: usize,
+    ) -> Option<usize> {
+        let tab = self.active_tab();
+        let len_bytes = tab.buffer.len_bytes();
+        if pos >= len_bytes {
+            return None;
+        }
+
+        let char_idx = tab.buffer.byte_to_char(pos);
+        // Ensure pos lands on a character boundary
+        if tab.buffer.char_to_byte(char_idx) != pos {
+            return None;
+        }
+
+        let start_char = tab.buffer.rope().char(char_idx);
+        let (target_char, is_opening) = matching_bracket_char(start_char)?;
+
+        let mut depth: usize = 1;
+
+        if is_opening {
+            let mut current_char_idx = char_idx + 1;
+            for ch in tab.buffer.rope().chars_at(char_idx + 1) {
+                if current_char_idx >= max_char {
+                    break;
+                }
+                if ch == start_char {
+                    depth += 1;
+                } else if ch == target_char {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(tab.buffer.char_to_byte(current_char_idx));
+                    }
+                }
+                current_char_idx += 1;
+            }
+        } else {
+            if char_idx == 0 || char_idx <= min_char {
+                return None;
+            }
+            let mut current_char_idx = char_idx;
+            for ch in tab.buffer.rope().chars_at(char_idx).reversed() {
+                current_char_idx = current_char_idx.saturating_sub(1);
+                if current_char_idx < min_char {
+                    break;
+                }
+                if ch == start_char {
+                    depth += 1;
+                } else if ch == target_char {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(tab.buffer.char_to_byte(current_char_idx));
+                    }
+                }
+                if current_char_idx == 0 {
+                    break;
+                }
+            }
+        }
+
+        None
+    }
+
+    pub fn find_matching_bracket(&self, pos: usize) -> Option<usize> {
+        let total_chars = self.active_tab().buffer.len_chars();
+        self.find_matching_bracket_in_range(pos, 0, total_chars)
+    }
+
+    pub fn jump_to_matching_bracket(&mut self) -> bool {
+        let tab = &self.tabs[self.active_tab];
+        let head = tab.cursors.primary().head;
+        let len = tab.buffer.len_bytes();
+
+        // 1. Check char under cursor
+        if head < len {
+            if let Some(target) = self.find_matching_bracket(head) {
+                self.tabs[self.active_tab].cursors.primary_mut().move_to(target);
+                return true;
+            }
+        }
+
+        // 2. Check char immediately before cursor (e.g. right after a closing bracket)
+        if head > 0 {
+            let prev_char_idx = tab.buffer.byte_to_char(head).saturating_sub(1);
+            let prev_byte = tab.buffer.char_to_byte(prev_char_idx);
+            let prev_char = tab.buffer.rope().char(prev_char_idx);
+            if matches!(prev_char, ')' | ']' | '}') {
+                if let Some(target) = self.find_matching_bracket(prev_byte) {
+                    self.tabs[self.active_tab].cursors.primary_mut().move_to(target);
+                    return true;
+                }
+            }
+        }
+
+        // 3. Vim % motion: search forward on current line for first bracket
+        let current_line = tab.buffer.byte_to_line(head);
+        let line_start_char = tab.buffer.rope().line_to_char(current_line);
+        let line_len_chars = tab.buffer.line_len_chars(current_line);
+        let head_char = tab.buffer.byte_to_char(head);
+        let start_char_idx = head_char;
+        let end_char_idx = line_start_char + line_len_chars;
+
+        for ch_idx in start_char_idx..end_char_idx {
+            let ch = tab.buffer.rope().char(ch_idx);
+            if matches!(ch, '(' | ')' | '[' | ']' | '{' | '}') {
+                let b_idx = tab.buffer.char_to_byte(ch_idx);
+                if let Some(target) = self.find_matching_bracket(b_idx) {
+                    self.tabs[self.active_tab].cursors.primary_mut().move_to(target);
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    pub fn matching_bracket_for_cursor(
+        &self,
+        min_char: usize,
+        max_char: usize,
+    ) -> Option<(usize, usize)> {
+        let tab = self.active_tab();
+        let primary = tab.cursors.primary();
+        if primary.is_selection() {
+            return None;
+        }
+
+        let head = primary.head;
+        let len = tab.buffer.len_bytes();
+
+        // 1. Check char under cursor
+        if head < len {
+            if let Some(match_pos) = self.find_matching_bracket_in_range(head, min_char, max_char) {
+                return Some((head, match_pos));
+            }
+        }
+
+        // 2. Check char immediately before cursor if at closing bracket
+        if head > 0 {
+            let prev_char_idx = tab.buffer.byte_to_char(head).saturating_sub(1);
+            let prev_byte = tab.buffer.char_to_byte(prev_char_idx);
+            let prev_char = tab.buffer.rope().char(prev_char_idx);
+            if matches!(prev_char, ')' | ']' | '}') {
+                if let Some(match_pos) =
+                    self.find_matching_bracket_in_range(prev_byte, min_char, max_char)
+                {
+                    return Some((prev_byte, match_pos));
+                }
+            }
+        }
+
+        None
+    }
+
     pub fn undo(&mut self) -> bool {
         let tab = &mut self.tabs[self.active_tab];
         if let Some(cursors) = tab.history.undo(&mut tab.buffer) {
@@ -2283,5 +2452,119 @@ mod tests {
             "use std::\n"
         );
         assert_eq!(ed.cursor_line_col(), (1, 0));
+    }
+
+    #[test]
+    fn test_bracket_matching_simple_pairs() {
+        let ed = Editor::from_str("(hello) [world] {foo}");
+        // '(' at 0 matches ')' at 6
+        assert_eq!(ed.find_matching_bracket(0), Some(6));
+        // ')' at 6 matches '(' at 0
+        assert_eq!(ed.find_matching_bracket(6), Some(0));
+
+        // '[' at 8 matches ']' at 14
+        assert_eq!(ed.find_matching_bracket(8), Some(14));
+        // ']' at 14 matches '[' at 8
+        assert_eq!(ed.find_matching_bracket(14), Some(8));
+
+        // '{' at 16 matches '}' at 20
+        assert_eq!(ed.find_matching_bracket(16), Some(20));
+        // '}' at 20 matches '{' at 16
+        assert_eq!(ed.find_matching_bracket(20), Some(16));
+    }
+
+    #[test]
+    fn test_bracket_matching_nested_and_siblings() {
+        // Indices:
+        // { [ ( ) ] }
+        // 0 2 4 6 8 10
+        let ed = Editor::from_str("{ [ ( ) ] }");
+        assert_eq!(ed.find_matching_bracket(0), Some(10));
+        assert_eq!(ed.find_matching_bracket(2), Some(8));
+        assert_eq!(ed.find_matching_bracket(4), Some(6));
+        assert_eq!(ed.find_matching_bracket(6), Some(4));
+        assert_eq!(ed.find_matching_bracket(8), Some(2));
+        assert_eq!(ed.find_matching_bracket(10), Some(0));
+
+        // Siblings: { () () }
+        // 0: {, 2: (, 3: ), 5: (, 6: ), 8: }
+        let ed_siblings = Editor::from_str("{ () () }");
+        assert_eq!(ed_siblings.find_matching_bracket(0), Some(8));
+        assert_eq!(ed_siblings.find_matching_bracket(2), Some(3));
+        assert_eq!(ed_siblings.find_matching_bracket(3), Some(2));
+        assert_eq!(ed_siblings.find_matching_bracket(5), Some(6));
+        assert_eq!(ed_siblings.find_matching_bracket(6), Some(5));
+        assert_eq!(ed_siblings.find_matching_bracket(8), Some(0));
+    }
+
+    #[test]
+    fn test_bracket_matching_unmatched_and_non_bracket() {
+        let ed = Editor::from_str("fn foo(bar { baz");
+        // '(' at 6 is unclosed
+        assert_eq!(ed.find_matching_bracket(6), None);
+        // '{' at 11 is unclosed
+        assert_eq!(ed.find_matching_bracket(11), None);
+        // 'f' at 0 is not a bracket
+        assert_eq!(ed.find_matching_bracket(0), None);
+        // Out of bounds
+        assert_eq!(ed.find_matching_bracket(999), None);
+    }
+
+    #[test]
+    fn test_bracket_matching_multibyte_utf8() {
+        // "Olá (Mundo! 🚀) Fim"
+        // 'O'=1, 'l'=1, 'á'=2 -> 4 bytes before ' ' (byte 4) and '(' (byte 5)
+        // 🚀 is 4 bytes
+        let ed = Editor::from_str("Olá (Mundo! 🚀) Fim");
+        let open_pos = ed.buffer().slice_to_cow(0, ed.buffer().len_bytes()).find('(').unwrap();
+        let close_pos = ed.buffer().slice_to_cow(0, ed.buffer().len_bytes()).find(')').unwrap();
+
+        assert_eq!(ed.find_matching_bracket(open_pos), Some(close_pos));
+        assert_eq!(ed.find_matching_bracket(close_pos), Some(open_pos));
+    }
+
+    #[test]
+    fn test_bracket_matching_jump_motion() {
+        let mut ed = Editor::from_str("    let x = (1 + 2);");
+        // Start at column 0 (before the bracket on this line)
+        ed.cursors_mut().set_single(0);
+        // Vim % motion: jumping when not on bracket finds first bracket '(' and jumps to ')'
+        let jumped = ed.jump_to_matching_bracket();
+        assert!(jumped);
+        let close_paren_byte = ed.buffer().slice_to_cow(0, ed.buffer().len_bytes()).find(')').unwrap();
+        assert_eq!(ed.cursors().primary().head, close_paren_byte);
+
+        // Jump again while on ')' jumps back to '('
+        let jumped_back = ed.jump_to_matching_bracket();
+        assert!(jumped_back);
+        let open_paren_byte = ed.buffer().slice_to_cow(0, ed.buffer().len_bytes()).find('(').unwrap();
+        assert_eq!(ed.cursors().primary().head, open_paren_byte);
+
+        // When no brackets on line
+        let mut ed_none = Editor::from_str("let x = 42;");
+        assert!(!ed_none.jump_to_matching_bracket());
+    }
+
+    #[test]
+    fn test_bracket_matching_bounded_range() {
+        let ed = Editor::from_str("line 0\n{\n    line 2\n}\nline 4");
+        // '{' is at line 1, '}' is at line 3
+        let open_byte = ed.buffer().slice_to_cow(0, ed.buffer().len_bytes()).find('{').unwrap();
+        let close_byte = ed.buffer().slice_to_cow(0, ed.buffer().len_bytes()).find('}').unwrap();
+
+        let open_char = ed.buffer().byte_to_char(open_byte);
+        let close_char = ed.buffer().byte_to_char(close_byte);
+
+        // If range covers both chars: found
+        assert_eq!(
+            ed.find_matching_bracket_in_range(open_byte, open_char, close_char + 1),
+            Some(close_byte)
+        );
+
+        // If range excludes close_char: returns None
+        assert_eq!(
+            ed.find_matching_bracket_in_range(open_byte, open_char, close_char),
+            None
+        );
     }
 }
