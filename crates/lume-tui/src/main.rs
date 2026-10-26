@@ -1801,7 +1801,7 @@ impl App {
                     self.execute_command("edit.undo");
                     return Ok(());
                 }
-                KeyCode::Char('y') => {
+                KeyCode::Char('y') | KeyCode::Char('r') => {
                     self.execute_command("edit.redo");
                     return Ok(());
                 }
@@ -1909,41 +1909,256 @@ impl App {
             return Ok(());
         }
 
-        // 6. Normal Editor key handling
-        match (key.code, ctrl, alt) {
-            (KeyCode::Left, false, false) => self.editor.move_left(shift),
-            (KeyCode::Right, false, false) => self.editor.move_right(shift),
-            (KeyCode::Up, false, false) => self.editor.move_up(shift),
-            (KeyCode::Down, false, false) => self.editor.move_down(shift),
-            (KeyCode::PageUp, false, false) => {
-                let h = self.text_area_height().max(1);
-                self.editor.page_up(h, shift);
+        // 6. Editor key handling (Modal or Modeless)
+        if self.modal_enabled {
+            self.handle_modal_key(key)?;
+        } else {
+            match (key.code, ctrl, alt) {
+                (KeyCode::Left, false, false) => self.editor.move_left(shift),
+                (KeyCode::Right, false, false) => self.editor.move_right(shift),
+                (KeyCode::Up, false, false) => self.editor.move_up(shift),
+                (KeyCode::Down, false, false) => self.editor.move_down(shift),
+                (KeyCode::PageUp, false, false) => {
+                    let h = self.text_area_height().max(1);
+                    self.editor.page_up(h, shift);
+                }
+                (KeyCode::PageDown, false, false) => {
+                    let h = self.text_area_height().max(1);
+                    self.editor.page_down(h, shift);
+                }
+                (KeyCode::Home, false, false) => self.editor.move_home(shift),
+                (KeyCode::End, false, false) => self.editor.move_end(shift),
+                (KeyCode::Backspace, false, false) => {
+                    let _ = self.editor.delete_backwards();
+                }
+                (KeyCode::Delete, false, false) => {
+                    let _ = self.editor.delete_forwards();
+                }
+                (KeyCode::Enter, false, false) => {
+                    let _ = self.editor.insert_newline();
+                }
+                (KeyCode::Tab, false, false) => {
+                    let _ = self.editor.insert_str("    ");
+                }
+                (KeyCode::Char(c), false, false) => {
+                    let _ = self.editor.insert_char(c);
+                }
+                _ => {}
             }
-            (KeyCode::PageDown, false, false) => {
-                let h = self.text_area_height().max(1);
-                self.editor.page_down(h, shift);
-            }
-            (KeyCode::Home, false, false) => self.editor.move_home(shift),
-            (KeyCode::End, false, false) => self.editor.move_end(shift),
-            (KeyCode::Backspace, false, false) => {
-                let _ = self.editor.delete_backwards();
-            }
-            (KeyCode::Delete, false, false) => {
-                let _ = self.editor.delete_forwards();
-            }
-            (KeyCode::Enter, false, false) => {
-                let _ = self.editor.insert_newline();
-            }
-            (KeyCode::Tab, false, false) => {
-                let _ = self.editor.insert_str("    ");
-            }
-            (KeyCode::Char(c), false, false) => {
-                let _ = self.editor.insert_char(c);
-            }
-            _ => {}
         }
 
         self.adjust_viewport();
+        Ok(())
+    }
+
+    fn handle_modal_key(&mut self, key: KeyEvent) -> std::io::Result<()> {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
+        match self.vim_state.mode {
+            VimMode::Insert => {
+                match (key.code, ctrl, alt) {
+                    (KeyCode::Esc, false, false) => {
+                        self.vim_state.set_mode(VimMode::Normal);
+                        let head = self.editor.cursors().primary().head;
+                        self.editor.cursors_mut().set_single(head);
+                    }
+                    (KeyCode::Left, false, false) => self.editor.move_left(shift),
+                    (KeyCode::Right, false, false) => self.editor.move_right(shift),
+                    (KeyCode::Up, false, false) => self.editor.move_up(shift),
+                    (KeyCode::Down, false, false) => self.editor.move_down(shift),
+                    (KeyCode::PageUp, false, false) => {
+                        let h = self.text_area_height().max(1);
+                        self.editor.page_up(h, shift);
+                    }
+                    (KeyCode::PageDown, false, false) => {
+                        let h = self.text_area_height().max(1);
+                        self.editor.page_down(h, shift);
+                    }
+                    (KeyCode::Home, false, false) => self.editor.move_home(shift),
+                    (KeyCode::End, false, false) => self.editor.move_end(shift),
+                    (KeyCode::Backspace, false, false) => {
+                        let _ = self.editor.delete_backwards();
+                    }
+                    (KeyCode::Delete, false, false) => {
+                        let _ = self.editor.delete_forwards();
+                    }
+                    (KeyCode::Enter, false, false) => {
+                        let _ = self.editor.insert_newline();
+                    }
+                    (KeyCode::Tab, false, false) => {
+                        let _ = self.editor.insert_str("    ");
+                    }
+                    (KeyCode::Char(c), false, false) => {
+                        let _ = self.editor.insert_char(c);
+                    }
+                    _ => {}
+                }
+            }
+            VimMode::Visual => {
+                if !ctrl && !alt {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('v') => {
+                            let head = self.editor.cursors().primary().head;
+                            self.editor.cursors_mut().set_single(head);
+                            self.vim_state.set_mode(VimMode::Normal);
+                        }
+                        KeyCode::Char('h') | KeyCode::Left => self.editor.move_left(true),
+                        KeyCode::Char('j') | KeyCode::Down => self.editor.move_down(true),
+                        KeyCode::Char('k') | KeyCode::Up => self.editor.move_up(true),
+                        KeyCode::Char('l') | KeyCode::Right => self.editor.move_right(true),
+                        KeyCode::Char('w') => self.editor.move_word_forward(true),
+                        KeyCode::Char('b') => self.editor.move_word_backward(true),
+                        KeyCode::Char('0') | KeyCode::Home => self.editor.move_home(true),
+                        KeyCode::Char('$') | KeyCode::End => self.editor.move_end(true),
+                        KeyCode::Char('G') => self.editor.move_to_end(true),
+                        KeyCode::Char('g') => {
+                            if self.vim_state.pending_operator == Some('g') {
+                                self.vim_state.clear_pending();
+                                self.editor.move_to_start(true);
+                            } else {
+                                self.vim_state.set_pending('g');
+                            }
+                        }
+                        KeyCode::Char('d') | KeyCode::Char('x') => {
+                            let cur = *self.editor.cursors().primary();
+                            if cur.is_selection() {
+                                let text = self
+                                    .editor
+                                    .buffer()
+                                    .slice_to_cow(cur.min(), cur.max())
+                                    .into_owned();
+                                self.vim_state.yank(text, false);
+                            }
+                            let _ = self.editor.delete_forwards();
+                            self.vim_state.set_mode(VimMode::Normal);
+                        }
+                        KeyCode::Char('y') => {
+                            let cur = *self.editor.cursors().primary();
+                            if cur.is_selection() {
+                                let text = self
+                                    .editor
+                                    .buffer()
+                                    .slice_to_cow(cur.min(), cur.max())
+                                    .into_owned();
+                                self.vim_state.yank(text, false);
+                            }
+                            let head = self.editor.cursors().primary().head;
+                            self.editor.cursors_mut().set_single(head);
+                            self.vim_state.set_mode(VimMode::Normal);
+                            self.set_status("Yanked selection");
+                        }
+                        _ => {
+                            self.vim_state.clear_pending();
+                        }
+                    }
+                }
+            }
+            VimMode::Normal => {
+                if let Some(op) = self.vim_state.clear_pending() {
+                    match (op, key.code) {
+                        ('g', KeyCode::Char('g')) => {
+                            self.editor.move_to_start(false);
+                            return Ok(());
+                        }
+                        ('d', KeyCode::Char('d')) => {
+                            if let Ok(deleted) = self.editor.delete_line() {
+                                self.vim_state.yank(deleted, true);
+                            }
+                            return Ok(());
+                        }
+                        ('y', KeyCode::Char('y')) => {
+                            let yanked = self.editor.yank_line();
+                            self.vim_state.yank(yanked, true);
+                            self.set_status("1 line yanked");
+                            return Ok(());
+                        }
+                        _ => {}
+                    }
+                }
+
+                if !ctrl && !alt {
+                    match key.code {
+                        KeyCode::Esc => {
+                            self.vim_state.clear_pending();
+                            let head = self.editor.cursors().primary().head;
+                            self.editor.cursors_mut().set_single(head);
+                        }
+                        KeyCode::Char('g') => {
+                            self.vim_state.set_pending('g');
+                        }
+                        KeyCode::Char('d') => {
+                            self.vim_state.set_pending('d');
+                        }
+                        KeyCode::Char('y') => {
+                            self.vim_state.set_pending('y');
+                        }
+                        KeyCode::Char('h') | KeyCode::Left => self.editor.move_left(false),
+                        KeyCode::Char('j') | KeyCode::Down => self.editor.move_down(false),
+                        KeyCode::Char('k') | KeyCode::Up => self.editor.move_up(false),
+                        KeyCode::Char('l') | KeyCode::Right => self.editor.move_right(false),
+                        KeyCode::Char('w') => self.editor.move_word_forward(false),
+                        KeyCode::Char('b') => self.editor.move_word_backward(false),
+                        KeyCode::Char('0') | KeyCode::Home => self.editor.move_home(false),
+                        KeyCode::Char('$') | KeyCode::End => self.editor.move_end(false),
+                        KeyCode::Char('G') => self.editor.move_to_end(false),
+                        KeyCode::PageUp => {
+                            let h = self.text_area_height().max(1);
+                            self.editor.page_up(h, false);
+                        }
+                        KeyCode::PageDown => {
+                            let h = self.text_area_height().max(1);
+                            self.editor.page_down(h, false);
+                        }
+                        KeyCode::Char('x') => {
+                            let cur = *self.editor.cursors().primary();
+                            if cur.is_selection() {
+                                let text = self
+                                    .editor
+                                    .buffer()
+                                    .slice_to_cow(cur.min(), cur.max())
+                                    .into_owned();
+                                self.vim_state.yank(text, false);
+                            }
+                            let _ = self.editor.delete_forwards();
+                        }
+                        KeyCode::Char('p') => {
+                            if let Some((ref text, linewise)) = self.vim_state.yank_register.clone()
+                            {
+                                let _ = self.editor.paste_yank(text, linewise);
+                            }
+                        }
+                        KeyCode::Char('u') => {
+                            self.execute_command("edit.undo");
+                        }
+                        KeyCode::Char('i') => {
+                            self.vim_state.set_mode(VimMode::Insert);
+                        }
+                        KeyCode::Char('a') => {
+                            self.editor.move_right(false);
+                            self.vim_state.set_mode(VimMode::Insert);
+                        }
+                        KeyCode::Char('o') => {
+                            self.editor.move_end(false);
+                            let _ = self.editor.insert_newline();
+                            self.vim_state.set_mode(VimMode::Insert);
+                        }
+                        KeyCode::Char('O') => {
+                            self.editor.move_home(false);
+                            let _ = self.editor.insert_newline();
+                            self.editor.move_up(false);
+                            self.vim_state.set_mode(VimMode::Insert);
+                        }
+                        KeyCode::Char('v') => {
+                            self.vim_state.set_mode(VimMode::Visual);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -3235,6 +3450,213 @@ mod tests {
         assert!(app.modal_enabled);
         app.execute_command(":set modal!");
         assert!(!app.modal_enabled);
+    }
+
+    #[test]
+    fn test_app_vim_motions() {
+        let mut app = App::new(None).unwrap();
+        app.execute_command(":set modal");
+        assert!(app.modal_enabled);
+        assert_eq!(app.vim_state.mode, VimMode::Normal);
+
+        // 1. Enter insert mode with 'i', type text, and return to Normal with Esc
+        let key_i = KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE);
+        app.handle_key(key_i).unwrap();
+        assert_eq!(app.vim_state.mode, VimMode::Insert);
+
+        for c in "hello world\nline two\n".chars() {
+            if c == '\n' {
+                app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+                    .unwrap();
+            } else {
+                app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+                    .unwrap();
+            }
+        }
+        assert_eq!(
+            app.editor.buffer().rope().to_string(),
+            "hello world\nline two\n"
+        );
+
+        let key_esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        app.handle_key(key_esc).unwrap();
+        assert_eq!(app.vim_state.mode, VimMode::Normal);
+
+        // 2. Navigation: gg, G, h, j, k, l, w, b, 0, $
+        let key_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        app.handle_key(key_g).unwrap();
+        assert_eq!(app.vim_state.pending_operator, Some('g'));
+        app.handle_key(key_g).unwrap(); // gg -> start
+        assert_eq!(app.editor.cursors().primary().head, 0);
+        assert_eq!(app.vim_state.pending_operator, None);
+
+        let key_cap_g = KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT);
+        app.handle_key(key_cap_g).unwrap(); // G -> end
+        assert_eq!(
+            app.editor.cursors().primary().head,
+            app.editor.buffer().len_bytes()
+        );
+
+        app.handle_key(key_g).unwrap();
+        app.handle_key(key_g).unwrap(); // gg -> start (0)
+
+        let key_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::NONE);
+        app.handle_key(key_w).unwrap();
+        assert_eq!(app.editor.cursors().primary().head, 6); // start of "world"
+
+        let key_b = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE);
+        app.handle_key(key_b).unwrap();
+        assert_eq!(app.editor.cursors().primary().head, 0); // start of "hello"
+
+        let key_dollar = KeyEvent::new(KeyCode::Char('$'), KeyModifiers::NONE);
+        app.handle_key(key_dollar).unwrap();
+        assert_eq!(app.editor.cursors().primary().head, 11); // end of line 1
+
+        let key_zero = KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE);
+        app.handle_key(key_zero).unwrap();
+        assert_eq!(app.editor.cursors().primary().head, 0); // start of line 1
+
+        let key_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        app.handle_key(key_j).unwrap(); // down to line 2
+        let key_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE);
+        app.handle_key(key_k).unwrap(); // up to line 1
+        assert_eq!(app.editor.cursors().primary().head, 0);
+
+        let key_l = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE);
+        app.handle_key(key_l).unwrap(); // right 1
+        assert_eq!(app.editor.cursors().primary().head, 1);
+        let key_h = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE);
+        app.handle_key(key_h).unwrap(); // left 1
+        assert_eq!(app.editor.cursors().primary().head, 0);
+
+        // 3. Editing: x, dd, yy, p, u, Ctrl+R
+        let key_x = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+        app.handle_key(key_x).unwrap(); // delete 'h'
+        assert_eq!(
+            app.editor.buffer().rope().to_string(),
+            "ello world\nline two\n"
+        );
+
+        let key_u = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE);
+        app.handle_key(key_u).unwrap(); // undo
+        assert_eq!(
+            app.editor.buffer().rope().to_string(),
+            "hello world\nline two\n"
+        );
+
+        let key_ctrl_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL);
+        app.handle_key(key_ctrl_r).unwrap(); // redo
+        assert_eq!(
+            app.editor.buffer().rope().to_string(),
+            "ello world\nline two\n"
+        );
+
+        app.handle_key(key_u).unwrap(); // undo back to original
+        assert_eq!(
+            app.editor.buffer().rope().to_string(),
+            "hello world\nline two\n"
+        );
+
+        // yy (yank line)
+        let key_y = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
+        app.handle_key(key_y).unwrap();
+        assert_eq!(app.vim_state.pending_operator, Some('y'));
+        app.handle_key(key_y).unwrap();
+        assert_eq!(app.vim_state.pending_operator, None);
+        assert_eq!(
+            app.vim_state.yank_register,
+            Some(("hello world\n".to_string(), true))
+        );
+
+        // dd (delete line)
+        let key_d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE);
+        app.handle_key(key_d).unwrap();
+        assert_eq!(app.vim_state.pending_operator, Some('d'));
+        app.handle_key(key_d).unwrap();
+        assert_eq!(app.vim_state.pending_operator, None);
+        assert_eq!(app.editor.buffer().rope().to_string(), "line two\n");
+
+        // p (paste line below)
+        let key_p = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE);
+        app.handle_key(key_p).unwrap();
+        assert_eq!(
+            app.editor.buffer().rope().to_string(),
+            "line two\nhello world\n"
+        );
+
+        // 4. Mode transitions: a, o, O
+        app.handle_key(key_g).unwrap();
+        app.handle_key(key_g).unwrap(); // gg -> top
+        let key_a = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
+        app.handle_key(key_a).unwrap();
+        assert_eq!(app.vim_state.mode, VimMode::Insert);
+        assert_eq!(app.editor.cursors().primary().head, 1);
+        app.handle_key(key_esc).unwrap();
+
+        let key_o = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE);
+        app.handle_key(key_o).unwrap();
+        assert_eq!(app.vim_state.mode, VimMode::Insert);
+        app.handle_key(key_esc).unwrap();
+
+        let key_cap_o = KeyEvent::new(KeyCode::Char('O'), KeyModifiers::SHIFT);
+        app.handle_key(key_cap_o).unwrap();
+        assert_eq!(app.vim_state.mode, VimMode::Insert);
+        app.handle_key(key_esc).unwrap();
+
+        // 5. Visual mode: v, selection, y, d
+        let key_v = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE);
+        app.handle_key(key_v).unwrap();
+        assert_eq!(app.vim_state.mode, VimMode::Visual);
+
+        app.handle_key(key_l).unwrap();
+        app.handle_key(key_l).unwrap();
+        assert!(app.editor.cursors().primary().is_selection());
+
+        // y in visual mode yanks and returns to Normal mode
+        app.handle_key(key_y).unwrap();
+        assert_eq!(app.vim_state.mode, VimMode::Normal);
+        assert!(!app.editor.cursors().primary().is_selection());
+        assert!(app.vim_state.yank_register.is_some());
+
+        // Visual mode: delete selection with d/x
+        app.handle_key(key_v).unwrap();
+        assert_eq!(app.vim_state.mode, VimMode::Visual);
+        app.handle_key(key_w).unwrap();
+        assert!(app.editor.cursors().primary().is_selection());
+        app.handle_key(key_d).unwrap(); // delete selection
+        assert_eq!(app.vim_state.mode, VimMode::Normal);
+        assert!(!app.editor.cursors().primary().is_selection());
+
+        // Visual mode: cancel with Esc
+        app.handle_key(key_v).unwrap();
+        assert_eq!(app.vim_state.mode, VimMode::Visual);
+        app.handle_key(key_esc).unwrap();
+        assert_eq!(app.vim_state.mode, VimMode::Normal);
+
+        // Visual mode: cancel with v
+        app.handle_key(key_v).unwrap();
+        assert_eq!(app.vim_state.mode, VimMode::Visual);
+        app.handle_key(key_v).unwrap();
+        assert_eq!(app.vim_state.mode, VimMode::Normal);
+
+        // Normal mode: PageUp / PageDown
+        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
+            .unwrap();
+
+        // Pending operator cancel on non-matching key
+        app.handle_key(key_g).unwrap();
+        assert_eq!(app.vim_state.pending_operator, Some('g'));
+        app.handle_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.vim_state.pending_operator, None);
+
+        // Esc clears pending operator in Normal mode
+        app.handle_key(key_d).unwrap();
+        assert_eq!(app.vim_state.pending_operator, Some('d'));
+        app.handle_key(key_esc).unwrap();
+        assert_eq!(app.vim_state.pending_operator, None);
     }
 
     #[test]
