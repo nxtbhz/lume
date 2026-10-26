@@ -2597,4 +2597,92 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn test_editor_delete_forwards_and_multibyte() {
+        let mut editor = Editor::new();
+        editor.insert_str("abcdef").unwrap();
+        editor.cursors_mut().set_single(2); // between b and c
+
+        // Single delete forwards: deletes 'c'
+        editor.delete_forwards().unwrap();
+        assert_eq!(editor.buffer().slice_to_cow(0, editor.buffer().len_bytes()), "abdef");
+
+        // Selection delete forwards
+        editor.cursors_mut().set_cursors(vec![Cursor::with_anchor(1, 3)]); // "bd"
+        editor.delete_forwards().unwrap();
+        assert_eq!(editor.buffer().slice_to_cow(0, editor.buffer().len_bytes()), "aef");
+
+        // Delete forwards at EOF
+        editor.cursors_mut().set_single(3);
+        assert!(editor.delete_forwards().is_ok());
+        assert_eq!(editor.buffer().len_bytes(), 3);
+
+        // Delete forwards with multibyte emoji
+        let mut ed_utf8 = Editor::new();
+        ed_utf8.insert_str("A🚀B").unwrap();
+        ed_utf8.cursors_mut().set_single(1); // right before 🚀
+        ed_utf8.delete_forwards().unwrap();
+        assert_eq!(ed_utf8.buffer().slice_to_cow(0, ed_utf8.buffer().len_bytes()), "AB");
+    }
+
+    #[test]
+    fn test_editor_selection_movements_and_tab_cycle() {
+        let mut editor = Editor::new();
+        editor.insert_str("line 1\nline 2 with more words\nline 3").unwrap();
+        editor.cursors_mut().set_single(0);
+
+        // move_right with selection
+        editor.move_right(true);
+        editor.move_right(true);
+        assert_eq!(editor.cursors().primary().anchor, 0);
+        assert_eq!(editor.cursors().primary().head, 2);
+
+        // move_left collapses selection when select: false
+        editor.move_left(false);
+        assert!(!editor.cursors().primary().is_selection());
+
+        // move_down with selection
+        editor.move_down(true);
+        assert!(editor.cursors().primary().is_selection());
+
+        // move_up with selection
+        editor.move_up(true);
+
+        // move_end and move_home with selection
+        editor.move_end(true);
+        editor.move_home(true);
+
+        // Boundary movements
+        editor.cursors_mut().set_single(0);
+        editor.move_up(false); // at line 0
+        assert_eq!(editor.cursors().primary().head, 0);
+
+        let end_pos = editor.buffer().len_bytes();
+        editor.cursors_mut().set_single(end_pos);
+        editor.move_down(false); // at last line
+        assert_eq!(editor.cursors().primary().head, end_pos);
+
+        // Tab cycling and management
+        let tab2 = editor.new_tab();
+        assert_eq!(tab2, 1);
+        assert_eq!(editor.tabs().len(), 2);
+        assert_eq!(editor.active_tab_idx(), 1);
+
+        editor.next_tab();
+        assert_eq!(editor.active_tab_idx(), 0);
+        editor.prev_tab();
+        assert_eq!(editor.active_tab_idx(), 1);
+
+        assert!(editor.switch_tab(0));
+        assert!(!editor.switch_tab(999));
+
+        assert!(editor.close_tab(1));
+        assert!(!editor.close_tab(999));
+        assert_eq!(editor.tabs().len(), 1);
+
+        // Closing the only remaining tab auto-spawns a new clean tab
+        assert!(editor.close_tab(0));
+        assert_eq!(editor.tabs().len(), 1);
+    }
 }
