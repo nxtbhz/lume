@@ -2,6 +2,7 @@ mod args;
 mod explorer;
 mod prompt;
 mod search;
+mod vim;
 
 use args::{parse_cli_args, print_help, CliCommand, CliTargets};
 
@@ -24,6 +25,7 @@ use lume_core::{Editor, TextBuffer};
 use lume_syntax::{HighlightToken, Language, SyntaxRequest, SyntaxWorker, TokenType};
 use prompt::{InputPrompt, PromptAction};
 use search::{SearchField, SearchMode, SearchState};
+use vim::{VimMode, VimState};
 use std::collections::HashMap;
 use std::env;
 use std::io::{stdout, BufWriter, Write};
@@ -195,6 +197,11 @@ const COMMANDS: &[CommandItem] = &[
         shortcut: "",
     },
     CommandItem {
+        id: "settings.toggle_modal",
+        title: "Settings: Toggle Modal Mode (Vim Motions) [:set modal]",
+        shortcut: "Ctrl+Alt+V",
+    },
+    CommandItem {
         id: "app.quit",
         title: "App: Quit",
         shortcut: "Ctrl+Q",
@@ -232,6 +239,10 @@ pub struct App {
     pub syntax_worker: SyntaxWorker,
     pub syntax_cache: HashMap<usize, (u64, Arc<Vec<HighlightToken>>)>,
     pub syntax_in_flight: HashMap<usize, u64>,
+
+    // Modal Mode (Vim Motions)
+    pub modal_enabled: bool,
+    pub vim_state: VimState,
 }
 
 impl App {
@@ -370,6 +381,9 @@ impl App {
             syntax_worker: SyntaxWorker::spawn(),
             syntax_cache: HashMap::new(),
             syntax_in_flight: HashMap::new(),
+
+            modal_enabled: false,
+            vim_state: VimState::new(),
         };
 
         if let Some(msg) = initial_status {
@@ -1240,6 +1254,21 @@ impl App {
                 let status = if new_val { "Enabled" } else { "Disabled" };
                 self.set_status(format!("Smart unindent: {}", status));
             }
+            "settings.toggle_modal" | ":set modal" | ":set modal!" => {
+                self.modal_enabled = !self.modal_enabled;
+                if self.modal_enabled {
+                    self.vim_state.set_mode(VimMode::Normal);
+                    self.set_status("Modal mode (Vim Motions): ON [NORMAL]");
+                } else {
+                    self.vim_state.set_mode(VimMode::Normal);
+                    self.set_status("Modal mode (Vim Motions): OFF");
+                }
+            }
+            ":set nomodal" => {
+                self.modal_enabled = false;
+                self.vim_state.set_mode(VimMode::Normal);
+                self.set_status("Modal mode (Vim Motions): OFF");
+            }
             "app.quit" => {
                 self.running = false;
             }
@@ -1719,6 +1748,11 @@ impl App {
         }
 
         // 4. Global Shortcuts
+        if ctrl && alt && (key.code == KeyCode::Char('v') || key.code == KeyCode::Char('V')) {
+            self.execute_command("settings.toggle_modal");
+            return Ok(());
+        }
+
         if ctrl && !alt {
             match key.code {
                 KeyCode::Char('q') => {
@@ -3166,6 +3200,41 @@ mod tests {
         assert!(!app.show_line_numbers);
         app.execute_command("view.toggle_line_numbers");
         assert!(app.show_line_numbers);
+
+        // Modal toggle
+        assert!(!app.modal_enabled);
+        app.execute_command("settings.toggle_modal");
+        assert!(app.modal_enabled);
+        assert_eq!(app.vim_state.mode, VimMode::Normal);
+        app.execute_command(":set nomodal");
+        assert!(!app.modal_enabled);
+        app.execute_command(":set modal");
+        assert!(app.modal_enabled);
+    }
+
+    #[test]
+    fn test_app_vim_modal_toggle_and_commands() {
+        let mut app = App::new(None).unwrap();
+        assert!(!app.modal_enabled);
+
+        // Test Ctrl+Alt+V shortcut toggle
+        let key_v = KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        );
+        app.handle_key(key_v).unwrap();
+        assert!(app.modal_enabled);
+        assert_eq!(app.vim_state.mode, VimMode::Normal);
+
+        // Toggle back off with Ctrl+Alt+V
+        app.handle_key(key_v).unwrap();
+        assert!(!app.modal_enabled);
+
+        // Test :set modal! command
+        app.execute_command(":set modal!");
+        assert!(app.modal_enabled);
+        app.execute_command(":set modal!");
+        assert!(!app.modal_enabled);
     }
 
     #[test]
