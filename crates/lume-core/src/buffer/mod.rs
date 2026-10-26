@@ -323,4 +323,16 @@ mod tests {
             elapsed
         );
     }
+
+    #[test]
+    fn test_rope_buffer_traits_and_conversions() {
+        let def_buf = RopeBuffer::default();
+        assert_eq!(def_buf.len_bytes(), 0);
+
+        let from_str_buf = RopeBuffer::from("from str");
+        assert_eq!(from_str_buf.len_bytes(), 8);
+
+        let parsed_buf: RopeBuffer = "parsed".parse().unwrap();
+        assert_eq!(parsed_buf.len_bytes(), 6);
+    }
 }

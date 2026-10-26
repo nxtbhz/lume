@@ -3395,4 +3395,77 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT)).unwrap();
         app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT)).unwrap();
     }
+
+    #[test]
+    fn test_app_prompt_key_routing_and_save_with_path() {
+        let mut app = App::new(None).unwrap();
+
+        // 1. Open prompt and test keys: Char, Left, Right, Backspace, Down, Up, Tab
+        app.prompt = Some(InputPrompt::set_language(&["Rust", "Python", "C", "Go"]));
+        app.handle_key(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+        assert!(app.prompt.is_none());
+
+        // 2. Save file when file path exists
+        let tmp = std::env::temp_dir().join(format!("lume_save_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let file_path = tmp.join("test.txt");
+        app.editor.set_file_path(Some(file_path.clone()));
+        app.editor.insert_str("saved content").unwrap();
+        app.execute_command("file.save");
+        assert!(file_path.exists());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_app_search_key_routing_and_syntax_viewport_render() {
+        let mut app = App::new(None).unwrap();
+        app.editor.insert_str("fn main() {\n    let count = 42;\n    // comment\n    println!(\"hello\");\n}\n").unwrap();
+        app.editor.cursors_mut().set_single(0);
+
+        // Open search state and test key routing
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)).unwrap();
+        assert!(app.search_state.is_some());
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE)).unwrap();
+
+        // Switch to replace via Ctrl+H and back via Ctrl+F
+        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL)).unwrap();
+        assert_eq!(app.search_state.as_ref().unwrap().mode, SearchMode::Replace);
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)).unwrap();
+        assert_eq!(app.search_state.as_ref().unwrap().mode, SearchMode::Find);
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
+        assert!(app.search_state.is_none());
+
+        // Populate syntax cache with diverse tokens and render viewport
+        use lume_syntax::HighlightToken;
+        let tokens = vec![
+            HighlightToken { start_byte: 0, end_byte: 2, token_type: TokenType::Keyword },
+            HighlightToken { start_byte: 3, end_byte: 7, token_type: TokenType::Function },
+            HighlightToken { start_byte: 16, end_byte: 21, token_type: TokenType::Type },
+            HighlightToken { start_byte: 24, end_byte: 26, token_type: TokenType::Number },
+            HighlightToken { start_byte: 31, end_byte: 41, token_type: TokenType::Comment },
+            HighlightToken { start_byte: 46, end_byte: 54, token_type: TokenType::Macro },
+            HighlightToken { start_byte: 55, end_byte: 62, token_type: TokenType::String },
+        ];
+        let buf_id = app.editor.active_tab().id;
+        let rev = app.editor.active_tab().revision;
+        app.syntax_cache.insert(buf_id, (rev, std::sync::Arc::new(tokens)));
+
+        let mut out = Vec::new();
+        assert!(app.render(&mut out).is_ok());
+        assert!(!out.is_empty());
+    }
 }

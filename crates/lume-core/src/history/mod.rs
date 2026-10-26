@@ -184,4 +184,14 @@ mod tests {
             prop_assert_eq!(buf.slice_to_cow(0, buf.len_bytes()), initial);
         }
     }
+
+    #[test]
+    fn test_history_persistence() {
+        let tmp = std::env::temp_dir().join(format!("lume_hist_{}", std::process::id()));
+        let path = tmp.join("sub/history.json");
+        let history = History::new();
+        assert!(history.persist_to_disk(&path).is_ok());
+        assert!(path.exists());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

@@ -339,4 +339,30 @@ mod tests {
         assert_eq!(find_prev(&buf, "", 0, false), None);
         assert_eq!(count_matches(&buf, "", false), 0);
     }
+
+    #[test]
+    fn test_multiline_and_case_sensitive_search() {
+        let buf = RopeBuffer::from_str("hello\nworld\nhello\nworld");
+        // Multiline search forward
+        assert_eq!(find_next(&buf, "hello\nworld", 0, true), Some((0, 11)));
+        assert_eq!(find_next(&buf, "hello\nworld", 11, true), Some((12, 23)));
+        // Wraparound multiline search forward
+        assert_eq!(find_next(&buf, "hello\nworld", 23, true), Some((0, 11)));
+
+        // Multiline search backward
+        assert_eq!(find_prev(&buf, "hello\nworld", 23, true), Some((12, 23)));
+        assert_eq!(find_prev(&buf, "hello\nworld", 12, true), Some((0, 11)));
+        // Wraparound multiline search backward
+        assert_eq!(find_prev(&buf, "hello\nworld", 0, true), Some((12, 23)));
+
+        // Not found multiline
+        assert_eq!(find_next(&buf, "not\nfound", 0, true), None);
+        assert_eq!(find_prev(&buf, "not\nfound", 0, true), None);
+
+        // Case-sensitive count
+        assert_eq!(count_matches_in_str("Foo foo FOO foo", "foo", true), 2);
+        assert_eq!(count_matches_in_str("Foo foo FOO foo", "foo", false), 4);
+        assert_eq!(count_matches_in_str("", "foo", true), 0);
+        assert_eq!(count_matches_in_str("foo", "toolongneedle", true), 0);
+    }
 }

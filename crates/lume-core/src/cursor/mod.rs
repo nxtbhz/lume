@@ -196,4 +196,16 @@ mod tests {
         assert_eq!(cursors[1].min(), 12);
         assert_eq!(cursors[1].max(), 15);
     }
+
+    #[test]
+    fn test_cursor_traits_and_constructors() {
+        let def_set = CursorSet::default();
+        assert_eq!(def_set.cursors().len(), 1);
+
+        let single_set = CursorSet::single(42);
+        assert_eq!(single_set.primary().head, 42);
+
+        let c = Cursor::with_anchor(10, 20);
+        assert_eq!(c.range(), 10..20);
+    }
 }

@@ -298,4 +298,16 @@ mod tests {
             _ => panic!("Expected Run command"),
         }
     }
+
+    #[test]
+    fn test_print_help_and_glob_edge_cases() {
+        print_help();
+
+        // Single component glob in directory
+        let res = expand_glob("*.toml");
+        assert!(res.iter().any(|p| p.ends_with("Cargo.toml")));
+
+        let res_dir = expand_glob("s*");
+        assert!(res_dir.iter().any(|p| p.ends_with("src")));
+    }
 }
