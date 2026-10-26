@@ -1544,7 +1544,10 @@ impl Editor {
             && line_start_byte > 0
             && line_end_byte == total_bytes
         {
-            let last_char = tab.buffer.rope().char(tab.buffer.len_chars().saturating_sub(1));
+            let last_char = tab
+                .buffer
+                .rope()
+                .char(tab.buffer.len_chars().saturating_sub(1));
             if last_char != '\n' {
                 let prev_line_end = tab.buffer.line_to_byte(line);
                 let prev_newline_byte = tab
@@ -1559,7 +1562,10 @@ impl Editor {
         };
 
         let cursors_before = tab.cursors.cursors().to_vec();
-        let deleted_slice = tab.buffer.slice_to_cow(delete_start, delete_end).into_owned();
+        let deleted_slice = tab
+            .buffer
+            .slice_to_cow(delete_start, delete_end)
+            .into_owned();
 
         let delta = tab.buffer.delete(delete_start, delete_end)?;
         let deltas = vec![delta];
@@ -1648,19 +1654,19 @@ impl Editor {
         };
 
         let mut deltas = Vec::new();
-        let text_to_insert =
-            if linewise && insert_byte == tab.buffer.len_bytes() && insert_byte > 0 {
-                let last_c = tab.buffer.rope().char(tab.buffer.len_chars() - 1);
-                if last_c != '\n' {
-                    let mut s = String::from("\n");
-                    s.push_str(text);
-                    s
-                } else {
-                    text.to_string()
-                }
+        let text_to_insert = if linewise && insert_byte == tab.buffer.len_bytes() && insert_byte > 0
+        {
+            let last_c = tab.buffer.rope().char(tab.buffer.len_chars() - 1);
+            if last_c != '\n' {
+                let mut s = String::from("\n");
+                s.push_str(text);
+                s
             } else {
                 text.to_string()
-            };
+            }
+        } else {
+            text.to_string()
+        };
 
         let delta = tab.buffer.insert(insert_byte, &text_to_insert)?;
         deltas.push(delta);
@@ -3031,10 +3037,7 @@ mod tests {
 
         // 1. Navigation: move_to_start & move_to_end
         editor.move_to_end(false);
-        assert_eq!(
-            editor.cursors().primary().head,
-            editor.buffer().len_bytes()
-        );
+        assert_eq!(editor.cursors().primary().head, editor.buffer().len_bytes());
         editor.move_to_start(false);
         assert_eq!(editor.cursors().primary().head, 0);
 
@@ -3118,9 +3121,7 @@ mod tests {
 
         // UTF-8 Multibyte text
         editor.delete_line().unwrap();
-        editor
-            .insert_str("olá mundo_123 çã!\n\né isso\n")
-            .unwrap();
+        editor.insert_str("olá mundo_123 çã!\n\né isso\n").unwrap();
         editor.move_to_start(false);
 
         // Forward word movements across accents and punctuation

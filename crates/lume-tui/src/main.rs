@@ -25,13 +25,13 @@ use lume_core::{Editor, TextBuffer};
 use lume_syntax::{HighlightToken, Language, SyntaxRequest, SyntaxWorker, TokenType};
 use prompt::{InputPrompt, PromptAction};
 use search::{SearchField, SearchMode, SearchState};
-use vim::{VimMode, VimState};
 use std::collections::HashMap;
 use std::env;
 use std::io::{stdout, BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use vim::{VimMode, VimState};
 
 enum AppEvent {
     Input(KeyEvent),
@@ -840,23 +840,6 @@ impl App {
                 "[Explorer OFF] "
             };
 
-            let left_status = format!(
-                " LUME │ {}{} │ Tab {}/{} │ {}{} │ Ln {}, Col {} │ {}",
-                exp_indicator,
-                if self.focus == ActiveFocus::Explorer {
-                    "(Explorer Active)"
-                } else {
-                    "(Editor)"
-                },
-                active_tab_idx + 1,
-                self.editor.tabs().len(),
-                file_name,
-                dirty_flag,
-                cursor_row + 1,
-                cursor_col + 1,
-                lang_str
-            );
-
             let right_status = if let Some((ref msg, time)) = self.status_message {
                 if time.elapsed() < Duration::from_secs(4) {
                     format!("{} ", msg)
@@ -870,16 +853,108 @@ impl App {
             };
 
             let width = self.terminal_width as usize;
-            let spaces = width.saturating_sub(left_status.len() + right_status.len());
-            let bar = format!(
-                "{}{:width$}{}",
-                left_status,
-                "",
-                right_status,
-                width = spaces
-            );
-            let bar_trimmed: String = bar.chars().take(width).collect();
-            queue!(writer, Print(bar_trimmed), ResetColor)?;
+
+            if self.modal_enabled {
+                let (badge_fg, badge_bg) = match self.vim_state.mode {
+                    VimMode::Normal => (
+                        Color::White,
+                        Color::Rgb {
+                            r: 30,
+                            g: 100,
+                            b: 220,
+                        },
+                    ),
+                    VimMode::Insert => (
+                        Color::Black,
+                        Color::Rgb {
+                            r: 50,
+                            g: 205,
+                            b: 50,
+                        },
+                    ),
+                    VimMode::Visual => (
+                        Color::Black,
+                        Color::Rgb {
+                            r: 255,
+                            g: 140,
+                            b: 0,
+                        },
+                    ),
+                };
+                let badge_str = format!("[{}]", self.vim_state.mode.name());
+                let prefix = " LUME │ ";
+                let suffix_badge = " │";
+                let rest_left = format!(
+                    " {}{} │ Tab {}/{} │ {}{} │ Ln {}, Col {} │ {}",
+                    exp_indicator,
+                    if self.focus == ActiveFocus::Explorer {
+                        "(Explorer Active)"
+                    } else {
+                        "(Editor)"
+                    },
+                    active_tab_idx + 1,
+                    self.editor.tabs().len(),
+                    file_name,
+                    dirty_flag,
+                    cursor_row + 1,
+                    cursor_col + 1,
+                    lang_str
+                );
+                let left_len =
+                    prefix.len() + badge_str.len() + suffix_badge.len() + rest_left.len();
+                let spaces = width.saturating_sub(left_len + right_status.len());
+                let tail = format!(
+                    "{}{:spaces$}{}",
+                    rest_left,
+                    "",
+                    right_status,
+                    spaces = spaces
+                );
+                let tail_cap =
+                    width.saturating_sub(prefix.len() + badge_str.len() + suffix_badge.len());
+                let tail_trimmed: String = tail.chars().take(tail_cap).collect();
+
+                queue!(
+                    writer,
+                    Print(prefix),
+                    SetBackgroundColor(badge_bg),
+                    SetForegroundColor(badge_fg),
+                    Print(&badge_str),
+                    SetBackgroundColor(Color::DarkBlue),
+                    SetForegroundColor(Color::White),
+                    Print(suffix_badge),
+                    Print(tail_trimmed),
+                    ResetColor
+                )?;
+            } else {
+                let left_status = format!(
+                    " LUME │ {}{} │ Tab {}/{} │ {}{} │ Ln {}, Col {} │ {}",
+                    exp_indicator,
+                    if self.focus == ActiveFocus::Explorer {
+                        "(Explorer Active)"
+                    } else {
+                        "(Editor)"
+                    },
+                    active_tab_idx + 1,
+                    self.editor.tabs().len(),
+                    file_name,
+                    dirty_flag,
+                    cursor_row + 1,
+                    cursor_col + 1,
+                    lang_str
+                );
+
+                let spaces = width.saturating_sub(left_status.len() + right_status.len());
+                let bar = format!(
+                    "{}{:width$}{}",
+                    left_status,
+                    "",
+                    right_status,
+                    width = spaces
+                );
+                let bar_trimmed: String = bar.chars().take(width).collect();
+                queue!(writer, Print(bar_trimmed), ResetColor)?;
+            }
         }
 
         // 6. Overlays
@@ -1957,45 +2032,43 @@ impl App {
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
         match self.vim_state.mode {
-            VimMode::Insert => {
-                match (key.code, ctrl, alt) {
-                    (KeyCode::Esc, false, false) => {
-                        self.vim_state.set_mode(VimMode::Normal);
-                        let head = self.editor.cursors().primary().head;
-                        self.editor.cursors_mut().set_single(head);
-                    }
-                    (KeyCode::Left, false, false) => self.editor.move_left(shift),
-                    (KeyCode::Right, false, false) => self.editor.move_right(shift),
-                    (KeyCode::Up, false, false) => self.editor.move_up(shift),
-                    (KeyCode::Down, false, false) => self.editor.move_down(shift),
-                    (KeyCode::PageUp, false, false) => {
-                        let h = self.text_area_height().max(1);
-                        self.editor.page_up(h, shift);
-                    }
-                    (KeyCode::PageDown, false, false) => {
-                        let h = self.text_area_height().max(1);
-                        self.editor.page_down(h, shift);
-                    }
-                    (KeyCode::Home, false, false) => self.editor.move_home(shift),
-                    (KeyCode::End, false, false) => self.editor.move_end(shift),
-                    (KeyCode::Backspace, false, false) => {
-                        let _ = self.editor.delete_backwards();
-                    }
-                    (KeyCode::Delete, false, false) => {
-                        let _ = self.editor.delete_forwards();
-                    }
-                    (KeyCode::Enter, false, false) => {
-                        let _ = self.editor.insert_newline();
-                    }
-                    (KeyCode::Tab, false, false) => {
-                        let _ = self.editor.insert_str("    ");
-                    }
-                    (KeyCode::Char(c), false, false) => {
-                        let _ = self.editor.insert_char(c);
-                    }
-                    _ => {}
+            VimMode::Insert => match (key.code, ctrl, alt) {
+                (KeyCode::Esc, false, false) => {
+                    self.vim_state.set_mode(VimMode::Normal);
+                    let head = self.editor.cursors().primary().head;
+                    self.editor.cursors_mut().set_single(head);
                 }
-            }
+                (KeyCode::Left, false, false) => self.editor.move_left(shift),
+                (KeyCode::Right, false, false) => self.editor.move_right(shift),
+                (KeyCode::Up, false, false) => self.editor.move_up(shift),
+                (KeyCode::Down, false, false) => self.editor.move_down(shift),
+                (KeyCode::PageUp, false, false) => {
+                    let h = self.text_area_height().max(1);
+                    self.editor.page_up(h, shift);
+                }
+                (KeyCode::PageDown, false, false) => {
+                    let h = self.text_area_height().max(1);
+                    self.editor.page_down(h, shift);
+                }
+                (KeyCode::Home, false, false) => self.editor.move_home(shift),
+                (KeyCode::End, false, false) => self.editor.move_end(shift),
+                (KeyCode::Backspace, false, false) => {
+                    let _ = self.editor.delete_backwards();
+                }
+                (KeyCode::Delete, false, false) => {
+                    let _ = self.editor.delete_forwards();
+                }
+                (KeyCode::Enter, false, false) => {
+                    let _ = self.editor.insert_newline();
+                }
+                (KeyCode::Tab, false, false) => {
+                    let _ = self.editor.insert_str("    ");
+                }
+                (KeyCode::Char(c), false, false) => {
+                    let _ = self.editor.insert_char(c);
+                }
+                _ => {}
+            },
             VimMode::Visual => {
                 if !ctrl && !alt {
                     match key.code {
@@ -3657,6 +3730,51 @@ mod tests {
         assert_eq!(app.vim_state.pending_operator, Some('d'));
         app.handle_key(key_esc).unwrap();
         assert_eq!(app.vim_state.pending_operator, None);
+    }
+
+    #[test]
+    fn test_app_vim_status_bar_rendering() {
+        let mut app = App::new(None).unwrap();
+        app.terminal_width = 120;
+        app.terminal_height = 24;
+
+        // 1. Modeless (default): no vim indicators in rendered buffer
+        let mut buf = Vec::new();
+        app.render(&mut buf).unwrap();
+        let rendered_default = String::from_utf8_lossy(&buf);
+        assert!(!rendered_default.contains("[NORMAL]"));
+        assert!(!rendered_default.contains("[INSERT]"));
+        assert!(!rendered_default.contains("[VISUAL]"));
+
+        // 2. Normal mode: contains [NORMAL]
+        app.execute_command(":set modal");
+        buf.clear();
+        app.render(&mut buf).unwrap();
+        let rendered_normal = String::from_utf8_lossy(&buf);
+        assert!(rendered_normal.contains("[NORMAL]"));
+
+        // 3. Insert mode: contains [INSERT]
+        app.vim_state.set_mode(VimMode::Insert);
+        buf.clear();
+        app.render(&mut buf).unwrap();
+        let rendered_insert = String::from_utf8_lossy(&buf);
+        assert!(rendered_insert.contains("[INSERT]"));
+
+        // 4. Visual mode: contains [VISUAL]
+        app.vim_state.set_mode(VimMode::Visual);
+        buf.clear();
+        app.render(&mut buf).unwrap();
+        let rendered_visual = String::from_utf8_lossy(&buf);
+        assert!(rendered_visual.contains("[VISUAL]"));
+
+        // 5. Toggle off: back to no vim indicators
+        app.execute_command(":set nomodal");
+        buf.clear();
+        app.render(&mut buf).unwrap();
+        let rendered_off = String::from_utf8_lossy(&buf);
+        assert!(!rendered_off.contains("[NORMAL]"));
+        assert!(!rendered_off.contains("[INSERT]"));
+        assert!(!rendered_off.contains("[VISUAL]"));
     }
 
     #[test]
