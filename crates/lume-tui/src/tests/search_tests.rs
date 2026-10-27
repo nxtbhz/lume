@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -223,6 +222,10 @@ fn test_app_file_explorer_toggle() {
 
 #[test]
 fn test_app_prompt_save_and_open() {
+    let test_dir = TestDir::new("lume_test_save");
+    let target_path = test_dir.path().join("saved.txt");
+    let target_path_input = target_path.to_string_lossy();
+
     let mut app = App::new(None).unwrap();
     app.editor.insert_str("test file content").unwrap();
 
@@ -232,8 +235,7 @@ fn test_app_prompt_save_and_open() {
     assert!(app.prompt.is_some());
 
     // Type target filename
-    let target_path = "/tmp/lume_test_save.txt";
-    for c in target_path.chars() {
+    for c in target_path_input.chars() {
         app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
             .unwrap();
     }
@@ -242,7 +244,7 @@ fn test_app_prompt_save_and_open() {
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .unwrap();
     assert!(app.prompt.is_none());
-    assert_eq!(app.editor.file_path(), Some(Path::new(target_path)));
+    assert_eq!(app.editor.file_path(), Some(target_path.as_path()));
     assert!(!app.editor.is_dirty());
 
     // Open File prompt
@@ -250,15 +252,13 @@ fn test_app_prompt_save_and_open() {
         .unwrap();
     assert!(app.prompt.is_some());
 
-    for c in target_path.chars() {
+    for c in target_path_input.chars() {
         app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
             .unwrap();
     }
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .unwrap();
     assert!(app.prompt.is_none());
-
-    let _ = std::fs::remove_file(target_path);
 }
 
 #[test]

@@ -133,9 +133,10 @@ fn test_app_explorer_delete_folder_and_unlinks_open_tab() {
 
     let mut app = App::from_paths(&[tmp_dir, &sub_file]).unwrap();
     assert_eq!(app.editor.tabs().len(), 1);
+    let editor_path = app.editor.file_path().unwrap();
     assert_eq!(
-        app.editor.file_path(),
-        Some(sub_file.canonicalize().unwrap().as_path())
+        editor_path.canonicalize().unwrap(),
+        sub_file.canonicalize().unwrap()
     );
 
     app.focus = ActiveFocus::Explorer;
