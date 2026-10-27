@@ -136,6 +136,20 @@ pub const COMMANDS: &[CommandItem] = &[
 ];
 
 impl App {
+    pub fn filtered_commands(&self) -> Vec<&'static CommandItem> {
+        if self.palette_query.is_empty() {
+            COMMANDS.iter().collect()
+        } else {
+            let q = self.palette_query.to_lowercase();
+            COMMANDS
+                .iter()
+                .filter(|c| {
+                    c.title.to_lowercase().contains(&q) || c.shortcut.to_lowercase().contains(&q)
+                })
+                .collect()
+        }
+    }
+
     pub fn execute_command(&mut self, id: &str) {
         match id {
             "file.open" => {
