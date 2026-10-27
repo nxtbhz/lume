@@ -1,0 +1,979 @@
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+use crate::app::{ActiveFocus, App};
+use crate::prompt::InputPrompt;
+use crate::search::SearchMode;
+use crate::tests::TestDir;
+use lume_core::TextBuffer;
+use lume_syntax::{Language, TokenType};
+
+#[test]
+fn test_app_find_incremental_and_navigation() {
+    let mut app = App::new(None).unwrap();
+    app.editor
+        .insert_str("alpha beta alpha gamma alpha")
+        .unwrap();
+    app.editor.cursors_mut().set_single(0);
+
+    // 1. Trigger Ctrl+F
+    app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(app.search_state.is_some());
+
+    // 2. Type "alpha"
+    for c in "alpha".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+            .unwrap();
+    }
+    assert_eq!(app.editor.cursors().primary().range(), 0..5);
+
+    // 3. Advance to next match via Enter
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(app.editor.cursors().primary().range(), 11..16);
+
+    // 4. Advance via F3
+    app.handle_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(app.editor.cursors().primary().range(), 23..28);
+
+    // 5. Previous via Shift+F3
+    app.handle_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::SHIFT))
+        .unwrap();
+    assert_eq!(app.editor.cursors().primary().range(), 11..16);
+
+    // 6. Esc cancels and restores initial position (0)
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.search_state.is_none());
+    assert_eq!(app.editor.cursors().primary().head, 0);
+}
+
+#[test]
+fn test_app_replace_current_and_replace_all_atomic() {
+    let mut app = App::new(None).unwrap();
+    app.editor.insert_str("val other val extra val").unwrap();
+    app.editor.cursors_mut().set_single(0);
+
+    // Trigger Ctrl+H
+    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(app.search_state.is_some());
+
+    // Type query "val"
+    for c in "val".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+            .unwrap();
+    }
+    // Switch to Replacement field
+    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+        .unwrap();
+    for c in "result".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+            .unwrap();
+    }
+
+    // Replace current occurrence via Enter
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    assert!(app
+        .editor
+        .buffer()
+        .slice_to_cow(0, app.editor.buffer().len_bytes())
+        .starts_with("result other"));
+
+    // Replace all remaining via Ctrl+Alt+Enter
+    let ctrl_alt_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL | KeyModifiers::ALT);
+    app.handle_key(ctrl_alt_enter).unwrap();
+    assert_eq!(
+        app.editor
+            .buffer()
+            .slice_to_cow(0, app.editor.buffer().len_bytes()),
+        "result other result extra result"
+    );
+
+    // First undo via Ctrl+Z while search bar is still open reverts the atomic replace_all
+    app.handle_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(
+        app.editor
+            .buffer()
+            .slice_to_cow(0, app.editor.buffer().len_bytes()),
+        "result other val extra val"
+    );
+
+    // Second undo via Ctrl+Z reverts the earlier single replace_current
+    app.handle_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(
+        app.editor
+            .buffer()
+            .slice_to_cow(0, app.editor.buffer().len_bytes()),
+        "val other val extra val"
+    );
+}
+
+#[test]
+fn test_app_search_esc_clamps_cursor_when_file_shortened() {
+    let mut app = App::new(None).unwrap();
+    app.editor
+        .insert_str("a long text that will be drastically shortened")
+        .unwrap();
+    let len = app.editor.buffer().len_bytes();
+    app.editor.cursors_mut().set_single(len);
+
+    // Open Ctrl+H
+    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL))
+        .unwrap();
+
+    // Shorten buffer
+    let _ = app.editor.replace_all(
+        "a long text that will be drastically shortened",
+        "short",
+        false,
+    );
+    assert_eq!(app.editor.buffer().len_bytes(), 5);
+
+    // Press Esc: must not panic on restoring pre-search cursor (> 5)
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.search_state.is_none());
+    assert_eq!(app.editor.cursors().primary().head, 5);
+}
+
+#[test]
+fn test_app_f3_on_replacement_field_navigates_without_replacing() {
+    let mut app = App::new(None).unwrap();
+    app.editor.insert_str("cat dog cat bird cat").unwrap();
+    app.editor.cursors_mut().set_single(0);
+
+    // Open Replace mode
+    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL))
+        .unwrap();
+    // Type query "cat"
+    for c in "cat".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+            .unwrap();
+    }
+    // Switch to Replacement field
+    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+        .unwrap();
+    for c in "lion".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+            .unwrap();
+    }
+
+    // Press F3: should advance search to match 2, NOT replace!
+    app.handle_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(
+        app.editor
+            .buffer()
+            .slice_to_cow(0, app.editor.buffer().len_bytes()),
+        "cat dog cat bird cat"
+    );
+    assert_eq!(app.editor.cursors().primary().range(), 8..11);
+}
+
+#[test]
+fn test_app_active_match_idx_sync() {
+    let mut app = App::new(None).unwrap();
+    app.editor
+        .insert_str("zero one match one match two match three match")
+        .unwrap();
+    // Place initial cursor before match #2 (at offset 18)
+    app.editor.cursors_mut().set_single(18);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL))
+        .unwrap();
+    for c in "match".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+            .unwrap();
+    }
+
+    // Active match should be match #2 (index 1), with total 4 matches
+    let state = app.search_state.as_ref().unwrap();
+    assert_eq!(state.match_count, 4);
+    assert_eq!(state.active_match_idx, 1);
+
+    // Advance to match #3
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    let state = app.search_state.as_ref().unwrap();
+    assert_eq!(state.active_match_idx, 2);
+}
+
+#[test]
+fn test_app_file_explorer_toggle() {
+    let mut app = App::new(None).unwrap();
+    assert!(app.explorer.is_visible);
+
+    // F2 toggles explorer
+    app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE))
+        .unwrap();
+    assert!(!app.explorer.is_visible);
+
+    app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.explorer.is_visible);
+}
+
+#[test]
+fn test_app_prompt_save_and_open() {
+    let mut app = App::new(None).unwrap();
+    app.editor.insert_str("test file content").unwrap();
+
+    // Ctrl+S triggers Save As prompt on untitled buffer
+    app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(app.prompt.is_some());
+
+    // Type target filename
+    let target_path = "/tmp/lume_test_save.txt";
+    for c in target_path.chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+            .unwrap();
+    }
+
+    // Enter submits save
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.prompt.is_none());
+    assert_eq!(app.editor.file_path(), Some(Path::new(target_path)));
+    assert!(!app.editor.is_dirty());
+
+    // Open File prompt
+    app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(app.prompt.is_some());
+
+    for c in target_path.chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+            .unwrap();
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.prompt.is_none());
+
+    let _ = std::fs::remove_file(target_path);
+}
+
+#[test]
+fn test_app_language_override() {
+    let mut app = App::new(None).unwrap();
+    assert_eq!(app.current_language(), None);
+
+    // Set language mode via command
+    app.execute_command("language.set_mode");
+    assert!(app.prompt.is_some());
+
+    for c in "Rust".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+            .unwrap();
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(app.current_language(), Some(Language::Rust));
+}
+
+#[test]
+fn test_app_syntax_worker_async_highlighting() {
+    let mut app = App::new(None).unwrap();
+    app.editor.insert_str("fn main() { let x = 42; }").unwrap();
+    app.editor.set_language_override(Some("Rust".to_string()));
+
+    // First render triggers async syntax request
+    let mut sink = std::io::sink();
+    app.render(&mut sink).unwrap();
+
+    // Wait for background worker to produce tokens (up to 500ms)
+    for _ in 0..50 {
+        if app.has_pending_syntax_response() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let tokens = app.update_syntax_highlights();
+    assert!(
+        !tokens.is_empty(),
+        "SyntaxWorker should have generated tokens"
+    );
+
+    let has_keyword = tokens.iter().any(|t| t.token_type == TokenType::Keyword);
+    let has_function = tokens.iter().any(|t| t.token_type == TokenType::Function);
+    assert!(has_keyword, "Expected keyword token (e.g. fn / let)");
+    assert!(has_function, "Expected function token (e.g. main)");
+}
+
+#[test]
+fn test_app_ignores_key_release_events() {
+    let mut app = App::new(None).unwrap();
+    let press =
+        KeyEvent::new_with_kind(KeyCode::Char('a'), KeyModifiers::NONE, KeyEventKind::Press);
+    let release = KeyEvent::new_with_kind(
+        KeyCode::Char('a'),
+        KeyModifiers::NONE,
+        KeyEventKind::Release,
+    );
+
+    app.handle_key(press).unwrap();
+    app.handle_key(release).unwrap();
+
+    assert_eq!(
+        app.editor
+            .buffer()
+            .slice_to_cow(0, app.editor.buffer().len_bytes()),
+        "a"
+    );
+}
+
+#[test]
+fn test_app_page_up_and_page_down() {
+    let mut app = App::new(None).unwrap();
+    let content = (1..=100)
+        .map(|i| format!("line {}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    app.editor.insert_str(&content).unwrap();
+    app.editor.move_lines(-100, false);
+    app.adjust_viewport();
+
+    assert_eq!(app.editor.cursor_line_col().0, 0);
+
+    // Page Down
+    app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE))
+        .unwrap();
+    let h = app.text_area_height();
+    assert_eq!(app.editor.cursor_line_col().0, h);
+
+    // Page Up
+    app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(app.editor.cursor_line_col().0, 0);
+}
+
+#[test]
+fn test_app_open_directory_workspace() {
+    let test_dir = TestDir::new("lume_test_ws");
+    let tmp_dir = test_dir.path();
+    let sub_file = tmp_dir.join("workspace_sample.txt");
+    std::fs::write(&sub_file, "sample in ws").unwrap();
+
+    let app = App::from_paths(&[tmp_dir]).unwrap();
+    assert_eq!(app.explorer.root, std::fs::canonicalize(tmp_dir).unwrap());
+    // Editor should have 1 untitled clean tab
+    assert_eq!(app.editor.tabs().len(), 1);
+    assert!(app.editor.file_path().is_none());
+}
+
+#[test]
+fn test_app_open_single_existing_file() {
+    let app = App::from_paths(&["Cargo.toml"]).unwrap();
+    assert_eq!(app.editor.tabs().len(), 1);
+    assert!(app.editor.file_path().is_some());
+    assert!(app.editor.buffer().len_bytes() > 0);
+}
+
+#[test]
+fn test_app_open_single_new_file() {
+    let new_file_name = format!("new_file_{}.txt", std::process::id());
+    let app = App::from_paths(&[&new_file_name]).unwrap();
+    assert_eq!(app.editor.tabs().len(), 1);
+    assert!(app.editor.file_path().is_some());
+    assert_eq!(app.editor.buffer().len_bytes(), 0);
+}
+
+#[test]
+fn test_app_open_multiple_files_tabs() {
+    let test_dir = TestDir::new("lume_multi");
+    let tmp_dir = test_dir.path();
+    let file1 = tmp_dir.join("file1.txt");
+    let file2 = tmp_dir.join("file2.txt");
+    std::fs::write(&file1, "file1 content").unwrap();
+    std::fs::write(&file2, "file2 content").unwrap();
+
+    let app = App::from_paths(&[&file1, &file2]).unwrap();
+    assert_eq!(app.editor.tabs().len(), 2);
+    assert_eq!(app.editor.active_tab_idx(), 0);
+
+    // Tab 1
+    assert_eq!(
+        app.editor
+            .buffer()
+            .slice_to_cow(0, app.editor.buffer().len_bytes()),
+        "file1 content"
+    );
+}
+
+#[test]
+fn test_app_open_directory_and_file() {
+    let test_dir = TestDir::new("lume_ws_file");
+    let tmp_dir = test_dir.path();
+    let file = tmp_dir.join("hello.txt");
+    std::fs::write(&file, "hello world").unwrap();
+
+    let app = App::from_paths(&[tmp_dir, &file]).unwrap();
+    assert_eq!(app.explorer.root, std::fs::canonicalize(tmp_dir).unwrap());
+    assert_eq!(app.editor.tabs().len(), 1);
+    assert_eq!(
+        app.editor
+            .buffer()
+            .slice_to_cow(0, app.editor.buffer().len_bytes()),
+        "hello world"
+    );
+}
+
+#[test]
+fn test_app_open_wildcard_glob() {
+    let test_dir = TestDir::new("lume_glob");
+    let tmp_dir = test_dir.path();
+    let f1 = tmp_dir.join("test_a.txt");
+    let f2 = tmp_dir.join("test_b.txt");
+    std::fs::write(&f1, "content a").unwrap();
+    std::fs::write(&f2, "content b").unwrap();
+
+    let pattern = format!("{}/*.txt", tmp_dir.display());
+    let app = App::from_paths(&[&pattern]).unwrap();
+    assert_eq!(app.editor.tabs().len(), 2);
+    assert_eq!(app.editor.active_tab_idx(), 0);
+}
+
+#[test]
+fn test_app_explorer_create_nested_folder_via_prompt() {
+    let test_dir = TestDir::new("lume_app_mkdir");
+    let tmp_dir = test_dir.path();
+
+    let mut app = App::from_paths(&[tmp_dir]).unwrap();
+    app.focus = ActiveFocus::Explorer;
+
+    // Press 'n' in Explorer to open new folder prompt
+    app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.prompt.is_some());
+
+    // Type nested folder name 'deep/nested/pkg'
+    for c in "deep/nested/pkg".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+            .unwrap();
+    }
+
+    // Press Enter to submit
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.prompt.is_none());
+
+    let created_path = app.explorer.root.join("deep/nested/pkg");
+    assert!(created_path.exists());
+    assert!(created_path.is_dir());
+}
+
+#[test]
+fn test_app_explorer_delete_folder_and_unlinks_open_tab() {
+    let test_dir = TestDir::new("lume_app_rmdir");
+    let tmp_dir = test_dir.path();
+
+    let folder = tmp_dir.join("submodule");
+    std::fs::create_dir_all(&folder).unwrap();
+    let sub_file = folder.join("file.rs");
+    std::fs::write(&sub_file, "fn test() {}").unwrap();
+
+    let mut app = App::from_paths(&[tmp_dir, &sub_file]).unwrap();
+    assert_eq!(app.editor.tabs().len(), 1);
+    assert_eq!(
+        app.editor.file_path(),
+        Some(sub_file.canonicalize().unwrap().as_path())
+    );
+
+    app.focus = ActiveFocus::Explorer;
+    // Select 'submodule' directory in explorer
+    if let Some(pos) = app
+        .explorer
+        .items
+        .iter()
+        .position(|it| it.name == "submodule")
+    {
+        app.explorer.selected_idx = pos;
+    }
+
+    // Press 'd' to open delete prompt
+    app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.prompt.is_some());
+
+    // Confirm delete with Enter
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.prompt.is_none());
+
+    // Folder is deleted on disk
+    assert!(!folder.exists());
+
+    // Open tab for file inside deleted directory must have its file_path unlinked
+    assert!(app.editor.file_path().is_none());
+}
+
+#[test]
+fn test_delete_folder_unlinks_relative_path_tabs_and_cleans_journal() {
+    let test_dir = TestDir::new("lume_rel_unlink");
+    let tmp_dir = test_dir.path();
+
+    let sub_folder = tmp_dir.join("pkg");
+    std::fs::create_dir_all(&sub_folder).unwrap();
+    let sub_file = sub_folder.join("lib.rs");
+    std::fs::write(&sub_file, "pub fn hello() {}").unwrap();
+
+    let mut app = App::from_paths(&[tmp_dir]).unwrap();
+    // Open tab with a relative path: "pkg/lib.rs"
+    let rel_file = PathBuf::from("pkg/lib.rs");
+    app.editor.open_or_load(tmp_dir.join(&rel_file)).unwrap();
+    // Explicitly set relative path on tab to test relative unlinking robustness
+    app.editor.set_file_path(Some(rel_file.clone()));
+    // Create crash journal for it
+    let canon_file = std::fs::canonicalize(&sub_file).unwrap();
+    lume_core::Journal::record(&canon_file, "unsaved content").unwrap();
+    assert!(lume_core::Journal::has_journal(&canon_file));
+
+    app.focus = ActiveFocus::Explorer;
+    let pkg_canon = std::fs::canonicalize(&sub_folder).unwrap();
+    // Delete folder via command / app
+    app.handle_deleted_folder_tabs(&pkg_canon);
+    app.explorer.delete_folder(&pkg_canon).unwrap();
+
+    // The relative tab must be unlinked
+    assert!(app.editor.file_path().is_none());
+    assert!(app.editor.is_dirty());
+    // Journal must have been removed
+    assert!(!lume_core::Journal::has_journal(&canon_file));
+}
+
+#[test]
+fn test_explorer_ignores_ctrl_modifiers_on_char_actions() {
+    let mut app = App::new(None).unwrap();
+    app.focus = ActiveFocus::Explorer;
+
+    // Ctrl+A should NOT open new folder prompt
+    app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(
+        app.prompt.is_none(),
+        "Ctrl+A should not open prompt in explorer"
+    );
+
+    // Ctrl+D should NOT open delete prompt
+    app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(
+        app.prompt.is_none(),
+        "Ctrl+D should not open prompt in explorer"
+    );
+}
+
+#[test]
+fn test_app_smart_indent_on_enter() {
+    let mut app = App::new(None).unwrap();
+    app.editor.insert_str("    fn test() {").unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(
+        app.editor
+            .buffer()
+            .slice_to_cow(0, app.editor.buffer().len_bytes()),
+        "    fn test() {\n        "
+    );
+    assert_eq!(app.editor.cursor_line_col(), (1, 8));
+}
+
+#[test]
+fn test_app_smart_unindent_on_backspace() {
+    let mut app = App::new(None).unwrap();
+    app.editor.insert_str("        ").unwrap();
+    assert_eq!(app.editor.cursor_line_col(), (0, 8));
+
+    app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(
+        app.editor
+            .buffer()
+            .slice_to_cow(0, app.editor.buffer().len_bytes()),
+        "    "
+    );
+    assert_eq!(app.editor.cursor_line_col(), (0, 4));
+}
+
+#[test]
+fn test_app_auto_pairs_and_overtype() {
+    let mut app = App::new(None).unwrap();
+    // Type '(' -> inserts '()'
+    app.handle_key(KeyEvent::new(KeyCode::Char('('), KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(
+        app.editor
+            .buffer()
+            .slice_to_cow(0, app.editor.buffer().len_bytes()),
+        "()"
+    );
+    assert_eq!(app.editor.cursor_line_col(), (0, 1));
+
+    // Type ')' -> overtypes
+    app.handle_key(KeyEvent::new(KeyCode::Char(')'), KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(
+        app.editor
+            .buffer()
+            .slice_to_cow(0, app.editor.buffer().len_bytes()),
+        "()"
+    );
+    assert_eq!(app.editor.cursor_line_col(), (0, 2));
+}
+
+#[test]
+fn test_app_toggle_settings_commands() {
+    let mut app = App::new(None).unwrap();
+
+    // Toggle Auto-Pairs
+    assert!(app.editor.config().auto_pairs);
+    app.execute_command("settings.toggle_auto_pairs");
+    assert!(!app.editor.config().auto_pairs);
+    assert_eq!(
+        app.status_message.as_ref().map(|(s, _)| s.as_str()),
+        Some("Auto-closing pairs: Disabled")
+    );
+
+    app.execute_command("settings.toggle_auto_pairs");
+    assert!(app.editor.config().auto_pairs);
+    assert_eq!(
+        app.status_message.as_ref().map(|(s, _)| s.as_str()),
+        Some("Auto-closing pairs: Enabled")
+    );
+
+    // Toggle Smart Indent
+    assert!(app.editor.config().smart_indent);
+    app.execute_command("settings.toggle_smart_indent");
+    assert!(!app.editor.config().smart_indent);
+    assert_eq!(
+        app.status_message.as_ref().map(|(s, _)| s.as_str()),
+        Some("Smart indentation: Disabled")
+    );
+
+    // Toggle Smart Unindent
+    assert!(app.editor.config().smart_unindent);
+    app.execute_command("settings.toggle_smart_unindent");
+    assert!(!app.editor.config().smart_unindent);
+    assert_eq!(
+        app.status_message.as_ref().map(|(s, _)| s.as_str()),
+        Some("Smart unindent: Disabled")
+    );
+}
+
+#[test]
+fn test_app_bracket_matching_ctrl_m() {
+    let mut app = App::new(None).unwrap();
+    app.editor.insert_str("fn main() { return; }").unwrap();
+    // Index of '(' is 7, ')' is 8
+    app.editor.cursors_mut().set_single(7);
+
+    // Press Ctrl+M
+    app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.editor.cursors().primary().head, 8);
+    assert_eq!(
+        app.status_message.as_ref().map(|(s, _)| s.as_str()),
+        Some("Jumped to matching bracket")
+    );
+
+    // Press Ctrl+M again: jumps back to '('
+    app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.editor.cursors().primary().head, 7);
+}
+
+#[test]
+fn test_app_bracket_matching_command_palette() {
+    let mut app = App::new(None).unwrap();
+    app.editor.insert_str("{ let a = 1; }").unwrap();
+    // Index of '{' is 0, '}' is 13
+    app.editor.cursors_mut().set_single(0);
+
+    app.execute_command("navigation.match_bracket");
+    assert_eq!(app.editor.cursors().primary().head, 13);
+    assert_eq!(
+        app.status_message.as_ref().map(|(s, _)| s.as_str()),
+        Some("Jumped to matching bracket")
+    );
+
+    // If cursor has no matching bracket
+    let mut app_none = App::new(None).unwrap();
+    app_none.editor.insert_str("hello").unwrap();
+    app_none.editor.cursors_mut().set_single(0);
+    app_none.execute_command("navigation.match_bracket");
+    assert_eq!(
+        app_none.status_message.as_ref().map(|(s, _)| s.as_str()),
+        Some("No matching bracket found")
+    );
+}
+
+#[test]
+fn test_app_bracket_matching_render_highlight() {
+    let mut app = App::new(None).unwrap();
+    app.editor.insert_str("fn test() {}").unwrap();
+    // Place cursor on '(' (offset 7)
+    app.editor.cursors_mut().set_single(7);
+
+    let mut out = Vec::new();
+    app.render(&mut out).unwrap();
+    let rendered = String::from_utf8_lossy(&out);
+
+    // Should contain 48;2;70;70;110 (the RGB escape sequence for matching bracket highlight)
+    assert!(
+        rendered.contains("48;2;70;70;110"),
+        "Render output should contain bracket matching highlight RGB 70;70;110"
+    );
+}
+
+#[test]
+fn test_app_key_navigation_and_tab_shortcuts() {
+    let mut app = App::new(None).unwrap();
+    app.editor.insert_str("line 1\nline 2\nline 3").unwrap();
+    app.editor.cursors_mut().set_single(0);
+
+    // Arrow keys
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))
+        .unwrap();
+
+    // Shift + Arrow keys (Selection)
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT))
+        .unwrap();
+    assert!(app.editor.cursors().primary().is_selection());
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+        .unwrap(); // collapses
+    assert!(!app.editor.cursors().primary().is_selection());
+
+    // Tab navigation shortcuts
+    app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.editor.tabs().len(), 2);
+
+    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT))
+        .unwrap();
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.editor.tabs().len(), 1);
+
+    // Open Which-Key via F1, render, and close via Esc
+    app.handle_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.which_key_open);
+    let mut buf = Vec::new();
+    assert!(app.render(&mut buf).is_ok());
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .unwrap();
+    assert!(!app.which_key_open);
+
+    // Toggle explorer via F2
+    assert!(app.explorer.is_visible);
+    app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE))
+        .unwrap();
+    assert!(!app.explorer.is_visible);
+    app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.explorer.is_visible);
+}
+
+#[test]
+fn test_app_explorer_keyboard_navigation() {
+    let mut app = App::new(None).unwrap();
+    app.focus = ActiveFocus::Explorer;
+    assert!(app.explorer.is_visible);
+
+    // Explorer key events
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE))
+        .unwrap();
+
+    // Switch focus back to Editor
+    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(app.focus, ActiveFocus::Editor);
+}
+
+#[test]
+fn test_app_f3_and_alt_tab_navigation() {
+    let mut app = App::new(None).unwrap();
+    app.editor.insert_str("foo bar foo baz foo").unwrap();
+    app.last_search_query = Some("foo".to_string());
+
+    // F3 forward search
+    app.handle_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.editor.cursors().primary().is_selection());
+
+    // Shift+F3 backward search
+    app.handle_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::SHIFT))
+        .unwrap();
+
+    // Alt+Right and Alt+Left tab switching
+    assert_eq!(app.editor.active_tab_idx(), 0);
+    app.editor.new_tab();
+    assert_eq!(app.editor.tabs().len(), 2);
+    assert_eq!(app.editor.active_tab_idx(), 1);
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT))
+        .unwrap();
+    assert_eq!(app.editor.active_tab_idx(), 0);
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT))
+        .unwrap();
+    assert_eq!(app.editor.active_tab_idx(), 1);
+}
+
+#[test]
+fn test_app_prompt_key_routing_and_save_with_path() {
+    let mut app = App::new(None).unwrap();
+
+    // 1. Open prompt and test keys: Char, Left, Right, Backspace, Down, Up, Tab
+    app.prompt = Some(InputPrompt::set_language(&["Rust", "Python", "C", "Go"]));
+    app.handle_key(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.prompt.is_none());
+
+    // 2. Save file when file path exists
+    let test_dir = TestDir::new("lume_save");
+    let file_path = test_dir.path().join("test.txt");
+    app.editor.set_file_path(Some(file_path.clone()));
+    app.editor.insert_str("saved content").unwrap();
+    app.execute_command("file.save");
+    assert!(file_path.exists());
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "saved content"
+    );
+}
+
+#[test]
+fn test_app_search_key_routing_and_syntax_viewport_render() {
+    let mut app = App::new(None).unwrap();
+    app.editor
+        .insert_str(
+            "fn main() {\n    let count = 42;\n    // comment\n    println!(\"hello\");\n}\n",
+        )
+        .unwrap();
+    app.editor.cursors_mut().set_single(0);
+
+    // Open search state and test key routing
+    app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(app.search_state.is_some());
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE))
+        .unwrap();
+
+    // Switch to replace via Ctrl+H and back via Ctrl+F
+    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.search_state.as_ref().unwrap().mode, SearchMode::Replace);
+    app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.search_state.as_ref().unwrap().mode, SearchMode::Find);
+
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.search_state.is_none());
+
+    // Populate syntax cache with diverse tokens and render viewport
+    use lume_syntax::HighlightToken;
+    let tokens = vec![
+        HighlightToken {
+            start_byte: 0,
+            end_byte: 2,
+            token_type: TokenType::Keyword,
+        },
+        HighlightToken {
+            start_byte: 3,
+            end_byte: 7,
+            token_type: TokenType::Function,
+        },
+        HighlightToken {
+            start_byte: 16,
+            end_byte: 21,
+            token_type: TokenType::Type,
+        },
+        HighlightToken {
+            start_byte: 24,
+            end_byte: 26,
+            token_type: TokenType::Number,
+        },
+        HighlightToken {
+            start_byte: 31,
+            end_byte: 41,
+            token_type: TokenType::Comment,
+        },
+        HighlightToken {
+            start_byte: 46,
+            end_byte: 54,
+            token_type: TokenType::Macro,
+        },
+        HighlightToken {
+            start_byte: 55,
+            end_byte: 62,
+            token_type: TokenType::String,
+        },
+    ];
+    let buf_id = app.editor.active_tab().id;
+    let rev = app.editor.active_tab().revision;
+    app.syntax_cache
+        .insert(buf_id, (rev, std::sync::Arc::new(tokens)));
+
+    let mut out = Vec::new();
+    assert!(app.render(&mut out).is_ok());
+    assert!(!out.is_empty());
+}
