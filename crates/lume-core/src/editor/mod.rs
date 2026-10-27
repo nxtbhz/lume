@@ -1,6 +1,7 @@
 pub mod bracket;
 pub mod config;
 pub mod indent;
+pub mod lines;
 pub mod motions;
 pub mod save;
 pub mod search;

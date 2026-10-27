@@ -181,3 +181,133 @@ fn test_app_execute_all_commands() {
     app.execute_command(":set modal");
     assert!(app.modal_enabled);
 }
+
+#[test]
+fn test_app_page_up_and_page_down() {
+    let mut app = App::new(None).unwrap();
+    let content = (1..=100)
+        .map(|i| format!("line {}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    app.editor.insert_str(&content).unwrap();
+    app.editor.move_lines(-100, false);
+    app.adjust_viewport();
+
+    assert_eq!(app.editor.cursor_line_col().0, 0);
+
+    // Page Down
+    app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE))
+        .unwrap();
+    let h = app.text_area_height();
+    assert_eq!(app.editor.cursor_line_col().0, h);
+
+    // Page Up
+    app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(app.editor.cursor_line_col().0, 0);
+}
+
+#[test]
+fn test_app_events_tick_and_overlay_edge_cases() {
+    use crate::input::AppEvent;
+    use crate::prompt::InputPrompt;
+    use crate::tests::TestDir;
+
+    let test_dir = TestDir::new("lume_events_test");
+    let file_path = test_dir.path().join("saved.rs");
+    std::fs::write(&file_path, "fn hello() {}\n").unwrap();
+
+    // Test App::new with directory and file
+    let app_dir = App::new(Some(test_dir.path().to_path_buf())).unwrap();
+    assert!(app_dir.editor.file_path().is_none());
+
+    let mut app = App::new(Some(file_path.clone())).unwrap();
+    let mut sink = std::io::sink();
+
+    // AppEvent::Resize
+    app.handle_event(AppEvent::Resize(100, 30), &mut sink)
+        .unwrap();
+    assert_eq!((app.terminal_width, app.terminal_height), (100, 30));
+
+    // AppEvent::Input
+    app.handle_event(
+        AppEvent::Input(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+        &mut sink,
+    )
+    .unwrap();
+    assert!(app.editor.is_dirty());
+
+    // AppEvent::FocusLost triggers async save when dirty and file_path is set
+    app.handle_event(AppEvent::FocusLost, &mut sink).unwrap();
+    for _ in 0..20 {
+        app.handle_tick(&mut sink).unwrap();
+        if !app.editor.is_dirty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    // Selection-seeded edit.find and edit.replace
+    app.editor.cursors_mut().set_single(0);
+    app.editor.move_right(true);
+    app.editor.move_right(true);
+    app.execute_command("edit.find");
+    assert!(app.search_state.is_some());
+    // Shift+Enter, Backspace, Ctrl+Y inside search overlay
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .unwrap();
+
+    app.editor.cursors_mut().set_single(0);
+    app.editor.move_right(true);
+    app.execute_command("edit.replace");
+    assert!(app.search_state.is_some());
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .unwrap();
+
+    // Prompt Esc, Plain Text language, Unknown language, Open non-existent file, Cancel folder delete
+    app.execute_command("file.open");
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.prompt.is_none());
+
+    app.execute_command("file.open");
+    for c in "does_not_exist_12345.rs".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+            .unwrap();
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+
+    app.prompt = Some(InputPrompt::set_language(&[]));
+    for c in "Plain Text".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+            .unwrap();
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+
+    app.prompt = Some(InputPrompt::set_language(&[]));
+    for c in "InvalidLangXYZ".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+            .unwrap();
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+
+    app.prompt = Some(InputPrompt::confirm_delete_folder(
+        test_dir.path().to_path_buf(),
+    ));
+    app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+
+    app.execute_command("app.quit");
+    assert!(!app.running);
+}

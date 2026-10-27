@@ -1,5 +1,6 @@
 pub mod highlighter;
 pub mod language;
+mod lexer;
 pub mod token;
 pub mod worker;
 

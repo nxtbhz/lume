@@ -171,6 +171,4 @@ impl Editor {
 
         count
     }
-
-    // AutoSave check
 }

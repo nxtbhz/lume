@@ -1,4 +1,5 @@
 pub mod editor;
+pub mod explorer;
 pub mod gutter;
 pub mod palette;
 pub mod status_bar;

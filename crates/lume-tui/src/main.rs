@@ -16,18 +16,12 @@ use std::env;
 use std::io::{stdout, BufWriter, Write};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyEvent, KeyEventKind, MouseEvent};
+use crossterm::event::{self, Event, KeyEventKind};
 
 use app::App;
 use args::{parse_cli_args, print_help, CliCommand};
+use input::AppEvent;
 use terminal::TerminalGuard;
-
-enum AppEvent {
-    Input(KeyEvent),
-    Mouse(MouseEvent),
-    Resize(u16, u16),
-    FocusLost,
-}
 
 fn run<W: Write>(app: &mut App, writer: &mut W) -> std::io::Result<()> {
     let (tx, rx) = crossbeam_channel::unbounded();
@@ -51,37 +45,8 @@ fn run<W: Write>(app: &mut App, writer: &mut W) -> std::io::Result<()> {
 
     while app.running {
         match rx.recv_timeout(Duration::from_millis(16)) {
-            Ok(AppEvent::Input(key)) => {
-                app.handle_key(key)?;
-                app.render(writer)?;
-            }
-            Ok(AppEvent::Mouse(mouse)) => {
-                app.handle_mouse(mouse)?;
-                app.render(writer)?;
-            }
-            Ok(AppEvent::Resize(w, h)) => {
-                app.terminal_width = w;
-                app.terminal_height = h;
-                app.adjust_viewport();
-                app.render(writer)?;
-            }
-            Ok(AppEvent::FocusLost) => {
-                if app.editor.is_dirty() && app.editor.file_path().is_some() {
-                    if let Err(e) = app.editor.save_async() {
-                        app.set_status(format!("Save error: {}", e));
-                    }
-                    let _ = app.poll_async_saves();
-                    app.render(writer)?;
-                }
-            }
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                let has_syntax_update = app.has_pending_syntax_response();
-                let autosaved = app.editor.check_autosave();
-                let has_save_event = app.poll_async_saves();
-                if autosaved || has_syntax_update || has_save_event {
-                    app.render(writer)?;
-                }
-            }
+            Ok(ev) => app.handle_event(ev, writer)?,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => app.handle_tick(writer)?,
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         }
     }

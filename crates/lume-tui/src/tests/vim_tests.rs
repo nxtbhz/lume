@@ -321,3 +321,80 @@ fn test_app_vim_status_bar_rendering() {
     assert!(!rendered_off.contains("[INSERT]"));
     assert!(!rendered_off.contains("[VISUAL]"));
 }
+
+#[test]
+fn test_app_vim_insert_and_visual_full_motions() {
+    let mut app = App::new(None).unwrap();
+    // Toggle modal via Ctrl+Alt+V
+    app.handle_key(KeyEvent::new(
+        KeyCode::Char('v'),
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    ))
+    .unwrap();
+    assert!(app.modal_enabled);
+    assert_eq!(app.vim_state.mode, VimMode::Normal);
+
+    // Enter Insert mode and exercise all navigation/edit keys
+    app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(app.vim_state.mode, VimMode::Normal);
+
+    // Normal mode PageUp/PageDown and 'x' with selection
+    app.editor
+        .insert_str("first line\nsecond line\nthird line")
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE))
+        .unwrap();
+    app.editor.select_word_at_cursor();
+    app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE))
+        .unwrap();
+
+    // Visual mode full motions: j, k, h, l, b, 0, $, G, gg, y
+    app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(app.vim_state.mode, VimMode::Visual);
+    for ch in ['j', 'k', 'l', 'h', 'w', 'b', '0', '$', 'G'] {
+        app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE))
+            .unwrap();
+    }
+    // Visual 'gg'
+    app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(app.editor.cursors().primary().head, 0);
+}
