@@ -418,4 +418,55 @@ impl App {
             }
         }
     }
+
+    pub fn handle_renamed_path_tabs(
+        &mut self,
+        old_path: &std::path::Path,
+        new_path: &std::path::Path,
+    ) {
+        let old_canon = old_path.canonicalize().unwrap_or_else(|_| {
+            if old_path.is_absolute() {
+                old_path.to_path_buf()
+            } else {
+                self.explorer.root.join(old_path)
+            }
+        });
+        let new_canon = new_path.canonicalize().unwrap_or_else(|_| {
+            if new_path.is_absolute() {
+                new_path.to_path_buf()
+            } else {
+                self.explorer.root.join(new_path)
+            }
+        });
+
+        for tab in self.editor.tabs_mut() {
+            if let Some(ref p) = tab.file_path {
+                let p_abs = if p.is_absolute() {
+                    p.clone()
+                } else {
+                    self.explorer.root.join(p)
+                };
+                let p_canon = p.canonicalize().unwrap_or_else(|_| p_abs.clone());
+
+                if p_canon == old_canon || p_abs == old_canon {
+                    let _ = lume_core::Journal::remove(p);
+                    let _ = lume_core::Journal::remove(&p_canon);
+                    let _ = lume_core::Journal::remove(&p_abs);
+                    tab.file_path = Some(new_canon.clone());
+                    self.syntax_cache.remove(&tab.id);
+                    self.syntax_in_flight.remove(&tab.id);
+                } else if p_canon.starts_with(&old_canon) {
+                    if let Ok(rel) = p_canon.strip_prefix(&old_canon) {
+                        let updated = new_canon.join(rel);
+                        let _ = lume_core::Journal::remove(p);
+                        let _ = lume_core::Journal::remove(&p_canon);
+                        let _ = lume_core::Journal::remove(&p_abs);
+                        tab.file_path = Some(updated);
+                        self.syntax_cache.remove(&tab.id);
+                        self.syntax_in_flight.remove(&tab.id);
+                    }
+                }
+            }
+        }
+    }
 }

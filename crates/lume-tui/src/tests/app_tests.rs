@@ -474,3 +474,49 @@ fn test_app_explorer_keyboard_navigation() {
         .unwrap();
     assert_eq!(app.focus, ActiveFocus::Editor);
 }
+
+#[test]
+fn test_handle_renamed_file_tab_path_and_journal_sync() {
+    let test_dir = TestDir::new("lume_test_rename_tab_sync");
+    let old_file = test_dir.path().join("script.py");
+    let new_file = test_dir.path().join("script.rs");
+    std::fs::write(&old_file, "print('hello')").unwrap();
+
+    let mut app = App::new(Some(test_dir.path().to_path_buf())).unwrap();
+    app.editor.open_or_load(&old_file).unwrap();
+    assert_eq!(app.editor.active_tab().file_path.as_ref().unwrap(), &old_file.canonicalize().unwrap());
+    assert_eq!(app.current_language().map(|l| l.name()), Some("Python"));
+
+    // Simulate journal creation
+    let _ = lume_core::Journal::record(&old_file, "unsaved changes");
+    assert!(lume_core::Journal::has_journal(&old_file));
+
+    // Execute rename tab sync
+    app.handle_renamed_path_tabs(&old_file, &new_file);
+
+    let active = app.editor.active_tab();
+    let new_canon = new_file.canonicalize().unwrap_or(new_file.clone());
+    assert_eq!(active.file_path.as_ref().unwrap(), &new_canon);
+    assert_eq!(app.current_language().map(|l| l.name()), Some("Rust"));
+    assert!(!lume_core::Journal::has_journal(&old_file));
+}
+
+#[test]
+fn test_handle_renamed_folder_tabs_subpath_and_language_sync() {
+    let test_dir = TestDir::new("lume_test_rename_folder_tab_sync");
+    let old_dir = test_dir.path().join("pkg_old");
+    let new_dir = test_dir.path().join("pkg_new");
+    std::fs::create_dir_all(&old_dir).unwrap();
+    let file1 = old_dir.join("module.rs");
+    std::fs::write(&file1, "pub fn run() {}").unwrap();
+
+    let mut app = App::new(Some(test_dir.path().to_path_buf())).unwrap();
+    app.editor.open_or_load(&file1).unwrap();
+
+    // Renaming directory should update nested open tab path
+    app.handle_renamed_path_tabs(&old_dir, &new_dir);
+
+    let active = app.editor.active_tab();
+    assert_eq!(active.file_path.as_ref().unwrap().file_name().unwrap(), "module.rs");
+    assert!(active.file_path.as_ref().unwrap().starts_with(&new_dir) || active.file_path.as_ref().unwrap().ends_with("pkg_new/module.rs"));
+}
