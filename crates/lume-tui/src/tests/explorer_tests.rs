@@ -297,3 +297,128 @@ fn test_explorer_navigation_click_and_render() {
     assert!(explorer.render(&mut buf, 0, 0, false).is_ok());
     assert!(buf.is_empty());
 }
+
+#[test]
+fn test_create_file_in_root_and_nested() {
+    let test_dir = TestDir::new("lume_test_create_file");
+    let mut explorer = FileExplorer::new(test_dir.path().to_path_buf());
+
+    // Create file in root
+    let created = explorer.create_file(test_dir.path(), "hello.txt").unwrap();
+    assert!(created.exists());
+    assert_eq!(created.file_name().unwrap(), "hello.txt");
+    assert!(explorer.items.iter().any(|it| it.name == "hello.txt" && !it.is_dir));
+
+    // Create nested file with auto-created subfolders
+    let nested = explorer.create_file(test_dir.path(), "sub/nested/file.rs").unwrap();
+    assert!(nested.exists());
+    assert!(explorer.expanded_dirs.contains(&test_dir.path().join("sub")));
+    assert!(explorer.expanded_dirs.contains(&test_dir.path().join("sub").join("nested")));
+}
+
+#[test]
+fn test_create_file_already_exists_fails_without_overwrite() {
+    let test_dir = TestDir::new("lume_test_create_file_exists");
+    let existing_path = test_dir.path().join("data.txt");
+    std::fs::write(&existing_path, "original content").unwrap();
+
+    let mut explorer = FileExplorer::new(test_dir.path().to_path_buf());
+    let err = explorer.create_file(test_dir.path(), "data.txt").unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(std::fs::read_to_string(&existing_path).unwrap(), "original content");
+}
+
+#[test]
+fn test_create_file_prevents_path_traversal_and_absolute_paths() {
+    let test_dir = TestDir::new("lume_test_create_file_traversal");
+    let mut explorer = FileExplorer::new(test_dir.path().to_path_buf());
+
+    let err1 = explorer.create_file(test_dir.path(), "/tmp/escape.txt").unwrap_err();
+    assert_eq!(err1.kind(), std::io::ErrorKind::PermissionDenied);
+
+    let err2 = explorer.create_file(test_dir.path(), "../../escape.txt").unwrap_err();
+    assert_eq!(err2.kind(), std::io::ErrorKind::PermissionDenied);
+
+    let err3 = explorer.create_file(test_dir.path(), "").unwrap_err();
+    assert_eq!(err3.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+#[test]
+fn test_rename_file_and_folder_success() {
+    let test_dir = TestDir::new("lume_test_rename");
+    let file_path = test_dir.path().join("old_name.txt");
+    std::fs::write(&file_path, "file data").unwrap();
+
+    let folder_path = test_dir.path().join("old_folder");
+    std::fs::create_dir(&folder_path).unwrap();
+
+    let mut explorer = FileExplorer::new(test_dir.path().to_path_buf());
+
+    // Rename file
+    let new_file = explorer.rename_item(&file_path, "new_name.txt").unwrap();
+    assert!(!file_path.exists());
+    assert!(new_file.exists());
+    assert_eq!(std::fs::read_to_string(&new_file).unwrap(), "file data");
+
+    // Rename folder
+    let new_folder = explorer.rename_item(&folder_path, "new_folder").unwrap();
+    assert!(!folder_path.exists());
+    assert!(new_folder.exists());
+}
+
+#[test]
+fn test_rename_root_forbidden_and_existing_target_fails() {
+    let test_dir = TestDir::new("lume_test_rename_forbidden");
+    let f1 = test_dir.path().join("f1.txt");
+    let f2 = test_dir.path().join("f2.txt");
+    std::fs::write(&f1, "1").unwrap();
+    std::fs::write(&f2, "2").unwrap();
+
+    let mut explorer = FileExplorer::new(test_dir.path().to_path_buf());
+
+    // Root rename forbidden
+    let err_root = explorer.rename_item(test_dir.path(), "other").unwrap_err();
+    assert_eq!(err_root.kind(), std::io::ErrorKind::PermissionDenied);
+
+    // Collision fails
+    let err_collision = explorer.rename_item(&f1, "f2.txt").unwrap_err();
+    assert_eq!(err_collision.kind(), std::io::ErrorKind::AlreadyExists);
+}
+
+#[test]
+fn test_jump_to_prefix_wraparound_and_scroll_clamping() {
+    let test_dir = TestDir::new("lume_test_jump_prefix");
+    std::fs::write(test_dir.path().join("alpha.txt"), "").unwrap();
+    std::fs::write(test_dir.path().join("beta.txt"), "").unwrap();
+    std::fs::write(test_dir.path().join("charlie.txt"), "").unwrap();
+    std::fs::write(test_dir.path().join("delta.txt"), "").unwrap();
+
+    let mut explorer = FileExplorer::new(test_dir.path().to_path_buf());
+    assert_eq!(explorer.items[0].name, "alpha.txt");
+
+    // Jump to 'b' -> beta.txt (idx 1)
+    assert!(explorer.jump_to_prefix('b', 10));
+    assert_eq!(explorer.selected_idx, 1);
+    assert_eq!(explorer.items[explorer.selected_idx].name, "beta.txt");
+
+    // Jump to 'd' -> delta.txt (idx 3)
+    assert!(explorer.jump_to_prefix('d', 10));
+    assert_eq!(explorer.selected_idx, 3);
+
+    // Jump to 'A' (case-insensitive wraparound) -> alpha.txt (idx 0)
+    assert!(explorer.jump_to_prefix('A', 10));
+    assert_eq!(explorer.selected_idx, 0);
+
+    // Jump to non-existing letter -> returns false, preserves selected_idx
+    assert!(!explorer.jump_to_prefix('z', 10));
+    assert_eq!(explorer.selected_idx, 0);
+}
+
+#[test]
+fn test_jump_to_prefix_empty_tree_does_not_panic() {
+    let test_dir = TestDir::new("lume_test_jump_empty");
+    let mut explorer = FileExplorer::new(test_dir.path().to_path_buf());
+    explorer.items.clear();
+    assert!(!explorer.jump_to_prefix('a', 10));
+}
+

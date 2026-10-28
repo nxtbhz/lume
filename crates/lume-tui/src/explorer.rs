@@ -382,4 +382,281 @@ impl FileExplorer {
 
         Ok(target_canon)
     }
+
+    pub fn create_file<P: AsRef<Path>>(
+        &mut self,
+        base_dir: &Path,
+        rel_path: P,
+    ) -> std::io::Result<PathBuf> {
+        let rel = rel_path.as_ref();
+        let rel_str = rel.to_string_lossy();
+        let trimmed_input = rel_str.trim();
+        if trimmed_input.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "File name cannot be empty",
+            ));
+        }
+
+        if trimmed_input.ends_with('/') || trimmed_input.ends_with('\\') {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "File name cannot end with a directory separator",
+            ));
+        }
+
+        if rel.is_absolute()
+            || trimmed_input.starts_with('/')
+            || trimmed_input.starts_with('\\')
+            || Path::new(trimmed_input).components().any(|c| {
+                matches!(
+                    c,
+                    std::path::Component::Prefix(_) | std::path::Component::RootDir
+                )
+            })
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Absolute paths or drive prefixes are forbidden",
+            ));
+        }
+
+        let root_canon = self
+            .root
+            .canonicalize()
+            .unwrap_or_else(|_| self.root.clone());
+        if let Ok(canon_base) = base_dir.canonicalize() {
+            if !canon_base.starts_with(&root_canon) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "Base directory is outside workspace root",
+                ));
+            }
+        }
+
+        let mut depth_check = base_dir.to_path_buf();
+        for comp in Path::new(trimmed_input).components() {
+            match comp {
+                std::path::Component::Prefix(_) | std::path::Component::RootDir => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "Absolute paths or drive prefixes are forbidden",
+                    ));
+                }
+                std::path::Component::ParentDir => {
+                    if !depth_check.pop() || !depth_check.starts_with(&root_canon) {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            "Path traversal escaping workspace root is forbidden",
+                        ));
+                    }
+                }
+                std::path::Component::Normal(c) => depth_check.push(c),
+                _ => {}
+            }
+        }
+
+        let normalized = if base_dir.is_absolute() || base_dir.starts_with(&self.root) {
+            base_dir.join(trimmed_input)
+        } else {
+            self.root.join(base_dir).join(trimmed_input)
+        };
+
+        if let Some(parent) = normalized.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+
+        // Open with create_new to prevent accidental overwrite of existing files
+        let mut open_opts = fs::OpenOptions::new();
+        open_opts.write(true).create_new(true);
+        open_opts.open(&normalized)?;
+
+        let canon_target = normalized.canonicalize().unwrap_or(normalized.clone());
+        if !canon_target.starts_with(&root_canon) {
+            let _ = fs::remove_file(&canon_target);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Target file resolved outside workspace root",
+            ));
+        }
+
+        // Auto-expand all ancestor directories from root down to created file
+        let mut curr = canon_target.parent();
+        while let Some(parent) = curr {
+            self.expanded_dirs.insert(parent.to_path_buf());
+            if parent == root_canon || !parent.starts_with(&root_canon) {
+                break;
+            }
+            curr = parent.parent();
+        }
+
+        self.refresh();
+
+        // Select the newly created file in items
+        if let Some(pos) = self
+            .items
+            .iter()
+            .position(|it| it.path == canon_target || it.path == normalized)
+        {
+            self.selected_idx = pos;
+            if pos < self.scroll_offset {
+                self.scroll_offset = pos;
+            }
+        }
+
+        Ok(canon_target)
+    }
+
+    pub fn rename_item<P: AsRef<Path>>(
+        &mut self,
+        source_path: &Path,
+        new_name: P,
+    ) -> std::io::Result<PathBuf> {
+        let name_ref = new_name.as_ref();
+        let name_str = name_ref.to_string_lossy();
+        let trimmed_name = name_str.trim();
+        if trimmed_name.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "New name cannot be empty",
+            ));
+        }
+
+        if name_ref.is_absolute()
+            || trimmed_name.starts_with('/')
+            || trimmed_name.starts_with('\\')
+            || Path::new(trimmed_name).components().any(|c| {
+                matches!(
+                    c,
+                    std::path::Component::Prefix(_) | std::path::Component::RootDir
+                )
+            })
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Absolute paths or drive prefixes are forbidden",
+            ));
+        }
+
+        let root_canon = self
+            .root
+            .canonicalize()
+            .unwrap_or_else(|_| self.root.clone());
+        let source_canon = source_path.canonicalize()?;
+
+        if source_canon == root_canon {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Cannot rename the workspace root directory",
+            ));
+        }
+
+        if !source_canon.starts_with(&root_canon) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Source path is outside workspace root",
+            ));
+        }
+
+        let parent_dir = source_canon.parent().unwrap_or(&root_canon);
+        let mut depth_check = parent_dir.to_path_buf();
+        for comp in Path::new(trimmed_name).components() {
+            match comp {
+                std::path::Component::Prefix(_) | std::path::Component::RootDir => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "Absolute paths or drive prefixes are forbidden",
+                    ));
+                }
+                std::path::Component::ParentDir => {
+                    if !depth_check.pop() || !depth_check.starts_with(&root_canon) {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            "Path traversal escaping workspace root is forbidden",
+                        ));
+                    }
+                }
+                std::path::Component::Normal(c) => depth_check.push(c),
+                _ => {}
+            }
+        }
+
+        let target = parent_dir.join(trimmed_name);
+        if target.exists() {
+            if let Ok(canon_exist) = target.canonicalize() {
+                if canon_exist != source_canon {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::AlreadyExists,
+                        "Target path already exists",
+                    ));
+                }
+            } else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "Target path already exists",
+                ));
+            }
+        }
+
+        let is_dir = source_canon.is_dir();
+        fs::rename(&source_canon, &target)?;
+
+        let target_canon = target.canonicalize().unwrap_or(target.clone());
+
+        if is_dir {
+            // Update expanded_dirs: replace source prefix with target prefix
+            let mut updated_expanded = HashSet::new();
+            for dir in &self.expanded_dirs {
+                if dir == &source_canon || dir == source_path {
+                    updated_expanded.insert(target_canon.clone());
+                } else if let Ok(rel) = dir.strip_prefix(&source_canon) {
+                    updated_expanded.insert(target_canon.join(rel));
+                } else {
+                    updated_expanded.insert(dir.clone());
+                }
+            }
+            self.expanded_dirs = updated_expanded;
+        }
+
+        self.refresh();
+
+        // Select the renamed item
+        if let Some(pos) = self
+            .items
+            .iter()
+            .position(|it| it.path == target_canon || it.path == target)
+        {
+            self.selected_idx = pos;
+            if pos < self.scroll_offset {
+                self.scroll_offset = pos;
+            }
+        }
+
+        Ok(target_canon)
+    }
+
+    pub fn jump_to_prefix(&mut self, ch: char, max_rows: usize) -> bool {
+        if self.items.is_empty() {
+            return false;
+        }
+        let ch_lower = ch.to_ascii_lowercase();
+        let total = self.items.len();
+        for step in 1..=total {
+            let idx = (self.selected_idx + step) % total;
+            if let Some(first_char) = self.items[idx].name.chars().next() {
+                if first_char.to_ascii_lowercase() == ch_lower {
+                    self.selected_idx = idx;
+                    if self.selected_idx < self.scroll_offset {
+                        self.scroll_offset = self.selected_idx;
+                    } else if max_rows > 0 && self.selected_idx >= self.scroll_offset + max_rows {
+                        self.scroll_offset = self.selected_idx.saturating_sub(max_rows - 1);
+                    }
+                    return true;
+                }
+            }
+        }
+        false
+    }
 }
