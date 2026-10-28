@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{ActiveFocus, App};
+use crate::prompt::PromptAction;
 use crate::tests::TestDir;
 use lume_core::TextBuffer;
 
@@ -519,4 +520,81 @@ fn test_handle_renamed_folder_tabs_subpath_and_language_sync() {
     let active = app.editor.active_tab();
     assert_eq!(active.file_path.as_ref().unwrap().file_name().unwrap(), "module.rs");
     assert!(active.file_path.as_ref().unwrap().starts_with(&new_dir) || active.file_path.as_ref().unwrap().ends_with("pkg_new/module.rs"));
+}
+
+#[test]
+fn test_app_explorer_create_file_via_prompt_opens_editor_tab() {
+    let test_dir = TestDir::new("lume_test_app_create_file");
+    let mut app = App::new(Some(test_dir.path().to_path_buf())).unwrap();
+    app.focus = ActiveFocus::Explorer;
+
+    // Press 'a' to open new file prompt
+    app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE)).unwrap();
+    assert!(app.prompt.is_some());
+    assert!(matches!(app.prompt.as_ref().unwrap().action, PromptAction::CreateFile { .. }));
+
+    // Type filename "main.rs" and press Enter
+    for c in "main.rs".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)).unwrap();
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+
+    assert!(app.prompt.is_none());
+    assert_eq!(app.focus, ActiveFocus::Editor);
+    assert_eq!(app.editor.active_tab().file_path.as_ref().unwrap().file_name().unwrap(), "main.rs");
+    assert!(test_dir.path().join("main.rs").exists());
+}
+
+#[test]
+fn test_app_explorer_rename_file_via_prompt_updates_open_tab() {
+    let test_dir = TestDir::new("lume_test_app_rename_flow");
+    let file_path = test_dir.path().join("alpha.txt");
+    std::fs::write(&file_path, "contents").unwrap();
+
+    let mut app = App::new(Some(test_dir.path().to_path_buf())).unwrap();
+    app.editor.open_or_load(&file_path).unwrap();
+
+    app.focus = ActiveFocus::Explorer;
+    app.explorer.refresh();
+    app.explorer.selected_idx = 0;
+
+    // Press 'm' to open rename prompt
+    app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE)).unwrap();
+    assert!(app.prompt.is_some());
+    assert_eq!(app.prompt.as_ref().unwrap().value, "alpha.txt");
+
+    // Clear and type "beta.txt"
+    for _ in 0.."alpha.txt".len() {
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)).unwrap();
+    }
+    for c in "beta.txt".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)).unwrap();
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)).unwrap();
+
+    assert!(app.prompt.is_none());
+    assert!(!file_path.exists());
+    assert!(test_dir.path().join("beta.txt").exists());
+    assert_eq!(app.editor.active_tab().file_path.as_ref().unwrap().file_name().unwrap(), "beta.txt");
+}
+
+#[test]
+fn test_app_explorer_single_letter_jump_navigation() {
+    let test_dir = TestDir::new("lume_test_app_letter_jump");
+    std::fs::write(test_dir.path().join("apple.rs"), "").unwrap();
+    std::fs::write(test_dir.path().join("banana.rs"), "").unwrap();
+    std::fs::write(test_dir.path().join("cherry.rs"), "").unwrap();
+
+    let mut app = App::new(Some(test_dir.path().to_path_buf())).unwrap();
+    app.focus = ActiveFocus::Explorer;
+    app.explorer.refresh();
+    assert_eq!(app.explorer.items[app.explorer.selected_idx].name, "apple.rs");
+
+    // Press 'b' in explorer -> jumps to banana.rs
+    app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE)).unwrap();
+    assert_eq!(app.explorer.items[app.explorer.selected_idx].name, "banana.rs");
+
+    // Press 'c' in explorer -> jumps to cherry.rs
+    app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE)).unwrap();
+    assert_eq!(app.explorer.items[app.explorer.selected_idx].name, "cherry.rs");
 }

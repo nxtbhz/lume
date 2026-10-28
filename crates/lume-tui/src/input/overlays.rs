@@ -124,7 +124,46 @@ impl App {
                             self.set_status("Deletion cancelled");
                         }
                     }
-                    PromptAction::CreateFile { .. } | PromptAction::RenameItem { .. } => {}
+                    PromptAction::CreateFile { parent_dir } => {
+                        if !val.is_empty() {
+                            match self.explorer.create_file(&parent_dir, &val) {
+                                Ok(created) => match self.editor.open_or_load(&created) {
+                                    Ok(_) => {
+                                        self.focus = ActiveFocus::Editor;
+                                        self.adjust_viewport();
+                                        self.set_status(format!(
+                                            "Created and opened file: {}",
+                                            created.display()
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        self.set_status(format!(
+                                            "Created file but failed to open: {}",
+                                            e
+                                        ));
+                                    }
+                                },
+                                Err(e) => self.set_status(format!("Create file error: {}", e)),
+                            }
+                        }
+                    }
+                    PromptAction::RenameItem {
+                        source_path,
+                        is_dir: _,
+                    } => {
+                        if !val.is_empty() {
+                            match self.explorer.rename_item(&source_path, &val) {
+                                Ok(renamed) => {
+                                    self.handle_renamed_path_tabs(&source_path, &renamed);
+                                    self.set_status(format!(
+                                        "Renamed to: {}",
+                                        renamed.file_name().and_then(|n| n.to_str()).unwrap_or("")
+                                    ));
+                                }
+                                Err(e) => self.set_status(format!("Rename error: {}", e)),
+                            }
+                        }
+                    }
                 }
             }
             KeyCode::Tab => {
@@ -465,8 +504,14 @@ impl App {
             KeyCode::Tab | KeyCode::Esc => {
                 self.focus = ActiveFocus::Editor;
             }
-            KeyCode::Char('n') | KeyCode::Char('a') if !ctrl && !alt => {
+            KeyCode::Char('a') if !ctrl && !alt => {
+                self.execute_command("explorer.new_file");
+            }
+            KeyCode::Char('n') if !ctrl && !alt => {
                 self.execute_command("explorer.new_folder");
+            }
+            KeyCode::Char('m') | KeyCode::F(2) if !ctrl && !alt => {
+                self.execute_command("explorer.rename");
             }
             KeyCode::Char('d') if !ctrl && !alt => {
                 self.execute_command("explorer.delete_folder");
@@ -476,6 +521,12 @@ impl App {
             }
             KeyCode::Char('r') if !ctrl && !alt => {
                 self.execute_command("explorer.refresh");
+            }
+            KeyCode::Char(ch)
+                if !ctrl && !alt && (ch.is_alphanumeric() || ch == '.' || ch == '_') =>
+            {
+                let h = self.text_area_height();
+                self.explorer.jump_to_prefix(ch, h);
             }
             _ => {}
         }

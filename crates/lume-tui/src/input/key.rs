@@ -115,7 +115,11 @@ impl App {
                 return Ok(());
             }
             KeyCode::F(2) => {
-                self.execute_command("view.toggle_explorer");
+                if self.focus == ActiveFocus::Explorer && self.explorer.is_visible {
+                    self.execute_command("explorer.rename");
+                } else {
+                    self.execute_command("view.toggle_explorer");
+                }
                 return Ok(());
             }
             KeyCode::F(3) => {
