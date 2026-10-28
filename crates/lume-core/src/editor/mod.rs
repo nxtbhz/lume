@@ -1,4 +1,5 @@
 pub mod bracket;
+pub mod clipboard;
 pub mod config;
 pub mod indent;
 pub mod lines;
@@ -29,6 +30,7 @@ pub struct Editor {
     pub(crate) autosave: AutoSaveController,
     pub(crate) config: EditorConfig,
     pub(crate) save_channel: Option<(Sender<AsyncSaveEvent>, Receiver<AsyncSaveEvent>)>,
+    pub(crate) clipboard: Option<String>,
 }
 
 impl Default for Editor {
@@ -46,6 +48,7 @@ impl Editor {
             autosave: AutoSaveController::default(),
             config: EditorConfig::default(),
             save_channel: None,
+            clipboard: None,
         }
     }
 
@@ -58,6 +61,7 @@ impl Editor {
             autosave: AutoSaveController::default(),
             config: EditorConfig::default(),
             save_channel: None,
+            clipboard: None,
         }
     }
 
