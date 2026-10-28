@@ -9,7 +9,7 @@ use crossterm::terminal::size as terminal_size;
 use crate::args::{parse_cli_args, CliCommand, CliTargets};
 use crate::explorer::FileExplorer;
 use crate::prompt::InputPrompt;
-use crate::search::SearchState;
+use crate::search::{SearchField, SearchState};
 use crate::vim::VimState;
 use lume_core::{Editor, TextBuffer};
 use lume_syntax::{HighlightToken, Language, SyntaxRequest, SyntaxWorker};
@@ -262,6 +262,31 @@ impl App {
             } else {
                 state.active_match_idx = 0;
             }
+        }
+    }
+
+    pub fn handle_paste_text(&mut self, text: &str) {
+        self.editor.set_clipboard(text.to_string());
+        if self.palette_open {
+            self.palette_query.push_str(text);
+            self.palette_selected = 0;
+        } else if let Some(mut state) = self.search_state.take() {
+            for c in text.chars() {
+                state.handle_char(c);
+            }
+            if state.active_field == SearchField::Query {
+                self.update_search_query(&mut state);
+            }
+            self.search_state = Some(state);
+            self.adjust_viewport();
+        } else if let Some(mut prompt) = self.prompt.take() {
+            for c in text.chars() {
+                prompt.handle_char(c);
+            }
+            self.prompt = Some(prompt);
+        } else {
+            let _ = self.editor.insert_str(text);
+            self.adjust_viewport();
         }
     }
 

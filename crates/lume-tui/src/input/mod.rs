@@ -14,6 +14,7 @@ pub enum AppEvent {
     Mouse(MouseEvent),
     Resize(u16, u16),
     FocusLost,
+    Paste(String),
 }
 
 impl App {
@@ -45,6 +46,10 @@ impl App {
                     let _ = self.poll_async_saves();
                     self.render(writer)?;
                 }
+            }
+            AppEvent::Paste(text) => {
+                self.handle_paste_text(&text);
+                self.render(writer)?;
             }
         }
         Ok(())

@@ -2,7 +2,10 @@ use std::io::stdout;
 
 use crossterm::{
     cursor::{Hide, Show},
-    event::{DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture},
+    event::{
+        DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+        EnableFocusChange, EnableMouseCapture,
+    },
     execute,
     style::ResetColor,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -21,6 +24,7 @@ impl TerminalGuard {
                 ResetColor,
                 DisableFocusChange,
                 DisableMouseCapture,
+                DisableBracketedPaste,
                 LeaveAlternateScreen
             );
             let _ = disable_raw_mode();
@@ -34,7 +38,8 @@ impl TerminalGuard {
             EnterAlternateScreen,
             Hide,
             EnableMouseCapture,
-            EnableFocusChange
+            EnableFocusChange,
+            EnableBracketedPaste
         )?;
         Ok(Self)
     }
@@ -49,6 +54,7 @@ impl Drop for TerminalGuard {
             ResetColor,
             DisableFocusChange,
             DisableMouseCapture,
+            DisableBracketedPaste,
             LeaveAlternateScreen
         );
         let _ = disable_raw_mode();

@@ -33,6 +33,7 @@ fn run<W: Write>(app: &mut App, writer: &mut W) -> std::io::Result<()> {
             Ok(Event::Mouse(mouse)) => AppEvent::Mouse(mouse),
             Ok(Event::Resize(w, h)) => AppEvent::Resize(w, h),
             Ok(Event::FocusLost) => AppEvent::FocusLost,
+            Ok(Event::Paste(text)) => AppEvent::Paste(text),
             _ => continue,
         };
         if input_tx.send(app_event).is_err() {

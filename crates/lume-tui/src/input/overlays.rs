@@ -196,6 +196,14 @@ impl App {
                 }
                 self.prompt = Some(prompt);
             }
+            KeyCode::Char('v') if ctrl && !alt => {
+                if let Some(clip) = self.editor.clipboard().map(|s| s.to_string()) {
+                    for c in clip.chars() {
+                        prompt.handle_char(c);
+                    }
+                }
+                self.prompt = Some(prompt);
+            }
             KeyCode::Char(c) if !ctrl && !alt => {
                 prompt.handle_char(c);
                 self.prompt = Some(prompt);
@@ -406,6 +414,17 @@ impl App {
                 }
                 self.search_state = Some(state);
             }
+            KeyCode::Char('v') if ctrl && !alt => {
+                if let Some(clip) = self.editor.clipboard().map(|s| s.to_string()) {
+                    for c in clip.chars() {
+                        state.handle_char(c);
+                    }
+                    if state.active_field == SearchField::Query {
+                        self.update_search_query(&mut state);
+                    }
+                }
+                self.search_state = Some(state);
+            }
             KeyCode::Char(c) if !ctrl && !alt => {
                 state.handle_char(c);
                 if state.active_field == SearchField::Query {
@@ -452,6 +471,12 @@ impl App {
             KeyCode::Backspace => {
                 self.palette_query.pop();
                 self.palette_selected = 0;
+            }
+            KeyCode::Char('v') if ctrl && !alt => {
+                if let Some(clip) = self.editor.clipboard() {
+                    self.palette_query.push_str(clip);
+                    self.palette_selected = 0;
+                }
             }
             KeyCode::Char(c) if !ctrl && !alt => {
                 self.palette_query.push(c);

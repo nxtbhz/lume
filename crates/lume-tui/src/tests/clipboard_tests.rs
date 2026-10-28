@@ -96,3 +96,69 @@ fn test_app_vim_yank_syncs_osc52() {
     assert_eq!(app.editor.clipboard(), Some("line 1\n"));
     assert!(app.pending_osc52.is_some());
 }
+
+#[test]
+fn test_app_paste_into_search_bar() {
+    let mut app = App::new(None).unwrap();
+    app.editor.insert_str("target needle here").unwrap();
+    app.editor.set_clipboard("needle");
+
+    // Open Find search bar (Ctrl+F)
+    app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(app.search_state.is_some());
+
+    // Press Ctrl+V inside search bar
+    app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.search_state.as_ref().unwrap().query, "needle");
+}
+
+#[test]
+fn test_app_paste_into_prompt() {
+    let mut app = App::new(None).unwrap();
+    app.editor.set_clipboard("my_file.rs");
+
+    // Open Open File prompt (Ctrl+O)
+    app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(app.prompt.is_some());
+
+    // Press Ctrl+V into prompt
+    app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.prompt.as_ref().unwrap().value, "my_file.rs");
+}
+
+#[test]
+fn test_app_handle_bracketed_paste_direct() {
+    let mut app = App::new(None).unwrap();
+    app.handle_paste_text("bracketed text from system");
+    assert_eq!(app.editor.clipboard(), Some("bracketed text from system"));
+    assert_eq!(
+        app.editor
+            .buffer()
+            .slice_to_cow(0, app.editor.buffer().len_bytes()),
+        "bracketed text from system"
+    );
+}
+
+#[test]
+fn test_app_handle_bracketed_paste_into_command_palette() {
+    let mut app = App::new(None).unwrap();
+    app.editor.insert_str("initial content").unwrap();
+    app.palette_open = true;
+    app.palette_query.clear();
+    app.palette_selected = 5;
+
+    app.handle_paste_text("save");
+
+    assert_eq!(app.palette_query, "save");
+    assert_eq!(app.palette_selected, 0);
+    assert_eq!(
+        app.editor
+            .buffer()
+            .slice_to_cow(0, app.editor.buffer().len_bytes()),
+        "initial content"
+    );
+}
