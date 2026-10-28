@@ -307,13 +307,22 @@ fn test_create_file_in_root_and_nested() {
     let created = explorer.create_file(test_dir.path(), "hello.txt").unwrap();
     assert!(created.exists());
     assert_eq!(created.file_name().unwrap(), "hello.txt");
-    assert!(explorer.items.iter().any(|it| it.name == "hello.txt" && !it.is_dir));
+    assert!(explorer
+        .items
+        .iter()
+        .any(|it| it.name == "hello.txt" && !it.is_dir));
 
     // Create nested file with auto-created subfolders
-    let nested = explorer.create_file(test_dir.path(), "sub/nested/file.rs").unwrap();
+    let nested = explorer
+        .create_file(test_dir.path(), "sub/nested/file.rs")
+        .unwrap();
     assert!(nested.exists());
-    assert!(explorer.expanded_dirs.contains(&test_dir.path().join("sub")));
-    assert!(explorer.expanded_dirs.contains(&test_dir.path().join("sub").join("nested")));
+    assert!(explorer
+        .expanded_dirs
+        .contains(&test_dir.path().join("sub")));
+    assert!(explorer
+        .expanded_dirs
+        .contains(&test_dir.path().join("sub").join("nested")));
 }
 
 #[test]
@@ -323,9 +332,14 @@ fn test_create_file_already_exists_fails_without_overwrite() {
     std::fs::write(&existing_path, "original content").unwrap();
 
     let mut explorer = FileExplorer::new(test_dir.path().to_path_buf());
-    let err = explorer.create_file(test_dir.path(), "data.txt").unwrap_err();
+    let err = explorer
+        .create_file(test_dir.path(), "data.txt")
+        .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
-    assert_eq!(std::fs::read_to_string(&existing_path).unwrap(), "original content");
+    assert_eq!(
+        std::fs::read_to_string(&existing_path).unwrap(),
+        "original content"
+    );
 }
 
 #[test]
@@ -333,10 +347,14 @@ fn test_create_file_prevents_path_traversal_and_absolute_paths() {
     let test_dir = TestDir::new("lume_test_create_file_traversal");
     let mut explorer = FileExplorer::new(test_dir.path().to_path_buf());
 
-    let err1 = explorer.create_file(test_dir.path(), "/tmp/escape.txt").unwrap_err();
+    let err1 = explorer
+        .create_file(test_dir.path(), "/tmp/escape.txt")
+        .unwrap_err();
     assert_eq!(err1.kind(), std::io::ErrorKind::PermissionDenied);
 
-    let err2 = explorer.create_file(test_dir.path(), "../../escape.txt").unwrap_err();
+    let err2 = explorer
+        .create_file(test_dir.path(), "../../escape.txt")
+        .unwrap_err();
     assert_eq!(err2.kind(), std::io::ErrorKind::PermissionDenied);
 
     let err3 = explorer.create_file(test_dir.path(), "").unwrap_err();
@@ -421,4 +439,3 @@ fn test_jump_to_prefix_empty_tree_does_not_panic() {
     explorer.items.clear();
     assert!(!explorer.jump_to_prefix('a', 10));
 }
-

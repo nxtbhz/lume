@@ -223,7 +223,10 @@ impl App {
                         .root
                         .canonicalize()
                         .unwrap_or_else(|_| self.explorer.root.clone());
-                    let item_canon = item.path.canonicalize().unwrap_or_else(|_| item.path.clone());
+                    let item_canon = item
+                        .path
+                        .canonicalize()
+                        .unwrap_or_else(|_| item.path.clone());
                     if item_canon == root_canon {
                         self.set_status("Cannot rename workspace root directory");
                     } else {

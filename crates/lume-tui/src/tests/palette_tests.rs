@@ -319,12 +319,23 @@ fn test_app_events_tick_and_overlay_edge_cases() {
 #[test]
 fn test_prompt_create_file_and_rename_item_constructors() {
     let p1 = InputPrompt::create_file(PathBuf::from("/workspace/src"), "src");
-    assert_eq!(p1.action, PromptAction::CreateFile { parent_dir: PathBuf::from("/workspace/src") });
+    assert_eq!(
+        p1.action,
+        PromptAction::CreateFile {
+            parent_dir: PathBuf::from("/workspace/src")
+        }
+    );
     assert!(p1.title.contains("Create File in 'src'"));
     assert_eq!(p1.value, "");
 
     let p2 = InputPrompt::rename_item(PathBuf::from("/workspace/src/lib.rs"), "lib.rs", false);
-    assert_eq!(p2.action, PromptAction::RenameItem { source_path: PathBuf::from("/workspace/src/lib.rs"), is_dir: false });
+    assert_eq!(
+        p2.action,
+        PromptAction::RenameItem {
+            source_path: PathBuf::from("/workspace/src/lib.rs"),
+            is_dir: false
+        }
+    );
     assert!(p2.title.contains("Rename file 'lib.rs'"));
     assert_eq!(p2.value, "lib.rs");
     assert_eq!(p2.cursor_pos, "lib.rs".len());
@@ -350,7 +361,10 @@ fn test_commands_explorer_new_file_and_rename_execution() {
     app.execute_command("explorer.rename");
     assert!(app.prompt.is_some());
     match app.prompt.as_ref().unwrap().action {
-        PromptAction::RenameItem { ref source_path, is_dir } => {
+        PromptAction::RenameItem {
+            ref source_path,
+            is_dir,
+        } => {
             assert_eq!(source_path.file_name().unwrap(), "test.txt");
             assert!(!is_dir);
         }

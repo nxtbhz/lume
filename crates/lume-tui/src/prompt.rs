@@ -110,7 +110,10 @@ impl InputPrompt {
         );
         let len = current_name.len();
         Self {
-            action: PromptAction::RenameItem { source_path, is_dir },
+            action: PromptAction::RenameItem {
+                source_path,
+                is_dir,
+            },
             title: Cow::Owned(formatted),
             value: current_name.to_string(),
             cursor_pos: len,
