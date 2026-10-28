@@ -123,10 +123,8 @@ fn test_editor_clipboard_empty_buffer_and_multibyte() {
 #[test]
 fn test_editor_clipboard_multi_cursor() {
     let mut ed = Editor::from_str("foo\nbar\nbaz");
-    ed.cursors_mut().set_cursors(vec![
-        Cursor::with_anchor(0, 3),
-        Cursor::with_anchor(4, 7),
-    ]);
+    ed.cursors_mut()
+        .set_cursors(vec![Cursor::with_anchor(0, 3), Cursor::with_anchor(4, 7)]);
     let copied = ed.copy_selection();
     assert_eq!(copied.as_deref(), Some("foo\nbar"));
 

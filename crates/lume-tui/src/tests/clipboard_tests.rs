@@ -162,3 +162,81 @@ fn test_app_handle_bracketed_paste_into_command_palette() {
         "initial content"
     );
 }
+
+#[test]
+fn test_app_event_paste_dispatches_and_renders() {
+    use crate::input::AppEvent;
+
+    let mut app = App::new(None).unwrap();
+    let mut out = Vec::new();
+    app.handle_event(AppEvent::Paste("event paste payload".to_string()), &mut out)
+        .unwrap();
+
+    assert_eq!(app.editor.clipboard(), Some("event paste payload"));
+    assert_eq!(
+        app.editor
+            .buffer()
+            .slice_to_cow(0, app.editor.buffer().len_bytes()),
+        "event paste payload"
+    );
+    assert!(!out.is_empty());
+}
+
+#[test]
+fn test_app_ctrl_v_in_command_palette() {
+    let mut app = App::new(None).unwrap();
+    app.editor.set_clipboard("quit");
+    app.palette_open = true;
+    app.palette_query = "app.".to_string();
+    app.palette_selected = 3;
+
+    // Press Ctrl+V inside palette
+    app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL))
+        .unwrap();
+
+    assert_eq!(app.palette_query, "app.quit");
+    assert_eq!(app.palette_selected, 0);
+}
+
+#[test]
+fn test_app_ctrl_v_in_replace_replacement_field() {
+    use crate::search::{SearchField, SearchMode};
+
+    let mut app = App::new(None).unwrap();
+    app.editor.set_clipboard("new_val");
+
+    // Open replace dialog (Ctrl+H)
+    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(app.search_state.is_some());
+
+    let state = app.search_state.as_mut().unwrap();
+    state.mode = SearchMode::Replace;
+    state.active_field = SearchField::Replacement;
+
+    // Press Ctrl+V in replacement field
+    app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL))
+        .unwrap();
+
+    assert_eq!(app.search_state.as_ref().unwrap().replacement, "new_val");
+}
+
+#[test]
+fn test_app_vim_visual_yank_and_cut_sync_osc52() {
+    use crate::vim::VimMode;
+
+    let mut app = App::new(None).unwrap();
+    app.modal_enabled = true;
+    app.editor.insert_str("apple banana cherry").unwrap();
+    app.editor.cursors_mut().primary_mut().anchor = 6;
+    app.editor.cursors_mut().primary_mut().head = 12; // "banana"
+    app.vim_state.set_mode(VimMode::Visual);
+
+    // Press 'y' in visual mode
+    app.handle_modal_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE))
+        .unwrap();
+
+    assert_eq!(app.editor.clipboard(), Some("banana"));
+    assert!(app.pending_osc52.is_some());
+    assert_eq!(app.vim_state.mode, VimMode::Normal);
+}
