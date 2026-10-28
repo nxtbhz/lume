@@ -82,7 +82,10 @@ impl App {
                                     .buffer()
                                     .slice_to_cow(cur.min(), cur.max())
                                     .into_owned();
-                                self.vim_state.yank(text, false);
+                                self.vim_state.yank(text.clone(), false);
+                                self.editor.set_clipboard(text.clone());
+                                self.pending_osc52 =
+                                    Some(lume_core::clipboard::osc52_sequence_auto(&text));
                             }
                             let _ = self.editor.delete_forwards();
                             self.vim_state.set_mode(VimMode::Normal);
@@ -118,7 +121,10 @@ impl App {
                         }
                         ('d', KeyCode::Char('d')) => {
                             if let Ok(deleted) = self.editor.delete_line() {
-                                self.vim_state.yank(deleted, true);
+                                self.vim_state.yank(deleted.clone(), true);
+                                self.editor.set_clipboard(deleted.clone());
+                                self.pending_osc52 =
+                                    Some(lume_core::clipboard::osc52_sequence_auto(&deleted));
                             }
                             return Ok(());
                         }

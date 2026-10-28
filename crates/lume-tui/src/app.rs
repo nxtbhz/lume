@@ -267,11 +267,12 @@ impl App {
 
     pub fn handle_paste_text(&mut self, text: &str) {
         self.editor.set_clipboard(text.to_string());
+        let single_line = text.lines().next().unwrap_or("");
         if self.palette_open {
-            self.palette_query.push_str(text);
+            self.palette_query.push_str(single_line);
             self.palette_selected = 0;
         } else if let Some(mut state) = self.search_state.take() {
-            for c in text.chars() {
+            for c in single_line.chars() {
                 state.handle_char(c);
             }
             if state.active_field == SearchField::Query {
@@ -280,12 +281,13 @@ impl App {
             self.search_state = Some(state);
             self.adjust_viewport();
         } else if let Some(mut prompt) = self.prompt.take() {
-            for c in text.chars() {
-                prompt.handle_char(c);
-            }
+            prompt.insert_str(single_line);
             self.prompt = Some(prompt);
         } else {
             let _ = self.editor.insert_str(text);
+            if self.modal_enabled && self.vim_state.mode == crate::vim::VimMode::Visual {
+                self.vim_state.set_mode(crate::vim::VimMode::Normal);
+            }
             self.adjust_viewport();
         }
     }

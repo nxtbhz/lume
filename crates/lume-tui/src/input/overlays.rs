@@ -197,10 +197,9 @@ impl App {
                 self.prompt = Some(prompt);
             }
             KeyCode::Char('v') if ctrl && !alt => {
-                if let Some(clip) = self.editor.clipboard().map(|s| s.to_string()) {
-                    for c in clip.chars() {
-                        prompt.handle_char(c);
-                    }
+                if let Some(clip) = self.editor.clipboard() {
+                    let single_line = clip.lines().next().unwrap_or("");
+                    prompt.insert_str(single_line);
                 }
                 self.prompt = Some(prompt);
             }
@@ -415,8 +414,9 @@ impl App {
                 self.search_state = Some(state);
             }
             KeyCode::Char('v') if ctrl && !alt => {
-                if let Some(clip) = self.editor.clipboard().map(|s| s.to_string()) {
-                    for c in clip.chars() {
+                if let Some(clip) = self.editor.clipboard() {
+                    let single_line = clip.lines().next().unwrap_or("");
+                    for c in single_line.chars() {
                         state.handle_char(c);
                     }
                     if state.active_field == SearchField::Query {
@@ -474,7 +474,8 @@ impl App {
             }
             KeyCode::Char('v') if ctrl && !alt => {
                 if let Some(clip) = self.editor.clipboard() {
-                    self.palette_query.push_str(clip);
+                    let single_line = clip.lines().next().unwrap_or("");
+                    self.palette_query.push_str(single_line);
                     self.palette_selected = 0;
                 }
             }

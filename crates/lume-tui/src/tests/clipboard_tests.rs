@@ -239,4 +239,80 @@ fn test_app_vim_visual_yank_and_cut_sync_osc52() {
     assert_eq!(app.editor.clipboard(), Some("banana"));
     assert!(app.pending_osc52.is_some());
     assert_eq!(app.vim_state.mode, VimMode::Normal);
+    app.pending_osc52 = None;
+
+    // Now test visual cut ('d')
+    app.editor.cursors_mut().primary_mut().anchor = 0;
+    app.editor.cursors_mut().primary_mut().head = 5; // "apple"
+    app.vim_state.set_mode(VimMode::Visual);
+    app.handle_modal_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE))
+        .unwrap();
+
+    assert_eq!(app.editor.clipboard(), Some("apple"));
+    assert!(app.pending_osc52.is_some());
+    assert_eq!(app.vim_state.mode, VimMode::Normal);
+    app.pending_osc52 = None;
+
+    // Now test normal mode 'dd' (cut line)
+    app.handle_modal_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE))
+        .unwrap();
+    app.handle_modal_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE))
+        .unwrap();
+
+    assert_eq!(app.editor.clipboard(), Some(" banana cherry\n"));
+    assert!(app.pending_osc52.is_some());
+}
+
+#[test]
+fn test_app_paste_multiline_sanitized_in_overlays() {
+    use crate::search::{SearchField, SearchMode};
+
+    let mut app = App::new(None).unwrap();
+
+    // 1. Bracketed paste into command palette
+    app.palette_open = true;
+    app.palette_query.clear();
+    app.handle_paste_text("first_line\nsecond_line");
+    assert_eq!(app.palette_query, "first_line");
+    assert!(!app.palette_query.contains('\n'));
+    app.palette_open = false;
+
+    // 2. Paste into prompt
+    app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(app.prompt.is_some());
+    app.editor.set_clipboard("my_file.rs\nignored_line");
+    app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.prompt.as_ref().unwrap().value, "my_file.rs");
+    assert!(!app.prompt.as_ref().unwrap().value.contains('\n'));
+    app.prompt = None;
+
+    // 3. Paste into search state query and replacement
+    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(app.search_state.is_some());
+    app.editor.set_clipboard("search_target\nignored");
+    app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.search_state.as_ref().unwrap().query, "search_target");
+    assert!(!app.search_state.as_ref().unwrap().query.contains('\n'));
+
+    // Switch to replacement field
+    let state = app.search_state.as_mut().unwrap();
+    state.mode = SearchMode::Replace;
+    state.active_field = SearchField::Replacement;
+    app.editor.set_clipboard("replace_target\nignored");
+    app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(
+        app.search_state.as_ref().unwrap().replacement,
+        "replace_target"
+    );
+    assert!(!app
+        .search_state
+        .as_ref()
+        .unwrap()
+        .replacement
+        .contains('\n'));
 }

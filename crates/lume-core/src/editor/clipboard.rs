@@ -1,7 +1,27 @@
 use crate::buffer::{TextBuffer, TextDelta};
 use crate::cursor::Cursor;
-use crate::editor::Editor;
+use crate::editor::{Editor, Tab};
 use crate::history::HistoryManager;
+
+fn current_line_byte_range(tab: &Tab) -> Option<(usize, usize)> {
+    let total_bytes = tab.buffer.len_bytes();
+    if total_bytes == 0 {
+        return None;
+    }
+    let head = tab.cursors.primary().head.min(total_bytes);
+    let line = tab.buffer.byte_to_line(head);
+    let line_start_byte = tab.buffer.line_to_byte(line);
+    let line_end_byte = if line + 1 < tab.buffer.len_lines() {
+        tab.buffer.line_to_byte(line + 1)
+    } else {
+        total_bytes
+    };
+    if line_start_byte >= line_end_byte {
+        None
+    } else {
+        Some((line_start_byte, line_end_byte))
+    }
+}
 
 impl Editor {
     /// Returns the current clipboard contents, if any.
@@ -42,23 +62,8 @@ impl Editor {
             }
             pieces.join("\n")
         } else {
-            let head = tab.cursors.primary().head.min(total_bytes);
-            let line = tab.buffer.byte_to_line(head);
-            let line_start_char = tab.buffer.rope().line_to_char(line);
-            let line_start_byte = tab.buffer.char_to_byte(line_start_char);
-            let next_line = line + 1;
-            let line_end_byte = if next_line < tab.buffer.len_lines() {
-                let next_char = tab.buffer.rope().line_to_char(next_line);
-                tab.buffer.char_to_byte(next_char)
-            } else {
-                total_bytes
-            };
-            if line_start_byte >= line_end_byte {
-                return None;
-            }
-            tab.buffer
-                .slice_to_cow(line_start_byte, line_end_byte)
-                .to_string()
+            let (start, end) = current_line_byte_range(tab)?;
+            tab.buffer.slice_to_cow(start, end).to_string()
         };
 
         self.clipboard = Some(text.clone());
@@ -131,20 +136,7 @@ impl Editor {
             self.clipboard = Some(cut_text.clone());
             Some(cut_text)
         } else {
-            let head = tab.cursors.primary().head.min(total_bytes);
-            let line = tab.buffer.byte_to_line(head);
-            let line_start_char = tab.buffer.rope().line_to_char(line);
-            let line_start_byte = tab.buffer.char_to_byte(line_start_char);
-            let next_line = line + 1;
-            let line_end_byte = if next_line < tab.buffer.len_lines() {
-                let next_char = tab.buffer.rope().line_to_char(next_line);
-                tab.buffer.char_to_byte(next_char)
-            } else {
-                total_bytes
-            };
-            if line_start_byte >= line_end_byte {
-                return None;
-            }
+            let (line_start_byte, line_end_byte) = current_line_byte_range(tab)?;
             let cut_text = tab
                 .buffer
                 .slice_to_cow(line_start_byte, line_end_byte)

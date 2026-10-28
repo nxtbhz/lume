@@ -37,8 +37,14 @@ pub fn encode_base64(data: &[u8]) -> String {
     out
 }
 
+/// Maximum payload byte limit (10MB) for OSC 52 sequence generation to avoid choking PTY stream.
+pub const MAX_OSC52_BYTES: usize = 10 * 1024 * 1024;
+
 /// Builds standard ANSI OSC 52 clipboard sequence: `\x1b]52;c;<base64>\x07`
 pub fn osc52_copy_sequence(text: &str) -> String {
+    if text.len() > MAX_OSC52_BYTES {
+        return String::new();
+    }
     let b64 = encode_base64(text.as_bytes());
     format!("\x1b]52;c;{}\x07", b64)
 }
@@ -103,5 +109,11 @@ mod tests {
 
         let tmux = osc52_sequence_with_passthrough("hello", true);
         assert_eq!(tmux, "\x1bPtmux;\x1b\x1b]52;c;aGVsbG8=\x07\x1b\\");
+    }
+
+    #[test]
+    fn test_osc52_max_bytes_limit() {
+        let text = "a".repeat(MAX_OSC52_BYTES + 1);
+        assert_eq!(osc52_copy_sequence(&text), "");
     }
 }

@@ -204,6 +204,12 @@ impl InputPrompt {
         self.update_suggestions();
     }
 
+    pub fn insert_str(&mut self, s: &str) {
+        self.value.insert_str(self.cursor_pos, s);
+        self.cursor_pos += s.len();
+        self.update_suggestions();
+    }
+
     pub fn handle_backspace(&mut self) {
         if self.cursor_pos > 0 {
             if let Some(prev_char) = self.value[..self.cursor_pos].chars().next_back() {
@@ -439,6 +445,10 @@ mod tests {
 
         prompt.handle_backspace(); // at 0 does nothing
         assert_eq!(prompt.value, "Rust");
+
+        prompt.insert_str("Language");
+        assert_eq!(prompt.value, "LanguageRust");
+        assert_eq!(prompt.cursor_pos, 8);
     }
 
     #[test]
