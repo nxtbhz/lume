@@ -28,6 +28,7 @@ impl Drop for TestDir {
 }
 
 pub mod app_tests;
+pub mod clipboard_tests;
 pub mod explorer_tests;
 pub mod mouse_tests;
 pub mod palette_tests;

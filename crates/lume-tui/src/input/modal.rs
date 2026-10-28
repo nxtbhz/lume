@@ -95,7 +95,10 @@ impl App {
                                     .buffer()
                                     .slice_to_cow(cur.min(), cur.max())
                                     .into_owned();
-                                self.vim_state.yank(text, false);
+                                self.vim_state.yank(text.clone(), false);
+                                self.editor.set_clipboard(text.clone());
+                                self.pending_osc52 =
+                                    Some(lume_core::clipboard::osc52_sequence_auto(&text));
                             }
                             let head = self.editor.cursors().primary().head;
                             self.editor.cursors_mut().set_single(head);
@@ -121,7 +124,10 @@ impl App {
                         }
                         ('y', KeyCode::Char('y')) => {
                             let yanked = self.editor.yank_line();
-                            self.vim_state.yank(yanked, true);
+                            self.vim_state.yank(yanked.clone(), true);
+                            self.editor.set_clipboard(yanked.clone());
+                            self.pending_osc52 =
+                                Some(lume_core::clipboard::osc52_sequence_auto(&yanked));
                             self.set_status("1 line yanked");
                             return Ok(());
                         }

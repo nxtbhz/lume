@@ -93,6 +93,18 @@ impl App {
                     self.execute_command("edit.redo");
                     return Ok(());
                 }
+                KeyCode::Char('c') => {
+                    self.execute_command("edit.copy");
+                    return Ok(());
+                }
+                KeyCode::Char('x') => {
+                    self.execute_command("edit.cut");
+                    return Ok(());
+                }
+                KeyCode::Char('v') => {
+                    self.execute_command("edit.paste");
+                    return Ok(());
+                }
                 KeyCode::Char('f') => {
                     self.execute_command("edit.find");
                     return Ok(());

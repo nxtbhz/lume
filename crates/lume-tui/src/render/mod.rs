@@ -31,6 +31,9 @@ impl App {
 
         // Begin synchronized frame update to eliminate all screen tearing and flickering
         writer.write_all(b"\x1b[?2026h")?;
+        if let Some(osc) = self.pending_osc52.take() {
+            writer.write_all(osc.as_bytes())?;
+        }
         // Keep terminal cursor hidden during entire painting phase to avoid cursor teleporting across cells
         queue!(writer, Hide, MoveTo(0, 0))?;
 

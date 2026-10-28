@@ -55,6 +55,9 @@ pub struct App {
     // Modal Mode (Vim Motions)
     pub modal_enabled: bool,
     pub vim_state: VimState,
+
+    // Clipboard
+    pub pending_osc52: Option<String>,
 }
 
 impl App {
@@ -198,6 +201,8 @@ impl App {
 
             modal_enabled: false,
             vim_state: VimState::new(),
+
+            pending_osc52: None,
         };
 
         if let Some(msg) = initial_status {

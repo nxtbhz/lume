@@ -115,7 +115,7 @@ pub fn render_which_key<W: Write>(app: &App, writer: &mut W) -> std::io::Result<
         " [File]      Ctrl+O: Open   │ Ctrl+S: Save      │ Ctrl+Shift+S: Save As ",
         " [Tabs]      Ctrl+T: New    │ Ctrl+W: Close     │ Ctrl+Tab / Alt+Left/Right: Switch ",
         " [Explorer]  Ctrl+B/F2: Toggle │ a: New File │ n: New Folder │ m/F2: Rename │ d: Del │ r: Refresh ",
-        " [Edit]      Ctrl+Z: Undo   │ Ctrl+Y: Redo      │ Backspace / Del ",
+        " [Edit]      Ctrl+X: Cut    │ Ctrl+C: Copy      │ Ctrl+V: Paste     │ Ctrl+Z/Y: Undo/Redo ",
         " [Cursor]    Arrows: Move   │ Shift+Arrows: Select │ Home / End ",
         " [Mouse]     Click: Position/Open │ 2xClick: Word │ 3xClick: Line │ Drag: Sel ",
         " [Features]  Ctrl+P: Command Palette            │ F1: Which-Key Overlay ",

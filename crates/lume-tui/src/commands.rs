@@ -94,6 +94,21 @@ pub const COMMANDS: &[CommandItem] = &[
         shortcut: "Ctrl+Y",
     },
     CommandItem {
+        id: "edit.cut",
+        title: "Edit: Cut",
+        shortcut: "Ctrl+X",
+    },
+    CommandItem {
+        id: "edit.copy",
+        title: "Edit: Copy",
+        shortcut: "Ctrl+C",
+    },
+    CommandItem {
+        id: "edit.paste",
+        title: "Edit: Paste",
+        shortcut: "Ctrl+V",
+    },
+    CommandItem {
         id: "edit.find",
         title: "Edit: Find in Buffer...",
         shortcut: "Ctrl+F",
@@ -276,6 +291,23 @@ impl App {
             "edit.redo" => {
                 if self.editor.redo() {
                     self.set_status("Redo");
+                }
+            }
+            "edit.copy" => {
+                if let Some(text) = self.editor.copy_selection() {
+                    self.pending_osc52 = Some(lume_core::clipboard::osc52_sequence_auto(&text));
+                    self.set_status("Copied to clipboard");
+                }
+            }
+            "edit.cut" => {
+                if let Some(text) = self.editor.cut_selection() {
+                    self.pending_osc52 = Some(lume_core::clipboard::osc52_sequence_auto(&text));
+                    self.set_status("Cut to clipboard");
+                }
+            }
+            "edit.paste" => {
+                if self.editor.paste() {
+                    self.set_status("Pasted from clipboard");
                 }
             }
             "edit.find" => {
