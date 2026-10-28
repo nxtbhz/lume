@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{ActiveFocus, App};
-use crate::prompt::PromptAction;
+use crate::prompt::{InputPrompt, PromptAction};
 use crate::tests::TestDir;
 use lume_core::TextBuffer;
 
@@ -649,4 +649,97 @@ fn test_app_explorer_single_letter_jump_navigation() {
         app.explorer.items[app.explorer.selected_idx].name,
         "cherry.rs"
     );
+}
+
+#[test]
+fn test_app_explorer_f2_rename_routing_and_empty_rename() {
+    let test_dir = TestDir::new("lume_test_f2_rename");
+    std::fs::write(test_dir.path().join("file.txt"), "data").unwrap();
+
+    let mut app = App::new(Some(test_dir.path().to_path_buf())).unwrap();
+    app.focus = ActiveFocus::Explorer;
+    app.explorer.refresh();
+    assert_eq!(app.explorer.items.len(), 1);
+
+    // F2 while in explorer should trigger rename
+    app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.prompt.is_some());
+    match app.prompt.as_ref().unwrap().action {
+        PromptAction::RenameItem {
+            ref source_path, ..
+        } => {
+            assert_eq!(source_path.file_name().unwrap(), "file.txt");
+        }
+        _ => panic!("Expected RenameItem"),
+    }
+    app.prompt = None;
+
+    // When explorer has no items, rename command gives status message
+    app.explorer.items.clear();
+    app.execute_command("explorer.rename");
+    assert_eq!(
+        app.status_message.as_ref().unwrap().0,
+        "No item selected to rename"
+    );
+
+    // Root cannot be renamed
+    app.explorer.items.push(crate::explorer::ExplorerItem {
+        path: app.explorer.root.clone(),
+        name: "root".to_string(),
+        is_dir: true,
+        depth: 0,
+        is_expanded: true,
+    });
+    app.explorer.selected_idx = 0;
+    app.execute_command("explorer.rename");
+    assert_eq!(
+        app.status_message.as_ref().unwrap().0,
+        "Cannot rename workspace root directory"
+    );
+}
+
+#[test]
+fn test_app_explorer_create_file_and_rename_error_prompt_handling() {
+    let test_dir = TestDir::new("lume_test_err_prompts");
+    let mut app = App::new(Some(test_dir.path().to_path_buf())).unwrap();
+
+    // Create file error handling (invalid path traversal)
+    app.prompt = Some(InputPrompt::create_file(
+        test_dir.path().to_path_buf(),
+        "workspace",
+    ));
+    for c in "/root/secret.txt".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+            .unwrap();
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    assert!(app
+        .status_message
+        .as_ref()
+        .unwrap()
+        .0
+        .contains("Create file error"));
+
+    // Rename error handling (invalid name)
+    let f1 = test_dir.path().join("doc.txt");
+    std::fs::write(&f1, "txt").unwrap();
+    app.prompt = Some(InputPrompt::rename_item(f1, "doc.txt", false));
+    for _ in 0.."doc.txt".len() {
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))
+            .unwrap();
+    }
+    for c in "/forbidden/name.txt".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+            .unwrap();
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    assert!(app
+        .status_message
+        .as_ref()
+        .unwrap()
+        .0
+        .contains("Rename error"));
 }

@@ -439,3 +439,57 @@ fn test_jump_to_prefix_empty_tree_does_not_panic() {
     explorer.items.clear();
     assert!(!explorer.jump_to_prefix('a', 10));
 }
+
+#[test]
+fn test_create_file_ends_with_separator_fails() {
+    let test_dir = TestDir::new("lume_test_create_sep");
+    let mut explorer = FileExplorer::new(test_dir.path().to_path_buf());
+    let err1 = explorer
+        .create_file(test_dir.path(), "folder/")
+        .unwrap_err();
+    assert_eq!(err1.kind(), std::io::ErrorKind::InvalidInput);
+    let err2 = explorer
+        .create_file(test_dir.path(), "folder\\")
+        .unwrap_err();
+    assert_eq!(err2.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+#[test]
+fn test_rename_item_edge_cases_and_expanded_dirs() {
+    let test_dir = TestDir::new("lume_test_rename_edges");
+    let ws = test_dir.path();
+    let f1 = ws.join("file1.txt");
+    std::fs::write(&f1, "1").unwrap();
+    let parent_dir = ws.join("parent");
+    let child_dir = parent_dir.join("child");
+    std::fs::create_dir_all(&child_dir).unwrap();
+
+    let mut explorer = FileExplorer::new(ws.to_path_buf());
+    explorer.expanded_dirs.insert(parent_dir.clone());
+    explorer.expanded_dirs.insert(child_dir.clone());
+
+    // Empty new name
+    let err_empty = explorer.rename_item(&f1, "   ").unwrap_err();
+    assert_eq!(err_empty.kind(), std::io::ErrorKind::InvalidInput);
+
+    // Absolute new name
+    let err_abs = explorer.rename_item(&f1, "/etc/passwd").unwrap_err();
+    assert_eq!(err_abs.kind(), std::io::ErrorKind::PermissionDenied);
+
+    // Traversal escaping root
+    let err_trav = explorer.rename_item(&f1, "../../escape.txt").unwrap_err();
+    assert_eq!(err_trav.kind(), std::io::ErrorKind::PermissionDenied);
+
+    // Source outside root
+    let outside_dir = TestDir::new("lume_outside");
+    let outside_file = outside_dir.path().join("out.txt");
+    std::fs::write(&outside_file, "out").unwrap();
+    let err_outside = explorer.rename_item(&outside_file, "new.txt").unwrap_err();
+    assert_eq!(err_outside.kind(), std::io::ErrorKind::PermissionDenied);
+
+    // Rename folder updates parent and child in expanded_dirs
+    let new_parent = explorer.rename_item(&parent_dir, "parent_renamed").unwrap();
+    assert!(explorer.expanded_dirs.contains(&new_parent));
+    assert!(explorer.expanded_dirs.contains(&new_parent.join("child")));
+    assert!(!explorer.expanded_dirs.contains(&parent_dir));
+}
