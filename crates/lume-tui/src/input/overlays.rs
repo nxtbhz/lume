@@ -124,6 +124,7 @@ impl App {
                             self.set_status("Deletion cancelled");
                         }
                     }
+                    PromptAction::CreateFile { .. } | PromptAction::RenameItem { .. } => {}
                 }
             }
             KeyCode::Tab => {

@@ -34,9 +34,19 @@ pub const COMMANDS: &[CommandItem] = &[
         shortcut: "Ctrl+B / F2",
     },
     CommandItem {
+        id: "explorer.new_file",
+        title: "Explorer: New File...",
+        shortcut: "a in Explorer",
+    },
+    CommandItem {
         id: "explorer.new_folder",
         title: "Explorer: New Folder...",
         shortcut: "n in Explorer",
+    },
+    CommandItem {
+        id: "explorer.rename",
+        title: "Explorer: Rename Selected Item...",
+        shortcut: "F2 / m in Explorer",
     },
     CommandItem {
         id: "explorer.delete_folder",
@@ -188,6 +198,15 @@ impl App {
                     }
                 ));
             }
+            "explorer.new_file" => {
+                let target = self.explorer.target_folder_for_creation();
+                let display = target
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("workspace")
+                    .to_string();
+                self.prompt = Some(InputPrompt::create_file(target, &display));
+            }
             "explorer.new_folder" => {
                 let target = self.explorer.target_folder_for_creation();
                 let display = target
@@ -196,6 +215,27 @@ impl App {
                     .unwrap_or("workspace")
                     .to_string();
                 self.prompt = Some(InputPrompt::create_folder(target, &display));
+            }
+            "explorer.rename" => {
+                if let Some(item) = self.explorer.selected_item() {
+                    let root_canon = self
+                        .explorer
+                        .root
+                        .canonicalize()
+                        .unwrap_or_else(|_| self.explorer.root.clone());
+                    let item_canon = item.path.canonicalize().unwrap_or_else(|_| item.path.clone());
+                    if item_canon == root_canon {
+                        self.set_status("Cannot rename workspace root directory");
+                    } else {
+                        self.prompt = Some(InputPrompt::rename_item(
+                            item.path.clone(),
+                            &item.name,
+                            item.is_dir,
+                        ));
+                    }
+                } else {
+                    self.set_status("No item selected to rename");
+                }
             }
             "explorer.delete_folder" => {
                 if let Some(item) = self.explorer.selected_item() {

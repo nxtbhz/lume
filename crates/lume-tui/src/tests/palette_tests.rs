@@ -1,4 +1,8 @@
+use std::path::PathBuf;
+
 use crate::app::{ActiveFocus, App};
+use crate::prompt::{InputPrompt, PromptAction};
+use crate::tests::TestDir;
 use crate::vim::VimMode;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use lume_core::TextBuffer;
@@ -310,4 +314,46 @@ fn test_app_events_tick_and_overlay_edge_cases() {
 
     app.execute_command("app.quit");
     assert!(!app.running);
+}
+
+#[test]
+fn test_prompt_create_file_and_rename_item_constructors() {
+    let p1 = InputPrompt::create_file(PathBuf::from("/workspace/src"), "src");
+    assert_eq!(p1.action, PromptAction::CreateFile { parent_dir: PathBuf::from("/workspace/src") });
+    assert!(p1.title.contains("Create File in 'src'"));
+    assert_eq!(p1.value, "");
+
+    let p2 = InputPrompt::rename_item(PathBuf::from("/workspace/src/lib.rs"), "lib.rs", false);
+    assert_eq!(p2.action, PromptAction::RenameItem { source_path: PathBuf::from("/workspace/src/lib.rs"), is_dir: false });
+    assert!(p2.title.contains("Rename file 'lib.rs'"));
+    assert_eq!(p2.value, "lib.rs");
+    assert_eq!(p2.cursor_pos, "lib.rs".len());
+}
+
+#[test]
+fn test_commands_explorer_new_file_and_rename_execution() {
+    let test_dir = TestDir::new("lume_test_cmd_explorer");
+    let mut app = App::new(Some(test_dir.path().to_path_buf())).unwrap();
+
+    app.execute_command("explorer.new_file");
+    assert!(app.prompt.is_some());
+    match app.prompt.as_ref().unwrap().action {
+        PromptAction::CreateFile { .. } => {}
+        _ => panic!("Expected PromptAction::CreateFile"),
+    }
+
+    // When item is selected, rename should open rename prompt with current name
+    std::fs::write(test_dir.path().join("test.txt"), "").unwrap();
+    app.explorer.refresh();
+    app.explorer.selected_idx = 0;
+
+    app.execute_command("explorer.rename");
+    assert!(app.prompt.is_some());
+    match app.prompt.as_ref().unwrap().action {
+        PromptAction::RenameItem { ref source_path, is_dir } => {
+            assert_eq!(source_path.file_name().unwrap(), "test.txt");
+            assert!(!is_dir);
+        }
+        _ => panic!("Expected PromptAction::RenameItem"),
+    }
 }

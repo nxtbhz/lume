@@ -114,7 +114,7 @@ pub fn render_which_key<W: Write>(app: &App, writer: &mut W) -> std::io::Result<
         " LUME SHORTCUTS CHEAT SHEET (Press any key or Esc to close) ",
         " [File]      Ctrl+O: Open   │ Ctrl+S: Save      │ Ctrl+Shift+S: Save As ",
         " [Tabs]      Ctrl+T: New    │ Ctrl+W: Close     │ Ctrl+Tab / Alt+Left/Right: Switch ",
-        " [Explorer]  Ctrl+B/F2: Toggle │ n: New Folder │ d: Del Folder │ r: Refresh ",
+        " [Explorer]  Ctrl+B/F2: Toggle │ a: New File │ n: New Folder │ m/F2: Rename │ d: Del │ r: Refresh ",
         " [Edit]      Ctrl+Z: Undo   │ Ctrl+Y: Redo      │ Backspace / Del ",
         " [Cursor]    Arrows: Move   │ Shift+Arrows: Select │ Home / End ",
         " [Mouse]     Click: Position/Open │ 2xClick: Word │ 3xClick: Line │ Drag: Sel ",

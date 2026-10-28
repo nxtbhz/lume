@@ -14,6 +14,8 @@ pub enum PromptAction {
     SaveFileAs,
     SetLanguage,
     CreateFolder { parent_dir: PathBuf },
+    CreateFile { parent_dir: PathBuf },
+    RenameItem { source_path: PathBuf, is_dir: bool },
     ConfirmDeleteFolder { path: PathBuf },
 }
 
@@ -80,6 +82,38 @@ impl InputPrompt {
             title: Cow::Owned(formatted),
             value: String::new(),
             cursor_pos: 0,
+            suggestions: Vec::new(),
+            selected_suggestion: 0,
+        }
+    }
+
+    pub fn create_file(parent_dir: PathBuf, display_name: &str) -> Self {
+        let formatted = format!(
+            " Create File in '{}' (Enter: create, Esc: cancel) ",
+            display_name
+        );
+        Self {
+            action: PromptAction::CreateFile { parent_dir },
+            title: Cow::Owned(formatted),
+            value: String::new(),
+            cursor_pos: 0,
+            suggestions: Vec::new(),
+            selected_suggestion: 0,
+        }
+    }
+
+    pub fn rename_item(source_path: PathBuf, current_name: &str, is_dir: bool) -> Self {
+        let formatted = format!(
+            " Rename {} '{}' (Enter: rename, Esc: cancel) ",
+            if is_dir { "folder" } else { "file" },
+            current_name
+        );
+        let len = current_name.len();
+        Self {
+            action: PromptAction::RenameItem { source_path, is_dir },
+            title: Cow::Owned(formatted),
+            value: current_name.to_string(),
+            cursor_pos: len,
             suggestions: Vec::new(),
             selected_suggestion: 0,
         }
@@ -153,6 +187,8 @@ impl InputPrompt {
             }
             PromptAction::SetLanguage
             | PromptAction::CreateFolder { .. }
+            | PromptAction::CreateFile { .. }
+            | PromptAction::RenameItem { .. }
             | PromptAction::ConfirmDeleteFolder { .. } => {
                 // Handled in handle_key with filter or no suggestions needed
             }
@@ -217,7 +253,10 @@ impl InputPrompt {
                 self.value = suggestion.clone();
                 self.cursor_pos = self.value.len();
             }
-            PromptAction::CreateFolder { .. } | PromptAction::ConfirmDeleteFolder { .. } => {}
+            PromptAction::CreateFolder { .. }
+            | PromptAction::CreateFile { .. }
+            | PromptAction::RenameItem { .. }
+            | PromptAction::ConfirmDeleteFolder { .. } => {}
         }
     }
 
