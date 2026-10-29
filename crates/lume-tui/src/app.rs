@@ -400,6 +400,7 @@ impl App {
                 self.explorer.root.join(folder_path)
             }
         });
+
         for tab in self.editor.tabs_mut() {
             if let Some(ref p) = tab.file_path {
                 let p_abs = if p.is_absolute() {
@@ -408,7 +409,12 @@ impl App {
                     self.explorer.root.join(p)
                 };
                 let p_canon = p.canonicalize().unwrap_or_else(|_| p_abs.clone());
-                if p_canon.starts_with(&folder_canon) || p_abs.starts_with(&folder_canon) {
+
+                let is_inside = p_canon.starts_with(&folder_canon)
+                    || p_abs.starts_with(&folder_canon)
+                    || p_abs.starts_with(folder_path);
+
+                if is_inside {
                     let _ = lume_core::Journal::remove(p);
                     let _ = lume_core::Journal::remove(&p_canon);
                     let _ = lume_core::Journal::remove(&p_abs);
@@ -438,6 +444,7 @@ impl App {
                 self.explorer.root.join(new_path)
             }
         });
+        let old_parent_canon = old_path.parent().and_then(|p| p.canonicalize().ok());
 
         for tab in self.editor.tabs_mut() {
             if let Some(ref p) = tab.file_path {
@@ -447,16 +454,31 @@ impl App {
                     self.explorer.root.join(p)
                 };
                 let p_canon = p.canonicalize().unwrap_or_else(|_| p_abs.clone());
+                let p_parent_canon = p_abs.parent().and_then(|par| par.canonicalize().ok());
 
-                if p_canon == old_canon || p_abs == old_canon {
+                let is_exact_match = p_canon == old_canon
+                    || p_abs == old_canon
+                    || p_abs == old_path
+                    || (p.file_name() == old_path.file_name()
+                        && old_parent_canon.is_some()
+                        && old_parent_canon == p_parent_canon);
+
+                if is_exact_match {
                     let _ = lume_core::Journal::remove(p);
                     let _ = lume_core::Journal::remove(&p_canon);
                     let _ = lume_core::Journal::remove(&p_abs);
                     tab.file_path = Some(new_canon.clone());
                     self.syntax_cache.remove(&tab.id);
                     self.syntax_in_flight.remove(&tab.id);
-                } else if p_canon.starts_with(&old_canon) {
-                    if let Ok(rel) = p_canon.strip_prefix(&old_canon) {
+                } else if p_canon.starts_with(&old_canon)
+                    || p_abs.starts_with(&old_canon)
+                    || p_abs.starts_with(old_path)
+                {
+                    let rel = p_canon
+                        .strip_prefix(&old_canon)
+                        .or_else(|_| p_abs.strip_prefix(&old_canon))
+                        .or_else(|_| p_abs.strip_prefix(old_path));
+                    if let Ok(rel) = rel {
                         let updated = new_canon.join(rel);
                         let _ = lume_core::Journal::remove(p);
                         let _ = lume_core::Journal::remove(&p_canon);

@@ -743,3 +743,65 @@ fn test_app_explorer_create_file_and_rename_error_prompt_handling() {
         .0
         .contains("Rename error"));
 }
+
+#[test]
+fn test_app_rename_and_delete_tabs_with_symlink_ancestor_resolution() {
+    let test_dir = TestDir::new("lume_test_symlink_res");
+    let ws = test_dir.path();
+    let folder = ws.join("real_folder");
+    std::fs::create_dir_all(&folder).unwrap();
+
+    let file_in_folder = folder.join("file.rs");
+    std::fs::write(&file_in_folder, "fn test() {}").unwrap();
+
+    let mut app = App::new(Some(ws.to_path_buf())).unwrap();
+    app.editor.open_or_load(&file_in_folder).unwrap();
+
+    // Renaming the real folder must update open tab
+    let renamed_folder = ws.join("renamed_folder");
+    std::fs::rename(&folder, &renamed_folder).unwrap();
+    app.handle_renamed_path_tabs(&folder, &renamed_folder);
+
+    assert_eq!(
+        app.editor
+            .active_tab()
+            .file_path
+            .as_ref()
+            .unwrap()
+            .file_name()
+            .unwrap(),
+        "file.rs"
+    );
+    assert!(app
+        .editor
+        .active_tab()
+        .file_path
+        .as_ref()
+        .unwrap()
+        .starts_with(&renamed_folder));
+
+    // Deleting the renamed folder must unlink tab
+    std::fs::remove_dir_all(&renamed_folder).unwrap();
+    app.handle_deleted_folder_tabs(&renamed_folder);
+    assert!(app.editor.active_tab().file_path.is_none());
+
+    // Direct rename test with ancestor mismatch
+    let old_dir = ws.join("ancestor_old");
+    let nested_dir = old_dir.join("sub");
+    std::fs::create_dir_all(&nested_dir).unwrap();
+    let nested_file = nested_dir.join("test.txt");
+    std::fs::write(&nested_file, "content").unwrap();
+
+    let mut app2 = App::new(Some(ws.to_path_buf())).unwrap();
+    app2.editor.open_or_load(&nested_file).unwrap();
+
+    let new_dir = ws.join("ancestor_new");
+    std::fs::rename(&old_dir, &new_dir).unwrap();
+    app2.handle_renamed_path_tabs(&old_dir, &new_dir);
+
+    let updated_path = app2.editor.active_tab().file_path.as_ref().unwrap();
+    assert!(
+        updated_path.starts_with(&new_dir)
+            || updated_path.ends_with(std::path::Path::new("ancestor_new/sub/test.txt"))
+    );
+}

@@ -325,6 +325,14 @@ impl FileExplorer {
             }
             curr = parent.parent();
         }
+        let mut curr_norm = normalized.parent();
+        while let Some(parent) = curr_norm {
+            self.expanded_dirs.insert(parent.to_path_buf());
+            if parent == self.root || !parent.starts_with(&self.root) {
+                break;
+            }
+            curr_norm = parent.parent();
+        }
 
         self.refresh();
 
@@ -491,6 +499,14 @@ impl FileExplorer {
             }
             curr = parent.parent();
         }
+        let mut curr_norm = normalized.parent();
+        while let Some(parent) = curr_norm {
+            self.expanded_dirs.insert(parent.to_path_buf());
+            if parent == self.root || !parent.starts_with(&self.root) {
+                break;
+            }
+            curr_norm = parent.parent();
+        }
 
         self.refresh();
 
@@ -611,8 +627,13 @@ impl FileExplorer {
             for dir in &self.expanded_dirs {
                 if dir == &source_canon || dir == source_path {
                     updated_expanded.insert(target_canon.clone());
+                    updated_expanded.insert(target.clone());
                 } else if let Ok(rel) = dir.strip_prefix(&source_canon) {
                     updated_expanded.insert(target_canon.join(rel));
+                    updated_expanded.insert(target.join(rel));
+                } else if let Ok(rel) = dir.strip_prefix(source_path) {
+                    updated_expanded.insert(target_canon.join(rel));
+                    updated_expanded.insert(target.join(rel));
                 } else {
                     updated_expanded.insert(dir.clone());
                 }

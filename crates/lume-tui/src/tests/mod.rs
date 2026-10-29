@@ -12,6 +12,7 @@ impl TestDir {
         ));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
+        let path = path.canonicalize().unwrap_or(path);
         TestDir(path)
     }
 
