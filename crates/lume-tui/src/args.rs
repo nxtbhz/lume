@@ -63,7 +63,18 @@ pub fn expand_glob(pattern: &str) -> Vec<PathBuf> {
         return vec![PathBuf::from(pattern)];
     }
 
-    let path = Path::new(pattern);
+    // On Windows or for verbatim paths (\\?\ or \??\), normalize forward slashes to backslashes
+    // because Windows verbatim paths do not treat `/` as a directory separator in `path.components()`.
+    let normalized_pattern: String;
+    let pattern_ref =
+        if pattern.starts_with(r"\\?\") || pattern.starts_with(r"\??\") || cfg!(windows) {
+            normalized_pattern = pattern.replace('/', "\\");
+            &normalized_pattern
+        } else {
+            pattern
+        };
+
+    let path = Path::new(pattern_ref);
     let mut current_paths = vec![PathBuf::new()];
 
     for component in path.components() {
@@ -279,6 +290,10 @@ mod tests {
             win_unc,
             vec![PathBuf::from(r"\\?\UNC\server\share\file.txt")]
         );
+
+        // Verbatim paths with mixed slashes and nonexistent wildcards return empty without panic
+        let win_verbatim_slash = expand_glob(r"\\?\C:\Users\runneradmin/*.nonexistent_glob_ext");
+        assert!(win_verbatim_slash.is_empty());
     }
 
     #[test]

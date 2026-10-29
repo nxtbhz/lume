@@ -87,10 +87,16 @@ fn test_app_open_wildcard_glob() {
     std::fs::write(&f1, "content a").unwrap();
     std::fs::write(&f2, "content b").unwrap();
 
-    let pattern = format!("{}/*.txt", tmp_dir.display());
+    let pattern = format!("{}{}*.txt", tmp_dir.display(), std::path::MAIN_SEPARATOR);
     let app = App::from_paths(&[&pattern]).unwrap();
     assert_eq!(app.editor.tabs().len(), 2);
     assert_eq!(app.editor.active_tab_idx(), 0);
+
+    // Also test forward slash normalization in wildcard glob
+    let pattern_slash = format!("{}/*.txt", tmp_dir.display());
+    let app_slash = App::from_paths(&[&pattern_slash]).unwrap();
+    assert_eq!(app_slash.editor.tabs().len(), 2);
+    assert_eq!(app_slash.editor.active_tab_idx(), 0);
 }
 
 #[test]
