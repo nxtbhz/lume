@@ -45,55 +45,90 @@ pub fn matches_pattern(pattern: &str, text: &str) -> bool {
     p_i == p.len()
 }
 
+fn strip_verbatim_prefix(path_str: &str) -> &str {
+    if let Some(rest) = path_str.strip_prefix(r"\\?\UNC\") {
+        rest
+    } else if let Some(rest) = path_str.strip_prefix(r"\\?\") {
+        rest
+    } else {
+        path_str
+    }
+}
+
 /// Expands glob patterns with `*` and `?` in path components without external dependencies.
 /// If pattern does not contain wildcard characters, returns the path directly.
 pub fn expand_glob(pattern: &str) -> Vec<PathBuf> {
-    if !pattern.contains('*') && !pattern.contains('?') {
+    let pattern_without_prefix = strip_verbatim_prefix(pattern);
+    if !pattern_without_prefix.contains('*') && !pattern_without_prefix.contains('?') {
         return vec![PathBuf::from(pattern)];
     }
 
     let path = Path::new(pattern);
     let mut current_paths = vec![PathBuf::new()];
 
-    for component in path.iter() {
-        let comp_str = component.to_string_lossy();
-        if comp_str.contains('*') || comp_str.contains('?') {
-            let mut next_paths = Vec::new();
-            for base in current_paths {
-                let dir_to_read = if base.as_os_str().is_empty() {
-                    Path::new(".")
-                } else {
-                    &base
-                };
-
-                if let Ok(entries) = std::fs::read_dir(dir_to_read) {
-                    let mut matched = Vec::new();
-                    for entry in entries.flatten() {
-                        let file_name = entry.file_name();
-                        let name_str = file_name.to_string_lossy();
-                        // Ignore hidden files unless pattern explicitly starts with '.'
-                        if name_str.starts_with('.') && !comp_str.starts_with('.') {
-                            continue;
-                        }
-                        if matches_pattern(&comp_str, &name_str) {
-                            if base.as_os_str().is_empty() {
-                                matched.push(PathBuf::from(file_name));
-                            } else {
-                                matched.push(base.join(file_name));
-                            }
-                        }
-                    }
-                    matched.sort();
-                    next_paths.extend(matched);
+    for component in path.components() {
+        match component {
+            std::path::Component::Prefix(prefix) => {
+                for base in &mut current_paths {
+                    *base = PathBuf::from(prefix.as_os_str());
                 }
             }
-            current_paths = next_paths;
-        } else {
-            for base in &mut current_paths {
-                if base.as_os_str().is_empty() {
-                    *base = PathBuf::from(component);
+            std::path::Component::RootDir => {
+                for base in &mut current_paths {
+                    if base.as_os_str().is_empty() {
+                        *base = PathBuf::from(std::path::MAIN_SEPARATOR.to_string());
+                    } else {
+                        *base = base.join(std::path::MAIN_SEPARATOR.to_string());
+                    }
+                }
+            }
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                for base in &mut current_paths {
+                    *base = base.join("..");
+                }
+            }
+            std::path::Component::Normal(comp) => {
+                let comp_str = comp.to_string_lossy();
+                if comp_str.contains('*') || comp_str.contains('?') {
+                    let mut next_paths = Vec::new();
+                    for base in current_paths {
+                        let dir_to_read = if base.as_os_str().is_empty() {
+                            Path::new(".")
+                        } else {
+                            &base
+                        };
+
+                        if let Ok(entries) = std::fs::read_dir(dir_to_read) {
+                            let mut matched = Vec::new();
+                            for entry in entries.flatten() {
+                                let file_name = entry.file_name();
+                                let name_str = file_name.to_string_lossy();
+                                // Ignore hidden files unless pattern explicitly starts with '.'
+                                if name_str.starts_with('.') && !comp_str.starts_with('.') {
+                                    continue;
+                                }
+                                if matches_pattern(&comp_str, &name_str) {
+                                    if base.as_os_str().is_empty() {
+                                        matched.push(PathBuf::from(file_name));
+                                    } else {
+                                        matched.push(base.join(file_name));
+                                    }
+                                }
+                            }
+                            matched.sort();
+                            next_paths.extend(matched);
+                        }
+                    }
+                    current_paths = next_paths;
                 } else {
-                    *base = base.join(component);
+                    for base in &mut current_paths {
+                        if base.as_os_str().is_empty() {
+                            *base = PathBuf::from(comp);
+                        } else {
+                            *base = base.join(comp);
+                        }
+                    }
                 }
             }
         }
@@ -135,7 +170,8 @@ where
     for target in raw_targets {
         let expanded = expand_glob(target);
         if expanded.is_empty() {
-            if !target.contains('*') && !target.contains('?') {
+            let target_without_prefix = strip_verbatim_prefix(target);
+            if !target_without_prefix.contains('*') && !target_without_prefix.contains('?') {
                 expanded_paths.push(PathBuf::from(target));
             }
         } else {
@@ -224,6 +260,25 @@ mod tests {
 
         let nonexistent = expand_glob("nonexistent_glob_dir_xyz_123/*.foo");
         assert!(nonexistent.is_empty());
+
+        // Windows verbatim paths without wildcards are preserved directly without treating `\\?\` as glob
+        let win_verbatim = expand_glob(r"\\?\C:\Users\runneradmin\file.txt");
+        assert_eq!(
+            win_verbatim,
+            vec![PathBuf::from(r"\\?\C:\Users\runneradmin\file.txt")]
+        );
+
+        let dot_res = expand_glob("./src/*.rs");
+        assert!(!dot_res.is_empty());
+
+        let parent_res = expand_glob("src/../src/*.rs");
+        assert!(!parent_res.is_empty());
+
+        let win_unc = expand_glob(r"\\?\UNC\server\share\file.txt");
+        assert_eq!(
+            win_unc,
+            vec![PathBuf::from(r"\\?\UNC\server\share\file.txt")]
+        );
     }
 
     #[test]
@@ -294,6 +349,55 @@ mod tests {
             CliCommand::Run(targets) => {
                 assert_eq!(targets.workspace, Some(PathBuf::from(".")));
                 assert_eq!(targets.files, vec![PathBuf::from("Cargo.toml")]);
+            }
+            _ => panic!("Expected Run command"),
+        }
+
+        // Windows verbatim path
+        let cmd = parse_cli_args(["lume", r"\\?\C:\Users\runneradmin\project"]);
+        match cmd {
+            CliCommand::Run(targets) => {
+                assert!(
+                    targets.workspace == Some(PathBuf::from(r"\\?\C:\Users\runneradmin\project"))
+                        || targets.files
+                            == vec![PathBuf::from(r"\\?\C:\Users\runneradmin\project")]
+                );
+            }
+            _ => panic!("Expected Run command"),
+        }
+
+        // Trailing slash explicitly denotes workspace directory
+        let cmd = parse_cli_args(["lume", "custom_dir/"]);
+        match cmd {
+            CliCommand::Run(targets) => {
+                assert_eq!(targets.workspace, Some(PathBuf::from("custom_dir/")));
+            }
+            _ => panic!("Expected Run command"),
+        }
+
+        let cmd = parse_cli_args(["lume", r"custom_dir\"]);
+        match cmd {
+            CliCommand::Run(targets) => {
+                assert_eq!(targets.workspace, Some(PathBuf::from(r"custom_dir\")));
+            }
+            _ => panic!("Expected Run command"),
+        }
+
+        // Empty glob match
+        let cmd = parse_cli_args(["lume", "nonexistent*dir/file.txt"]);
+        match cmd {
+            CliCommand::Run(targets) => {
+                assert!(targets.files.is_empty());
+                assert!(targets.workspace.is_none());
+            }
+            _ => panic!("Expected Run command"),
+        }
+
+        // Stdin "-" argument
+        let cmd = parse_cli_args(["lume", "-"]);
+        match cmd {
+            CliCommand::Run(targets) => {
+                assert_eq!(targets.files, vec![PathBuf::from("-")]);
             }
             _ => panic!("Expected Run command"),
         }
