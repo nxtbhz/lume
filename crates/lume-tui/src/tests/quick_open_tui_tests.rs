@@ -13,7 +13,7 @@ fn test_app_quick_open_lifecycle_and_file_selection() {
     fs::write(&file1, "// first file\n").unwrap();
     fs::write(&file2, "// second file\n").unwrap();
 
-    let mut app = App::from_paths(&[file1.clone()]).unwrap();
+    let mut app = App::from_paths(&[&file1]).unwrap();
     assert_eq!(app.editor.tabs().len(), 1);
     assert!(app.quick_open.is_none());
 
@@ -115,4 +115,71 @@ fn test_app_quick_open_mouse_click_selects_and_cancels() {
     };
     app.handle_mouse(click_outside).unwrap();
     assert!(app.quick_open.is_none());
+}
+
+#[test]
+fn test_quick_open_render_multibyte_and_overflow_query() {
+    let mut app = App::new(None).unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(app.quick_open.is_some());
+
+    // Type multibyte UTF-8 characters and long string exceeding box width
+    for c in "ações_música_super_long_query_string_that_exceeds_modal_box_width_in_terminal".chars()
+    {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+            .unwrap();
+    }
+
+    let mut buf = Vec::new();
+    assert!(app.render(&mut buf).is_ok());
+    assert!(!buf.is_empty());
+}
+
+#[test]
+fn test_app_quick_open_mouse_row_click_and_scroll() {
+    let test_dir = TestDir::new("lume_test_quick_open_mouse_click");
+    let root = test_dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    let file1 = root.join("src/item.rs");
+    fs::write(&file1, "// item\n").unwrap();
+
+    let mut app = App::from_paths(&[root.to_path_buf()]).unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(app.quick_open.is_some());
+
+    // Mouse scroll down and up
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column: 40,
+        row: 5,
+        modifiers: KeyModifiers::NONE,
+    })
+    .unwrap();
+    assert!(app.quick_open.is_some());
+
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::ScrollUp,
+        column: 40,
+        row: 5,
+        modifiers: KeyModifiers::NONE,
+    })
+    .unwrap();
+    assert!(app.quick_open.is_some());
+
+    // Click on row 3 (first item in modal: start_y = 3, row 3 is 3 + 3 = 6)
+    let term_w = app.terminal_width as usize;
+    let box_w = (term_w * 3 / 4).clamp(50, 84).min(term_w);
+    let start_x = term_w.saturating_sub(box_w) / 2;
+
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: (start_x + 5) as u16,
+        row: 6, // row 6 is inside the list
+        modifiers: KeyModifiers::NONE,
+    })
+    .unwrap();
+    assert!(app.quick_open.is_none());
+    assert_eq!(app.editor.file_path().unwrap(), file1.as_path());
 }

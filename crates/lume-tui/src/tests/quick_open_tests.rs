@@ -133,3 +133,100 @@ fn test_quick_open_navigation_clamping() {
     state.move_down(10);
     assert_eq!(state.selected_idx, 1);
 }
+
+#[test]
+fn test_scan_workspace_files_includes_open_tabs_outside_or_hidden() {
+    let test_dir = TestDir::new("lume_test_open_tabs_hidden");
+    let root = test_dir.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    let main_rs = root.join("src/main.rs");
+    let hidden_env = root.join(".env");
+    let outside_dir = TestDir::new("lume_test_outside");
+    let outside_file = outside_dir.path().join("external.rs");
+
+    fs::write(&main_rs, "fn main() {}").unwrap();
+    fs::write(&hidden_env, "SECRET=123").unwrap();
+    fs::write(&outside_file, "// external").unwrap();
+
+    let open_tabs = vec![hidden_env.clone(), outside_file.clone()];
+    let items = scan_workspace_files(root, &open_tabs, 1000);
+
+    let paths: Vec<&str> = items.iter().map(|it| it.relative_path.as_str()).collect();
+    assert!(paths.contains(&"src/main.rs"));
+    assert!(paths.iter().any(|p| p.ends_with(".env")));
+    assert!(paths.iter().any(|p| p.ends_with("external.rs")));
+
+    let env_item = items.iter().find(|it| it.full_path == hidden_env).unwrap();
+    assert!(env_item.is_open_tab);
+
+    let ext_item = items
+        .iter()
+        .find(|it| it.full_path == outside_file)
+        .unwrap();
+    assert!(ext_item.is_open_tab);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_scan_workspace_files_cycle_protection() {
+    let test_dir = TestDir::new("lume_test_symlink_cycle");
+    let root = test_dir.path();
+    let dir_a = root.join("dir_a");
+    fs::create_dir_all(&dir_a).unwrap();
+    fs::write(dir_a.join("file.rs"), "// in a").unwrap();
+
+    // Create circular symlink: dir_a/loop -> dir_a
+    let link = dir_a.join("loop");
+    let _ = std::os::unix::fs::symlink(&dir_a, &link);
+
+    let items = scan_workspace_files(root, &[], 1000);
+    assert!(!items.is_empty());
+    assert!(items.iter().any(|it| it.file_name == "file.rs"));
+}
+
+#[test]
+fn test_quick_open_scrolling_and_edge_cases() {
+    let items = vec![
+        QuickOpenItem {
+            relative_path: "1.rs".to_string(),
+            file_name: "1.rs".to_string(),
+            full_path: PathBuf::from("/workspace/1.rs"),
+            is_open_tab: false,
+        },
+        QuickOpenItem {
+            relative_path: "2.rs".to_string(),
+            file_name: "2.rs".to_string(),
+            full_path: PathBuf::from("/workspace/2.rs"),
+            is_open_tab: false,
+        },
+        QuickOpenItem {
+            relative_path: "3.rs".to_string(),
+            file_name: "3.rs".to_string(),
+            full_path: PathBuf::from("/workspace/3.rs"),
+            is_open_tab: false,
+        },
+    ];
+
+    let mut state = QuickOpenState::new(items);
+    // Backspace on empty
+    state.handle_backspace();
+    assert_eq!(state.query, "");
+
+    // Empty paste
+    state.handle_paste("");
+    assert_eq!(state.query, "");
+
+    // Move down with max_visible = 1 forces scroll_offset to advance
+    state.move_down(1);
+    assert_eq!(state.selected_idx, 1);
+    assert_eq!(state.scroll_offset, 1);
+
+    state.move_down(1);
+    assert_eq!(state.selected_idx, 2);
+    assert_eq!(state.scroll_offset, 2);
+
+    // Move up forces scroll_offset to decrease
+    state.move_up();
+    assert_eq!(state.selected_idx, 1);
+    assert_eq!(state.scroll_offset, 1);
+}

@@ -128,45 +128,54 @@ fn match_single_token(
     let mut memo = vec![None; (m + 1) * stride];
     let mut best_choice = vec![0usize; (m + 1) * stride];
 
+    struct MatchContext<'a> {
+        token_chars: &'a [char],
+        token_lower: &'a [char],
+        cand_chars: &'a [char],
+        cand_lower: &'a [char],
+        filename_start: usize,
+        stride: usize,
+    }
+
+    let ctx = MatchContext {
+        token_chars,
+        token_lower,
+        cand_chars,
+        cand_lower,
+        filename_start,
+        stride,
+    };
+
     fn solve(
         p: usize,
         prev: usize,
-        token_chars: &[char],
-        token_lower: &[char],
-        cand_chars: &[char],
-        cand_lower: &[char],
-        filename_start: usize,
+        ctx: &MatchContext<'_>,
         memo: &mut [Option<Option<i64>>],
         best_choice: &mut [usize],
-        stride: usize,
     ) -> Option<i64> {
-        let m = token_chars.len();
-        let n = cand_chars.len();
+        let m = ctx.token_chars.len();
+        let n = ctx.cand_chars.len();
 
         if p == m {
             return Some(0);
         }
 
-        let idx = p * stride + prev;
+        let idx = p * ctx.stride + prev;
         if let Some(res) = memo[idx] {
             return res;
         }
 
         let min_c = if prev == n { 0 } else { prev + 1 };
         let remaining_tokens = m - p - 1;
-        let max_c = if n >= remaining_tokens {
-            n - remaining_tokens
-        } else {
-            0
-        };
+        let max_c = n.saturating_sub(remaining_tokens);
 
         let mut max_score: Option<i64> = None;
         let mut choice = 0;
 
-        let target_char = token_lower[p];
+        let target_char = ctx.token_lower[p];
 
         for curr in min_c..max_c {
-            if cand_lower[curr] != target_char {
+            if ctx.cand_lower[curr] != target_char {
                 continue;
             }
 
@@ -174,17 +183,17 @@ fn match_single_token(
             let mut char_score = 10i64; // Base hit
 
             // Boundary bonus: start of string or after separator
-            if curr == 0 || is_separator(cand_chars[curr - 1]) {
+            if curr == 0 || is_separator(ctx.cand_chars[curr - 1]) {
                 char_score += 30;
             }
 
             // Filename bonus: in filename portion
-            if curr >= filename_start {
+            if curr >= ctx.filename_start {
                 char_score += 25;
             }
 
             // Exact case bonus
-            if cand_chars[curr] == token_chars[p] {
+            if ctx.cand_chars[curr] == ctx.token_chars[p] {
                 char_score += 5;
             }
 
@@ -198,18 +207,7 @@ fn match_single_token(
                 }
             }
 
-            if let Some(rest_score) = solve(
-                p + 1,
-                curr,
-                token_chars,
-                token_lower,
-                cand_chars,
-                cand_lower,
-                filename_start,
-                memo,
-                best_choice,
-                stride,
-            ) {
+            if let Some(rest_score) = solve(p + 1, curr, ctx, memo, best_choice) {
                 let candidate_total = char_score + rest_score;
                 if max_score.is_none() || candidate_total > max_score.unwrap() {
                     max_score = Some(candidate_total);
@@ -225,18 +223,7 @@ fn match_single_token(
         max_score
     }
 
-    let best_score = solve(
-        0,
-        n,
-        token_chars,
-        token_lower,
-        cand_chars,
-        cand_lower,
-        filename_start,
-        &mut memo,
-        &mut best_choice,
-        stride,
-    )?;
+    let best_score = solve(0, n, &ctx, &mut memo, &mut best_choice)?;
 
     // Reconstruct matched indices
     let mut indices = Vec::with_capacity(m);

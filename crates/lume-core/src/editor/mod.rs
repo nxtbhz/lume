@@ -134,11 +134,11 @@ impl Editor {
         // If already open, switch to it
         for (i, tab) in self.tabs.iter().enumerate() {
             if let Some(ref p) = tab.file_path {
-                if p == path
-                    || (p.exists()
-                        && path.exists()
-                        && p.canonicalize().ok() == path.canonicalize().ok())
-                {
+                let is_same_file = match (p.canonicalize(), path.canonicalize()) {
+                    (Ok(c1), Ok(c2)) => c1 == c2,
+                    _ => false,
+                };
+                if p == path || is_same_file {
                     self.active_tab = i;
                     return Ok(i);
                 }
@@ -155,11 +155,11 @@ impl Editor {
         // If already open, switch to it
         for (i, tab) in self.tabs.iter().enumerate() {
             if let Some(ref p) = tab.file_path {
-                if p == path
-                    || (p.exists()
-                        && path.exists()
-                        && p.canonicalize().ok() == path.canonicalize().ok())
-                {
+                let is_same_file = match (p.canonicalize(), path.canonicalize()) {
+                    (Ok(c1), Ok(c2)) => c1 == c2,
+                    _ => false,
+                };
+                if p == path || is_same_file {
                     self.active_tab = i;
                     return Ok(i);
                 }

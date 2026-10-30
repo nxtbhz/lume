@@ -47,12 +47,15 @@ pub fn render_quick_open<W: Write>(
                 quick_open.filtered.len(),
                 quick_open.files.len()
             );
-            let fill = box_w.saturating_sub(title.len() + count_str.len());
+            let title_avail = box_w.saturating_sub(count_str.chars().count() + 1);
+            let display_title: String = title.chars().take(title_avail).collect();
+            let fill =
+                box_w.saturating_sub(display_title.chars().count() + count_str.chars().count());
 
             queue!(
                 writer,
                 SetForegroundColor(Color::Cyan),
-                Print(title),
+                Print(&display_title),
                 SetForegroundColor(Color::DarkGrey),
                 Print(" ".repeat(fill)),
                 SetForegroundColor(Color::Yellow),
@@ -61,17 +64,18 @@ pub fn render_quick_open<W: Write>(
         } else if y == 1 {
             // Query input row
             let prompt_prefix = " > ";
-            let query = &quick_open.query;
             let cursor = "█";
-            let line_len = prompt_prefix.len() + query.len() + cursor.len();
-            let fill = box_w.saturating_sub(line_len);
+            let avail = box_w.saturating_sub(prompt_prefix.chars().count() + 1);
+            let display_query: String = quick_open.query.chars().take(avail).collect();
+            let fill = box_w
+                .saturating_sub(prompt_prefix.chars().count() + display_query.chars().count() + 1);
 
             queue!(
                 writer,
                 SetForegroundColor(Color::Yellow),
                 Print(prompt_prefix),
                 SetForegroundColor(Color::White),
-                Print(query),
+                Print(&display_query),
                 SetForegroundColor(Color::Cyan),
                 Print(cursor),
                 Print(" ".repeat(fill))

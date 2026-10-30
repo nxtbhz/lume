@@ -434,3 +434,26 @@ fn test_editor_selection_movements_and_tab_cycle() {
     assert!(editor.close_tab(0));
     assert_eq!(editor.tabs().len(), 1);
 }
+
+#[test]
+fn test_open_or_load_distinct_paths_do_not_false_match() {
+    let mut ed = Editor::new();
+    let dir = std::env::temp_dir().join(format!("lume_distinct_test_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let p1 = dir.join("file_a.rs");
+    let p2 = dir.join("file_b.rs");
+    std::fs::write(&p1, "// a").unwrap();
+    std::fs::write(&p2, "// b").unwrap();
+
+    let idx1 = ed.open_or_load(&p1).unwrap();
+    assert_eq!(idx1, 0);
+    assert_eq!(ed.tabs().len(), 1);
+
+    let idx2 = ed.open_or_load(&p2).unwrap();
+    assert_eq!(idx2, 1);
+    assert_eq!(ed.tabs().len(), 2);
+    assert_eq!(ed.tabs()[0].file_path.as_deref(), Some(p1.as_path()));
+    assert_eq!(ed.tabs()[1].file_path.as_deref(), Some(p2.as_path()));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

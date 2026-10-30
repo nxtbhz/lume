@@ -236,33 +236,60 @@ pub fn scan_workspace_files(
 
     let open_tabs_raw: HashSet<PathBuf> = open_tab_paths.iter().cloned().collect();
 
-    scan_dir_recursive(
-        root,
-        &canon_root,
-        root,
-        &open_tabs_raw,
-        &open_tabs_canon,
-        &mut visited_dirs,
-        &mut items,
-        0,
+    let ctx = ScanContext {
+        canon_root: &canon_root,
+        orig_root: root,
+        open_tabs_raw: &open_tabs_raw,
+        open_tabs_canon: &open_tabs_canon,
         max_files,
-    );
+    };
+
+    scan_dir_recursive(root, &ctx, &mut visited_dirs, &mut items, 0);
+
+    // Ensure all currently open tabs are included in items (even if hidden or outside workspace root)
+    for tab_path in open_tab_paths {
+        if !items.iter().any(|it| it.full_path == *tab_path) && tab_path.exists() {
+            let file_name = tab_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "untitled".to_string());
+            let rel_path = tab_path
+                .strip_prefix(root)
+                .or_else(|_| tab_path.strip_prefix(&canon_root))
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| tab_path.to_string_lossy().replace('\\', "/"));
+
+            items.insert(
+                0,
+                QuickOpenItem {
+                    relative_path: rel_path,
+                    file_name,
+                    full_path: tab_path.clone(),
+                    is_open_tab: true,
+                },
+            );
+        }
+    }
 
     items
 }
 
+struct ScanContext<'a> {
+    canon_root: &'a Path,
+    orig_root: &'a Path,
+    open_tabs_raw: &'a HashSet<PathBuf>,
+    open_tabs_canon: &'a HashSet<PathBuf>,
+    max_files: usize,
+}
+
 fn scan_dir_recursive(
     dir: &Path,
-    canon_root: &Path,
-    orig_root: &Path,
-    open_tabs_raw: &HashSet<PathBuf>,
-    open_tabs_canon: &HashSet<PathBuf>,
+    ctx: &ScanContext<'_>,
     visited_dirs: &mut HashSet<PathBuf>,
     items: &mut Vec<QuickOpenItem>,
     depth: usize,
-    max_files: usize,
 ) {
-    if depth > 32 || items.len() >= max_files {
+    if depth > 32 || items.len() >= ctx.max_files {
         return;
     }
 
@@ -280,7 +307,7 @@ fn scan_dir_recursive(
     let mut subdirs = Vec::new();
 
     for entry in entries.flatten() {
-        if items.len() >= max_files {
+        if items.len() >= ctx.max_files {
             break;
         }
 
@@ -314,15 +341,17 @@ fn scan_dir_recursive(
 
             // Compute relative path
             let rel_path = path
-                .strip_prefix(orig_root)
-                .or_else(|_| path.strip_prefix(canon_root))
+                .strip_prefix(ctx.orig_root)
+                .or_else(|_| path.strip_prefix(ctx.canon_root))
                 .unwrap_or(&path);
 
             let rel_str = rel_path.to_string_lossy().replace('\\', "/");
 
-            let canon_path = path.canonicalize().unwrap_or_else(|_| path.clone());
-            let is_open_tab =
-                open_tabs_raw.contains(&path) || open_tabs_canon.contains(&canon_path);
+            let is_open_tab = ctx.open_tabs_raw.contains(&path)
+                || (!ctx.open_tabs_canon.is_empty()
+                    && path
+                        .canonicalize()
+                        .is_ok_and(|c| ctx.open_tabs_canon.contains(&c)));
 
             items.push(QuickOpenItem {
                 relative_path: rel_str,
@@ -337,16 +366,6 @@ fn scan_dir_recursive(
     subdirs.sort();
 
     for subdir in subdirs {
-        scan_dir_recursive(
-            &subdir,
-            canon_root,
-            orig_root,
-            open_tabs_raw,
-            open_tabs_canon,
-            visited_dirs,
-            items,
-            depth + 1,
-            max_files,
-        );
+        scan_dir_recursive(&subdir, ctx, visited_dirs, items, depth + 1);
     }
 }

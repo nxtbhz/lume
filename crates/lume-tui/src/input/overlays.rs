@@ -614,7 +614,7 @@ impl App {
             }
             KeyCode::Char('v') if ctrl && !alt => {
                 if let Some(clip) = self.editor.clipboard() {
-                    state.handle_paste(&clip);
+                    state.handle_paste(clip);
                 }
                 self.quick_open = Some(state);
             }
