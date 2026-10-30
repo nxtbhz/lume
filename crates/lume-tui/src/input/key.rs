@@ -30,6 +30,11 @@ impl App {
             return self.handle_search_key(state, key);
         }
 
+        // 3.5. If Quick Open is open, route keys to quick open
+        if let Some(state) = self.quick_open.take() {
+            return self.handle_quick_open_key(state, key);
+        }
+
         // 4. If Command Palette is open, route keys to palette
         if self.palette_open {
             return self.handle_palette_key(key);
@@ -47,10 +52,20 @@ impl App {
                     self.running = false;
                     return Ok(());
                 }
-                KeyCode::Char('p') => {
+                KeyCode::Char('P') => {
                     self.palette_open = true;
                     self.palette_query.clear();
                     self.palette_selected = 0;
+                    return Ok(());
+                }
+                KeyCode::Char('p') => {
+                    if shift {
+                        self.palette_open = true;
+                        self.palette_query.clear();
+                        self.palette_selected = 0;
+                    } else {
+                        self.open_quick_open();
+                    }
                     return Ok(());
                 }
                 KeyCode::Char('o') => {

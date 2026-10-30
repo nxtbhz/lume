@@ -33,5 +33,6 @@ pub mod explorer_tests;
 pub mod mouse_tests;
 pub mod palette_tests;
 pub mod quick_open_tests;
+pub mod quick_open_tui_tests;
 pub mod search_tests;
 pub mod vim_tests;

@@ -13,8 +13,8 @@ fn test_app_creation_and_command_palette() {
     assert_eq!(app.editor.tabs().len(), 1);
     assert!(!app.palette_open);
 
-    // Open palette
-    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL))
+    // Open palette with Ctrl+Shift+P
+    app.handle_key(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::CONTROL))
         .unwrap();
     assert!(app.palette_open);
 
@@ -58,8 +58,8 @@ fn test_app_which_key_toggle() {
 fn test_app_palette_lifecycle_and_rendering() {
     let mut app = App::new(None).unwrap();
 
-    // Open palette with Ctrl+P
-    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL))
+    // Open palette with Ctrl+Shift+P
+    app.handle_key(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::CONTROL))
         .unwrap();
     assert!(app.palette_open);
 
@@ -93,7 +93,7 @@ fn test_app_palette_lifecycle_and_rendering() {
     assert!(!app.palette_open);
 
     // Open palette and execute command via Enter
-    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL))
+    app.handle_key(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::CONTROL))
         .unwrap();
     app.palette_query = "New Tab".to_string();
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))

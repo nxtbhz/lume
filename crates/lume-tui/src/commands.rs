@@ -14,6 +14,16 @@ pub struct CommandItem {
 
 pub const COMMANDS: &[CommandItem] = &[
     CommandItem {
+        id: "file.quick_open",
+        title: "File: Quick Open File...",
+        shortcut: "Ctrl+P",
+    },
+    CommandItem {
+        id: "view.command_palette",
+        title: "View: Command Palette...",
+        shortcut: "Ctrl+Shift+P",
+    },
+    CommandItem {
         id: "file.open",
         title: "File: Open File...",
         shortcut: "Ctrl+O",
@@ -177,6 +187,14 @@ impl App {
 
     pub fn execute_command(&mut self, id: &str) {
         match id {
+            "file.quick_open" => {
+                self.open_quick_open();
+            }
+            "view.command_palette" => {
+                self.palette_open = true;
+                self.palette_query.clear();
+                self.palette_selected = 0;
+            }
             "file.open" => {
                 self.prompt = Some(InputPrompt::open_file());
             }

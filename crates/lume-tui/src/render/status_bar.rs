@@ -44,11 +44,12 @@ pub fn render_status_bar<W: Write>(
             if time.elapsed() < Duration::from_secs(4) {
                 format!("{} ", msg)
             } else {
-                "F2: Explorer │ Ctrl+O: Open │ Ctrl+S: Save │ Ctrl+P: Palette │ F1: Help "
+                "F2: Explorer │ Ctrl+O: Open │ Ctrl+S: Save │ Ctrl+P: Quick Open │ F1: Help "
                     .to_string()
             }
         } else {
-            "F2: Explorer │ Ctrl+O: Open │ Ctrl+S: Save │ Ctrl+P: Palette │ F1: Help ".to_string()
+            "F2: Explorer │ Ctrl+O: Open │ Ctrl+S: Save │ Ctrl+P: Quick Open │ F1: Help "
+                .to_string()
         };
 
         let width = app.terminal_width as usize;

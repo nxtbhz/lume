@@ -7,6 +7,68 @@ impl App {
     pub fn handle_mouse(&mut self, mouse: MouseEvent) -> std::io::Result<()> {
         let col = mouse.column as usize;
         let row = mouse.row as usize;
+
+        if let Some(mut state) = self.quick_open.take() {
+            let term_w = self.terminal_width as usize;
+            let term_h = self.terminal_height as usize;
+            let box_w = (term_w * 3 / 4).clamp(50, 84).min(term_w);
+            let box_h = 14.min(term_h.saturating_sub(4)).max(6);
+            let start_x = term_w.saturating_sub(box_w) / 2;
+            let start_y = 3.min(term_h.saturating_sub(box_h) / 2);
+
+            match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if col >= start_x
+                        && col < start_x + box_w
+                        && row >= start_y
+                        && row < start_y + box_h
+                    {
+                        if row >= start_y + 3 {
+                            let item_idx = state.scroll_offset + (row - (start_y + 3));
+                            if item_idx < state.filtered.len() {
+                                state.selected_idx = item_idx;
+                                if let Some(item) = state.selected_item() {
+                                    let full_path = item.full_path.clone();
+                                    self.quick_open = None;
+                                    match self.editor.open_or_load(&full_path) {
+                                        Ok(_) => {
+                                            self.focus = ActiveFocus::Editor;
+                                            self.adjust_viewport();
+                                            self.set_status(format!(
+                                                "Opened {}",
+                                                full_path.display()
+                                            ));
+                                        }
+                                        Err(e) => self.set_status(format!("Open error: {}", e)),
+                                    }
+                                    return Ok(());
+                                }
+                            }
+                        }
+                        self.quick_open = Some(state);
+                    } else {
+                        // Click outside closes quick open
+                        self.quick_open = None;
+                    }
+                    return Ok(());
+                }
+                MouseEventKind::ScrollUp => {
+                    state.move_up();
+                    self.quick_open = Some(state);
+                    return Ok(());
+                }
+                MouseEventKind::ScrollDown => {
+                    state.move_down(10);
+                    self.quick_open = Some(state);
+                    return Ok(());
+                }
+                _ => {
+                    self.quick_open = Some(state);
+                    return Ok(());
+                }
+            }
+        }
+
         let exp_w = self.explorer_width();
         let gutter_w = self.gutter_width();
         let status_row = self.terminal_height.saturating_sub(1) as usize;

@@ -2,11 +2,13 @@ pub mod editor;
 pub mod explorer;
 pub mod gutter;
 pub mod palette;
+pub mod quick_open;
 pub mod status_bar;
 pub mod tab_bar;
 
 pub use editor::render_editor_viewport;
 pub use palette::{render_command_palette, render_which_key};
+pub use quick_open::render_quick_open;
 pub use status_bar::render_status_bar;
 pub use tab_bar::render_tab_bar;
 
@@ -66,7 +68,9 @@ impl App {
         render_status_bar(self, writer, active_tab_idx)?;
 
         // 6. Overlays
-        if let Some(ref prompt) = self.prompt {
+        if let Some(ref quick_open) = self.quick_open {
+            render_quick_open(self, quick_open, writer)?;
+        } else if let Some(ref prompt) = self.prompt {
             prompt.render(writer, self.terminal_width, self.terminal_height)?;
         } else if self.palette_open {
             render_command_palette(self, writer)?;
@@ -79,6 +83,7 @@ impl App {
             && self.prompt.is_none()
             && !self.palette_open
             && !self.which_key_open
+            && self.quick_open.is_none()
         {
             if self.focus == ActiveFocus::Editor {
                 let (cursor_row, cursor_col) = self.editor.cursor_line_col();

@@ -558,4 +558,74 @@ impl App {
         }
         Ok(())
     }
+
+    pub(crate) fn handle_quick_open_key(
+        &mut self,
+        mut state: crate::quick_open::QuickOpenState,
+        key: KeyEvent,
+    ) -> std::io::Result<()> {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+
+        match key.code {
+            KeyCode::Esc => {
+                self.quick_open = None;
+                self.set_status("Cancelled");
+            }
+            KeyCode::Up => {
+                state.move_up();
+                self.quick_open = Some(state);
+            }
+            KeyCode::Down => {
+                state.move_down(10);
+                self.quick_open = Some(state);
+            }
+            KeyCode::PageUp => {
+                for _ in 0..10 {
+                    state.move_up();
+                }
+                self.quick_open = Some(state);
+            }
+            KeyCode::PageDown => {
+                for _ in 0..10 {
+                    state.move_down(10);
+                }
+                self.quick_open = Some(state);
+            }
+            KeyCode::Enter => {
+                if let Some(item) = state.selected_item() {
+                    let full_path = item.full_path.clone();
+                    self.quick_open = None;
+                    match self.editor.open_or_load(&full_path) {
+                        Ok(_) => {
+                            self.focus = ActiveFocus::Editor;
+                            self.adjust_viewport();
+                            self.set_status(format!("Opened {}", full_path.display()));
+                        }
+                        Err(e) => self.set_status(format!("Open error: {}", e)),
+                    }
+                } else {
+                    self.quick_open = None;
+                }
+            }
+            KeyCode::Backspace => {
+                state.handle_backspace();
+                self.quick_open = Some(state);
+            }
+            KeyCode::Char('v') if ctrl && !alt => {
+                if let Some(clip) = self.editor.clipboard() {
+                    state.handle_paste(&clip);
+                }
+                self.quick_open = Some(state);
+            }
+            KeyCode::Char(c) if !ctrl && !alt => {
+                state.handle_char(c);
+                self.quick_open = Some(state);
+            }
+            _ => {
+                self.quick_open = Some(state);
+            }
+        }
+        Ok(())
+    }
 }

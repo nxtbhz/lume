@@ -228,6 +228,54 @@ impl App {
         self.status_message = Some((msg.into(), Instant::now()));
     }
 
+    pub fn open_quick_open(&mut self) {
+        let open_tabs: Vec<PathBuf> = self
+            .editor
+            .tabs()
+            .iter()
+            .filter_map(|t| t.file_path.clone())
+            .collect();
+
+        let mut root = self.explorer.root.clone();
+        if let Some(active_file) = self.editor.file_path() {
+            let canon_file = active_file
+                .canonicalize()
+                .unwrap_or_else(|_| active_file.to_path_buf());
+            let canon_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+            if !canon_file.starts_with(&canon_root) {
+                if let Some(parent) = active_file.parent() {
+                    let mut candidate = parent;
+                    while let Some(grandparent) = candidate.parent() {
+                        if candidate.file_name().and_then(|n| n.to_str()) == Some("src")
+                            || candidate.join(".git").exists()
+                            || candidate.join("Cargo.toml").exists()
+                        {
+                            if candidate.file_name().and_then(|n| n.to_str()) == Some("src") {
+                                candidate = grandparent;
+                            }
+                            break;
+                        }
+                        if grandparent.join(".git").exists()
+                            || grandparent.join("Cargo.toml").exists()
+                        {
+                            candidate = grandparent;
+                            break;
+                        }
+                        // Don't climb above filesystem root or temp dir
+                        if grandparent == candidate {
+                            break;
+                        }
+                        candidate = grandparent;
+                    }
+                    root = candidate.to_path_buf();
+                }
+            }
+        }
+
+        let files = crate::quick_open::scan_workspace_files(&root, &open_tabs, 50000);
+        self.quick_open = Some(crate::quick_open::QuickOpenState::new(files));
+    }
+
     pub fn update_search_query(&mut self, state: &mut SearchState) {
         self.last_search_query = if !state.query.is_empty() {
             Some(state.query.clone())
@@ -270,7 +318,10 @@ impl App {
     pub fn handle_paste_text(&mut self, text: &str) {
         self.editor.set_clipboard(text.to_string());
         let single_line = text.lines().next().unwrap_or("");
-        if self.palette_open {
+        if let Some(mut qo) = self.quick_open.take() {
+            qo.handle_paste(single_line);
+            self.quick_open = Some(qo);
+        } else if self.palette_open {
             self.palette_query.push_str(single_line);
             self.palette_selected = 0;
         } else if let Some(mut state) = self.search_state.take() {
