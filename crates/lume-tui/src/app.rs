@@ -46,6 +46,7 @@ pub struct App {
     pub prompt: Option<InputPrompt>,
     pub search_state: Option<SearchState>,
     pub last_search_query: Option<String>,
+    pub quick_open: Option<crate::quick_open::QuickOpenState>,
 
     // Syntax worker & cache
     pub syntax_worker: SyntaxWorker,
@@ -194,6 +195,7 @@ impl App {
             prompt: None,
             search_state: None,
             last_search_query: None,
+            quick_open: None,
 
             syntax_worker: SyntaxWorker::spawn(),
             syntax_cache: HashMap::new(),

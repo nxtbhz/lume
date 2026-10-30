@@ -4,6 +4,7 @@ mod commands;
 mod explorer;
 mod input;
 mod prompt;
+pub(crate) mod quick_open;
 mod render;
 mod search;
 mod terminal;
