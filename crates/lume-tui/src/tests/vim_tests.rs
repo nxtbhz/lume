@@ -1,4 +1,5 @@
 use crate::app::App;
+use crate::tests::TestDir;
 use crate::vim::VimMode;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use lume_core::TextBuffer;
@@ -397,4 +398,45 @@ fn test_app_vim_insert_and_visual_full_motions() {
     app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE))
         .unwrap();
     assert_eq!(app.editor.cursors().primary().head, 0);
+}
+
+#[test]
+fn test_goto_line_key_routing_and_vim_colon() {
+    let test_dir = TestDir::new("lume_test_goto_keys");
+    let mut app = App::new(Some(test_dir.path().to_path_buf())).unwrap();
+
+    // 1. Modeless Ctrl+G
+    assert!(app.prompt.is_none());
+    app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(app.prompt.is_some());
+    assert_eq!(
+        app.prompt.as_ref().unwrap().action,
+        crate::prompt::PromptAction::GoToLine
+    );
+    app.prompt = None;
+
+    // 2. Modeless Ctrl+Shift+G / CapsLock G
+    app.handle_key(KeyEvent::new(
+        KeyCode::Char('G'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ))
+    .unwrap();
+    assert!(app.prompt.is_some());
+    assert_eq!(
+        app.prompt.as_ref().unwrap().action,
+        crate::prompt::PromptAction::GoToLine
+    );
+    app.prompt = None;
+
+    // 3. Vim Normal mode `:`
+    app.execute_command(":set modal");
+    assert!(app.modal_enabled);
+    app.handle_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.prompt.is_some());
+    assert_eq!(
+        app.prompt.as_ref().unwrap().action,
+        crate::prompt::PromptAction::GoToLine
+    );
 }

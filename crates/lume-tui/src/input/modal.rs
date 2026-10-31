@@ -225,6 +225,9 @@ impl App {
                         KeyCode::Char('v') => {
                             self.vim_state.set_mode(VimMode::Visual);
                         }
+                        KeyCode::Char(':') => {
+                            self.execute_command("navigation.goto_line");
+                        }
                         _ => {}
                     }
                 }

@@ -132,6 +132,10 @@ impl App {
                     self.execute_command("navigation.match_bracket");
                     return Ok(());
                 }
+                KeyCode::Char('g') | KeyCode::Char('G') => {
+                    self.execute_command("navigation.goto_line");
+                    return Ok(());
+                }
                 _ => {}
             }
         }
