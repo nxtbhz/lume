@@ -16,7 +16,7 @@ pub use clipboard::{
     encode_base64, osc52_copy_sequence, osc52_sequence_auto, osc52_sequence_with_passthrough,
 };
 pub use cursor::{Cursor, CursorAffinity, CursorSet};
-pub use diff::{compute_line_diffs, LineDiffStatus};
+pub use diff::{compute_line_diffs, compute_rope_diffs, LineDiffStatus};
 pub use editor::{AsyncSaveEvent, Editor, EditorConfig, Tab};
 pub use fuzzy::{fuzzy_match, fuzzy_score, FuzzyMatch};
 pub use git::{find_git_dir, get_git_head_for_path, GitHead};

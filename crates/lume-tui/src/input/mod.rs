@@ -56,13 +56,16 @@ impl App {
     }
 
     pub fn handle_tick<W: Write>(&mut self, writer: &mut W) -> std::io::Result<()> {
+        let mut git_changed = false;
         if self.last_git_check.elapsed() > std::time::Duration::from_millis(1500) {
+            let prev_git = self.git_head.clone();
             self.refresh_git_head();
+            git_changed = prev_git != self.git_head;
         }
         let has_syntax_update = self.has_pending_syntax_response();
         let autosaved = self.editor.check_autosave();
         let has_save_event = self.poll_async_saves();
-        if autosaved || has_syntax_update || has_save_event {
+        if autosaved || has_syntax_update || has_save_event || git_changed {
             self.render(writer)?;
         }
         Ok(())

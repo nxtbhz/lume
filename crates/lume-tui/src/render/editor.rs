@@ -45,11 +45,7 @@ pub fn render_editor_viewport<W: Write>(
         None
     };
 
-    let diff_markers = app
-        .editor
-        .active_tab_mut()
-        .diff_markers()
-        .map(|m| m.to_vec());
+    let diff_markers = app.editor.active_tab_mut().diff_markers();
 
     // 4. Render Text Area (Rows 1..1+text_h)
     for screen_row in 0..text_h {

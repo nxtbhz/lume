@@ -17,10 +17,7 @@ fn test_tab_diff_markers_lifecycle() {
     {
         let tab = ed.active_tab_mut();
         let markers = tab.diff_markers();
-        // Clean tab returns all Unchanged
-        if let Some(m) = markers {
-            assert!(m.iter().all(|&status| status == LineDiffStatus::Unchanged));
-        }
+        assert!(markers.is_none());
     }
 
     // Insert a new line at line 2
@@ -45,9 +42,7 @@ fn test_tab_diff_markers_lifecycle() {
     {
         let tab = ed.active_tab_mut();
         let markers = tab.diff_markers();
-        if let Some(m) = markers {
-            assert!(m.iter().all(|&status| status == LineDiffStatus::Unchanged));
-        }
+        assert!(markers.is_none());
     }
 
     let _ = fs::remove_file(&temp_file);

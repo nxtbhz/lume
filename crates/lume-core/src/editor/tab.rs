@@ -33,7 +33,7 @@ pub struct Tab {
     pub is_dirty: bool,
     pub recovered_from_journal: bool,
     pub clean_snapshot: Option<ropey::Rope>,
-    pub(crate) cached_diffs: Option<(u64, Vec<LineDiffStatus>)>,
+    pub(crate) cached_diffs: Option<(u64, Arc<Vec<LineDiffStatus>>)>,
     pub(crate) sync_state: Option<Arc<TabSyncState>>,
 }
 
@@ -77,7 +77,7 @@ impl Tab {
         self.cached_diffs = None;
     }
 
-    pub fn diff_markers(&mut self) -> Option<&[LineDiffStatus]> {
+    pub fn diff_markers(&mut self) -> Option<Arc<Vec<LineDiffStatus>>> {
         if !self.is_dirty {
             return None;
         }
@@ -90,46 +90,13 @@ impl Tab {
             .unwrap_or(false);
 
         if !cached_valid {
-            let base_lines_owned: Vec<String> = snapshot
-                .lines()
-                .map(|l| {
-                    let mut s = l.to_string();
-                    if s.ends_with('\n') {
-                        s.pop();
-                        if s.ends_with('\r') {
-                            s.pop();
-                        }
-                    }
-                    s
-                })
-                .collect();
-
-            let curr_lines_owned: Vec<String> = self
-                .buffer
-                .rope()
-                .lines()
-                .map(|l| {
-                    let mut s = l.to_string();
-                    if s.ends_with('\n') {
-                        s.pop();
-                        if s.ends_with('\r') {
-                            s.pop();
-                        }
-                    }
-                    s
-                })
-                .collect();
-
-            let base_refs: Vec<&str> = base_lines_owned.iter().map(|s| s.as_str()).collect();
-            let curr_refs: Vec<&str> = curr_lines_owned.iter().map(|s| s.as_str()).collect();
-
-            let diffs = crate::diff::compute_line_diffs(&base_refs, &curr_refs);
-            self.cached_diffs = Some((self.revision, diffs));
+            let diffs = crate::diff::compute_rope_diffs(snapshot, self.buffer.rope());
+            self.cached_diffs = Some((self.revision, Arc::new(diffs)));
         }
 
         self.cached_diffs
             .as_ref()
-            .map(|(_, diffs)| diffs.as_slice())
+            .map(|(_, diffs)| Arc::clone(diffs))
     }
 
     pub fn name(&self) -> String {

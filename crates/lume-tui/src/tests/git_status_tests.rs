@@ -72,3 +72,18 @@ fn test_status_bar_narrow_width_truncation() {
     render_status_bar(&app, &mut buf, 0).expect("narrow status bar render should succeed");
     assert!(!buf.is_empty());
 }
+
+#[test]
+fn test_status_bar_narrow_width_modal_truncation() {
+    let mut app = App::new(None).unwrap();
+    app.terminal_width = 30;
+    app.terminal_height = 24;
+    app.modal_enabled = true;
+    app.git_head = Some(GitHead::Branch(
+        "feature/very-long-branch-name-overflow".to_string(),
+    ));
+
+    let mut buf = Vec::new();
+    render_status_bar(&app, &mut buf, 0).expect("narrow modal status bar render should succeed");
+    assert!(!buf.is_empty());
+}
