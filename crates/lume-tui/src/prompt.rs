@@ -17,6 +17,7 @@ pub enum PromptAction {
     CreateFile { parent_dir: PathBuf },
     RenameItem { source_path: PathBuf, is_dir: bool },
     ConfirmDeleteFolder { path: PathBuf },
+    GoToLine,
 }
 
 #[derive(Clone, Debug)]
@@ -141,6 +142,17 @@ impl InputPrompt {
         }
     }
 
+    pub fn goto_line() -> Self {
+        Self {
+            action: PromptAction::GoToLine,
+            title: Cow::Borrowed(" Go to Line[:Col] (e.g. 42 or 42:15, Esc: cancel) "),
+            value: String::new(),
+            cursor_pos: 0,
+            suggestions: Vec::new(),
+            selected_suggestion: 0,
+        }
+    }
+
     pub fn update_suggestions(&mut self) {
         match self.action {
             PromptAction::OpenFile | PromptAction::SaveFileAs => {
@@ -192,7 +204,8 @@ impl InputPrompt {
             | PromptAction::CreateFolder { .. }
             | PromptAction::CreateFile { .. }
             | PromptAction::RenameItem { .. }
-            | PromptAction::ConfirmDeleteFolder { .. } => {
+            | PromptAction::ConfirmDeleteFolder { .. }
+            | PromptAction::GoToLine => {
                 // Handled in handle_key with filter or no suggestions needed
             }
         }
@@ -265,7 +278,8 @@ impl InputPrompt {
             PromptAction::CreateFolder { .. }
             | PromptAction::CreateFile { .. }
             | PromptAction::RenameItem { .. }
-            | PromptAction::ConfirmDeleteFolder { .. } => {}
+            | PromptAction::ConfirmDeleteFolder { .. }
+            | PromptAction::GoToLine => {}
         }
     }
 
@@ -366,6 +380,54 @@ impl InputPrompt {
         )?;
 
         Ok(())
+    }
+}
+
+/// Parses a line-and-column input string into 1-indexed `(line, col)` coordinates.
+///
+/// Supported formats:
+/// - `"42"`: line 42, column 1.
+/// - `"42:15"`: line 42, column 15.
+/// - `":15"`: current line, column 15.
+/// - `"42:"`: line 42, column 1.
+///
+/// Values smaller than 1 (e.g. 0) are clamped to 1.
+pub fn parse_goto_line(input: &str, current_line: usize) -> Option<(usize, usize)> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let colon_count = trimmed.chars().filter(|&c| c == ':').count();
+    if colon_count > 1 {
+        return None;
+    }
+
+    if colon_count == 1 {
+        let mut parts = trimmed.split(':');
+        let line_part = parts.next()?.trim();
+        let col_part = parts.next()?.trim();
+
+        if line_part.is_empty() && col_part.is_empty() {
+            return None;
+        }
+
+        let line = if line_part.is_empty() {
+            current_line.max(1)
+        } else {
+            line_part.parse::<usize>().ok()?.max(1)
+        };
+
+        let col = if col_part.is_empty() {
+            1
+        } else {
+            col_part.parse::<usize>().ok()?.max(1)
+        };
+
+        Some((line, col))
+    } else {
+        let line = trimmed.parse::<usize>().ok()?.max(1);
+        Some((line, 1))
     }
 }
 
@@ -488,5 +550,60 @@ mod tests {
         buf.clear();
         let create_prompt = InputPrompt::create_folder(std::path::PathBuf::from("."), "root");
         assert!(create_prompt.render(&mut buf, 80, 24).is_ok());
+    }
+
+    #[test]
+    fn test_parse_goto_line_formats() {
+        let current_line = 10;
+
+        // Line only
+        assert_eq!(parse_goto_line("42", current_line), Some((42, 1)));
+        assert_eq!(parse_goto_line("1", current_line), Some((1, 1)));
+
+        // Line and Column
+        assert_eq!(parse_goto_line("42:15", current_line), Some((42, 15)));
+        assert_eq!(parse_goto_line("42:1", current_line), Some((42, 1)));
+
+        // Relative Column (preserves current line)
+        assert_eq!(parse_goto_line(":15", current_line), Some((10, 15)));
+        assert_eq!(parse_goto_line(":1", current_line), Some((10, 1)));
+
+        // Whitespace resilience
+        assert_eq!(parse_goto_line("  42  ", current_line), Some((42, 1)));
+        assert_eq!(parse_goto_line(" 42 : 15 ", current_line), Some((42, 15)));
+        assert_eq!(parse_goto_line(" : 20 ", current_line), Some((10, 20)));
+
+        // Trailing colon defaults column to 1
+        assert_eq!(parse_goto_line("42:", current_line), Some((42, 1)));
+
+        // Zero coordinates clamp to 1 (1-indexed)
+        assert_eq!(parse_goto_line("0", current_line), Some((1, 1)));
+        assert_eq!(parse_goto_line("0:0", current_line), Some((1, 1)));
+        assert_eq!(parse_goto_line("42:0", current_line), Some((42, 1)));
+        assert_eq!(parse_goto_line(":0", current_line), Some((10, 1)));
+    }
+
+    #[test]
+    fn test_parse_goto_line_invalid_inputs() {
+        let current_line = 5;
+        assert_eq!(parse_goto_line("", current_line), None);
+        assert_eq!(parse_goto_line("   ", current_line), None);
+        assert_eq!(parse_goto_line(":", current_line), None);
+        assert_eq!(parse_goto_line("::", current_line), None);
+        assert_eq!(parse_goto_line("abc", current_line), None);
+        assert_eq!(parse_goto_line("42:abc", current_line), None);
+        assert_eq!(parse_goto_line("abc:15", current_line), None);
+        assert_eq!(parse_goto_line("42:15:20", current_line), None);
+        assert_eq!(parse_goto_line("-5", current_line), None);
+    }
+
+    #[test]
+    fn test_prompt_goto_line_constructor() {
+        let prompt = InputPrompt::goto_line();
+        assert_eq!(prompt.action, PromptAction::GoToLine);
+        assert!(prompt.title.contains("Go to Line"));
+        assert_eq!(prompt.value, "");
+        assert_eq!(prompt.cursor_pos, 0);
+        assert!(prompt.suggestions.is_empty());
     }
 }

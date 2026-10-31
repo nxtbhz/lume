@@ -164,6 +164,7 @@ impl App {
                             }
                         }
                     }
+                    PromptAction::GoToLine => {}
                 }
             }
             KeyCode::Tab => {
