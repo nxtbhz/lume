@@ -1,6 +1,6 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::app::App;
 use crate::tests::TestDir;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 fn enter_key() -> KeyEvent {
     KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
@@ -22,7 +22,11 @@ fn test_goto_line_and_col_basic_jump() {
     let test_dir = TestDir::new("lume_goto_basic");
     let mut app = App::new(Some(test_dir.path().to_path_buf())).unwrap();
     let file = test_dir.path().join("code.rs");
-    std::fs::write(&file, "line 1\nline 2 second\nline 3 third\nline 4 fourth\n").unwrap();
+    std::fs::write(
+        &file,
+        "line 1\nline 2 second\nline 3 third\nline 4 fourth\n",
+    )
+    .unwrap();
     app.editor.open_or_load(&file).unwrap();
 
     // 1. Jump to line 3 (format "3")
@@ -32,7 +36,12 @@ fn test_goto_line_and_col_basic_jump() {
 
     let (line, col) = app.editor.cursor_line_col();
     assert_eq!((line, col), (2, 0)); // 0-indexed: line 3, col 1
-    assert!(app.status_message.as_ref().unwrap().0.contains("Jumped to line 3, col 1"));
+    assert!(app
+        .status_message
+        .as_ref()
+        .unwrap()
+        .0
+        .contains("Jumped to line 3, col 1"));
 
     // 2. Jump to line 2, col 6 (format "2:6")
     app.execute_command("navigation.goto_line");
@@ -41,7 +50,12 @@ fn test_goto_line_and_col_basic_jump() {
 
     let (line, col) = app.editor.cursor_line_col();
     assert_eq!((line, col), (1, 5)); // 0-indexed: line 2, col 6
-    assert!(app.status_message.as_ref().unwrap().0.contains("Jumped to line 2, col 6"));
+    assert!(app
+        .status_message
+        .as_ref()
+        .unwrap()
+        .0
+        .contains("Jumped to line 2, col 6"));
 
     // 3. Jump relative column ":3" keeping current line
     app.execute_command("navigation.goto_line");
@@ -50,7 +64,12 @@ fn test_goto_line_and_col_basic_jump() {
 
     let (line, col) = app.editor.cursor_line_col();
     assert_eq!((line, col), (1, 2)); // 0-indexed: line 2, col 3
-    assert!(app.status_message.as_ref().unwrap().0.contains("Jumped to line 2, col 3"));
+    assert!(app
+        .status_message
+        .as_ref()
+        .unwrap()
+        .0
+        .contains("Jumped to line 2, col 3"));
 }
 
 #[test]
@@ -69,7 +88,12 @@ fn test_goto_line_clamping_and_utf8() {
 
     let (line, _) = app.editor.cursor_line_col();
     assert_eq!(line, 2); // line 3 (0-indexed 2)
-    assert!(app.status_message.as_ref().unwrap().0.contains("Jumped to line 3, col 1"));
+    assert!(app
+        .status_message
+        .as_ref()
+        .unwrap()
+        .0
+        .contains("Jumped to line 3, col 1"));
 
     // Column clamping: col 500 on line 2 clamps to end of line 2
     app.execute_command("navigation.goto_line");
@@ -120,7 +144,12 @@ fn test_goto_line_multi_cursor_collapse_and_invalid_syntax() {
 
     let (line, col) = app.editor.cursor_line_col();
     assert_eq!((line, col), (1, 0));
-    assert!(app.status_message.as_ref().unwrap().0.contains("Invalid line[:col] format"));
+    assert!(app
+        .status_message
+        .as_ref()
+        .unwrap()
+        .0
+        .contains("Invalid line[:col] format"));
 
     // Cancel with Esc leaves cursor intact and sets status Cancelled
     app.execute_command("navigation.goto_line");

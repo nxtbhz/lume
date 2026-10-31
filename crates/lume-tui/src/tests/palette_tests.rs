@@ -380,7 +380,10 @@ fn test_commands_navigation_goto_line_execution() {
 
     // Verify command exists in catalog
     let cmd = COMMANDS.iter().find(|c| c.id == "navigation.goto_line");
-    assert!(cmd.is_some(), "navigation.goto_line must be registered in COMMANDS");
+    assert!(
+        cmd.is_some(),
+        "navigation.goto_line must be registered in COMMANDS"
+    );
     let cmd = cmd.unwrap();
     assert_eq!(cmd.shortcut, "Ctrl+G");
 
