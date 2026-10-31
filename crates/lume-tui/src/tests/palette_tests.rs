@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::app::{ActiveFocus, App};
+use crate::commands::COMMANDS;
 use crate::prompt::{InputPrompt, PromptAction};
 use crate::tests::TestDir;
 use crate::vim::VimMode;
@@ -370,4 +371,23 @@ fn test_commands_explorer_new_file_and_rename_execution() {
         }
         _ => panic!("Expected PromptAction::RenameItem"),
     }
+}
+
+#[test]
+fn test_commands_navigation_goto_line_execution() {
+    let test_dir = TestDir::new("lume_test_goto_cmd");
+    let mut app = App::new(Some(test_dir.path().to_path_buf())).unwrap();
+
+    // Verify command exists in catalog
+    let cmd = COMMANDS.iter().find(|c| c.id == "navigation.goto_line");
+    assert!(cmd.is_some(), "navigation.goto_line must be registered in COMMANDS");
+    let cmd = cmd.unwrap();
+    assert_eq!(cmd.shortcut, "Ctrl+G");
+
+    // Execute command
+    assert!(app.prompt.is_none());
+    app.execute_command("navigation.goto_line");
+    assert!(app.prompt.is_some());
+    let prompt = app.prompt.as_ref().unwrap();
+    assert_eq!(prompt.action, crate::prompt::PromptAction::GoToLine);
 }

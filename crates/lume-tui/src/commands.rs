@@ -134,6 +134,11 @@ pub const COMMANDS: &[CommandItem] = &[
         shortcut: "Ctrl+M",
     },
     CommandItem {
+        id: "navigation.goto_line",
+        title: "Navigation: Go to Line...",
+        shortcut: "Ctrl+G",
+    },
+    CommandItem {
         id: "view.which_key",
         title: "View: Which-Key Shortcuts",
         shortcut: "F1",
@@ -397,6 +402,9 @@ impl App {
                 } else {
                     self.set_status("No matching bracket found");
                 }
+            }
+            "navigation.goto_line" => {
+                self.prompt = Some(InputPrompt::goto_line());
             }
             "view.which_key" => {
                 self.which_key_open = true;
