@@ -45,6 +45,12 @@ pub fn render_editor_viewport<W: Write>(
         None
     };
 
+    let diff_markers = app
+        .editor
+        .active_tab_mut()
+        .diff_markers()
+        .map(|m| m.to_vec());
+
     // 4. Render Text Area (Rows 1..1+text_h)
     for screen_row in 0..text_h {
         let buffer_line = app.scroll_row + screen_row;
@@ -54,7 +60,10 @@ pub fn render_editor_viewport<W: Write>(
         if buffer_line < total_lines {
             // Line numbers gutter
             if app.show_line_numbers {
-                render_gutter(writer, buffer_line, total_lines, gutter_w)?;
+                let diff_status = diff_markers
+                    .as_ref()
+                    .and_then(|m| m.get(buffer_line).copied());
+                render_gutter(writer, buffer_line, total_lines, gutter_w, diff_status)?;
             }
 
             // Render characters with syntax and selection styling
@@ -181,7 +190,7 @@ pub fn render_editor_viewport<W: Write>(
                 }
             }
         } else if app.show_line_numbers {
-            render_gutter(writer, buffer_line, total_lines, gutter_w)?;
+            render_gutter(writer, buffer_line, total_lines, gutter_w, None)?;
         }
 
         queue!(writer, Clear(ClearType::UntilNewLine))?;
