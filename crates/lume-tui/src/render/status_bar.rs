@@ -54,6 +54,12 @@ pub fn render_status_bar<W: Write>(
 
         let width = app.terminal_width as usize;
 
+        let git_str = if let Some(ref head) = app.git_head {
+            format!("⎇ {} │ ", head.display_name())
+        } else {
+            String::new()
+        };
+
         if app.modal_enabled {
             let (badge_fg, badge_bg) = match app.vim_state.mode {
                 VimMode::Normal => (
@@ -85,7 +91,8 @@ pub fn render_status_bar<W: Write>(
             let prefix = " LUME │ ";
             let suffix_badge = " │";
             let rest_left = format!(
-                " {}{} │ Tab {}/{} │ {}{} │ Ln {}, Col {} │ {}",
+                " {}{}{} │ Tab {}/{} │ {}{} │ Ln {}, Col {} │ {}",
+                git_str,
                 exp_indicator,
                 if app.focus == ActiveFocus::Explorer {
                     "(Explorer Active)"
@@ -134,7 +141,8 @@ pub fn render_status_bar<W: Write>(
             }
         } else {
             let left_status = format!(
-                " LUME │ {}{} │ Tab {}/{} │ {}{} │ Ln {}, Col {} │ {}",
+                " LUME │ {}{}{} │ Tab {}/{} │ {}{} │ Ln {}, Col {} │ {}",
+                git_str,
                 exp_indicator,
                 if app.focus == ActiveFocus::Explorer {
                     "(Explorer Active)"
@@ -150,7 +158,7 @@ pub fn render_status_bar<W: Write>(
                 lang_str
             );
 
-            let spaces = width.saturating_sub(left_status.len() + right_status.len());
+            let spaces = width.saturating_sub(left_status.chars().count() + right_status.chars().count());
             let bar = format!(
                 "{}{:width$}{}",
                 left_status,

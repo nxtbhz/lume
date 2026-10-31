@@ -57,6 +57,10 @@ pub struct App {
     pub modal_enabled: bool,
     pub vim_state: VimState,
 
+    // Git
+    pub git_head: Option<lume_core::GitHead>,
+    pub last_git_check: Instant,
+
     // Clipboard
     pub pending_osc52: Option<String>,
 }
@@ -204,8 +208,13 @@ impl App {
             modal_enabled: false,
             vim_state: VimState::new(),
 
+            git_head: None,
+            last_git_check: Instant::now(),
+
             pending_osc52: None,
         };
+
+        app.refresh_git_head();
 
         if let Some(msg) = initial_status {
             app.set_status(msg);
@@ -226,6 +235,16 @@ impl App {
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
         self.status_message = Some((msg.into(), Instant::now()));
+    }
+
+    pub fn refresh_git_head(&mut self) {
+        let target_path = self
+            .editor
+            .file_path()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| self.explorer.root.clone());
+        self.git_head = lume_core::get_git_head_for_path(&target_path);
+        self.last_git_check = Instant::now();
     }
 
     pub fn open_quick_open(&mut self) {

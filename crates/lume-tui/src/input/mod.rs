@@ -56,6 +56,9 @@ impl App {
     }
 
     pub fn handle_tick<W: Write>(&mut self, writer: &mut W) -> std::io::Result<()> {
+        if self.last_git_check.elapsed() > std::time::Duration::from_millis(1500) {
+            self.refresh_git_head();
+        }
         let has_syntax_update = self.has_pending_syntax_response();
         let autosaved = self.editor.check_autosave();
         let has_save_event = self.poll_async_saves();
