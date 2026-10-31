@@ -160,3 +160,31 @@ fn test_goto_line_multi_cursor_collapse_and_invalid_syntax() {
     assert_eq!((line, col), (1, 0));
     assert!(app.status_message.as_ref().unwrap().0.contains("Cancelled"));
 }
+
+#[test]
+fn test_goto_line_crlf_windows() {
+    let test_dir = TestDir::new("lume_goto_crlf");
+    let mut app = App::new(Some(test_dir.path().to_path_buf())).unwrap();
+    let file = test_dir.path().join("crlf.txt");
+    // Windows CRLF line endings
+    std::fs::write(&file, "first line\r\nsecond line\r\nthird line").unwrap();
+    app.editor.open_or_load(&file).unwrap();
+
+    // Jump to line 1, column 500 (clamps to end of line before \r\n)
+    app.execute_command("navigation.goto_line");
+    type_str(&mut app, "1:500");
+    app.handle_key(enter_key()).unwrap();
+
+    let (line, col) = app.editor.cursor_line_col();
+    assert_eq!(line, 0);
+    assert_eq!(col, "first line".len());
+
+    // Jump to line 2, column 500 (clamps before \r\n)
+    app.execute_command("navigation.goto_line");
+    type_str(&mut app, "2:500");
+    app.handle_key(enter_key()).unwrap();
+
+    let (line, col) = app.editor.cursor_line_col();
+    assert_eq!(line, 1);
+    assert_eq!(col, "second line".len());
+}

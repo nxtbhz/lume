@@ -21,7 +21,13 @@ impl Editor {
         let content_len = if line_len_chars > 0
             && tab.buffer.rope().char(line_start_char + line_len_chars - 1) == '\n'
         {
-            line_len_chars - 1
+            if line_len_chars > 1
+                && tab.buffer.rope().char(line_start_char + line_len_chars - 2) == '\r'
+            {
+                line_len_chars - 2
+            } else {
+                line_len_chars - 1
+            }
         } else {
             line_len_chars
         };
@@ -245,7 +251,11 @@ impl Editor {
         let line_len = tab.buffer.line_len_chars(line);
         let content_len =
             if line_len > 0 && tab.buffer.rope().char(line_start_char + line_len - 1) == '\n' {
-                line_len - 1
+                if line_len > 1 && tab.buffer.rope().char(line_start_char + line_len - 2) == '\r' {
+                    line_len - 2
+                } else {
+                    line_len - 1
+                }
             } else {
                 line_len
             };

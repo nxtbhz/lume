@@ -457,3 +457,29 @@ fn test_open_or_load_distinct_paths_do_not_false_match() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_editor_crlf_line_clamping_and_move_end() {
+    let mut ed = Editor::new();
+    ed.insert_str("line one\r\nsecond line\r\nthird").unwrap();
+
+    // Line 0: "line one" has 8 chars, followed by \r\n
+    ed.set_cursor_from_line_col(0, 100, false);
+    let (line, col) = ed.cursor_line_col();
+    assert_eq!((line, col), (0, 8));
+
+    ed.move_home(false);
+    assert_eq!(ed.cursor_line_col(), (0, 0));
+    ed.move_end(false);
+    assert_eq!(ed.cursor_line_col(), (0, 8));
+
+    // Line 1: "second line" has 11 chars, followed by \r\n
+    ed.set_cursor_from_line_col(1, 100, false);
+    let (line, col) = ed.cursor_line_col();
+    assert_eq!((line, col), (1, 11));
+
+    ed.move_home(false);
+    assert_eq!(ed.cursor_line_col(), (1, 0));
+    ed.move_end(false);
+    assert_eq!(ed.cursor_line_col(), (1, 11));
+}
