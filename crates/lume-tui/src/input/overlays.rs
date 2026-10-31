@@ -5,7 +5,7 @@ use lume_core::TextBuffer;
 use lume_syntax::Language;
 
 use crate::app::{ActiveFocus, App};
-use crate::prompt::{InputPrompt, PromptAction};
+use crate::prompt::{parse_goto_line, InputPrompt, PromptAction};
 use crate::search::{SearchField, SearchMode, SearchState};
 
 impl App {
@@ -164,7 +164,28 @@ impl App {
                             }
                         }
                     }
-                    PromptAction::GoToLine => {}
+                    PromptAction::GoToLine => {
+                        let (curr_line_0, _) = self.editor.cursor_line_col();
+                        let current_line_1 = curr_line_0 + 1;
+                        if let Some((target_line_1, target_col_1)) =
+                            parse_goto_line(&val, current_line_1)
+                        {
+                            let line_0 = target_line_1.saturating_sub(1);
+                            let col_0 = target_col_1.saturating_sub(1);
+                            self.editor.set_cursor_from_line_col(line_0, col_0, false);
+                            let head = self.editor.cursors().primary().head;
+                            self.editor.cursors_mut().set_single(head);
+                            self.adjust_viewport();
+                            let (actual_line_0, actual_col_0) = self.editor.cursor_line_col();
+                            self.set_status(format!(
+                                "Jumped to line {}, col {}",
+                                actual_line_0 + 1,
+                                actual_col_0 + 1
+                            ));
+                        } else {
+                            self.set_status(format!("Invalid line[:col] format: '{}'", val));
+                        }
+                    }
                 }
             }
             KeyCode::Tab => {
