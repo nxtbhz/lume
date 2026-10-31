@@ -89,6 +89,7 @@ impl Editor {
         tab.file_path = Some(path.to_path_buf());
         tab.is_dirty = recovered;
         tab.recovered_from_journal = recovered;
+        tab.update_clean_snapshot();
         if let Some(ref sync) = tab.sync_state {
             sync.is_dirty.store(recovered, Ordering::SeqCst);
         }

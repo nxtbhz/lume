@@ -68,6 +68,7 @@ impl Editor {
         tab.file_path = Some(path.to_path_buf());
         tab.is_dirty = false;
         tab.recovered_from_journal = false;
+        tab.update_clean_snapshot();
         if let Some(ref sync) = tab.sync_state {
             sync.is_dirty.store(false, Ordering::SeqCst);
         }
@@ -153,6 +154,7 @@ impl Editor {
                         if tab.revision == ev.save_revision {
                             tab.is_dirty = false;
                             tab.recovered_from_journal = false;
+                            tab.update_clean_snapshot();
                             if let Some(ref sync) = tab.sync_state {
                                 let _guard =
                                     sync.journal_lock.lock().unwrap_or_else(|e| e.into_inner());
