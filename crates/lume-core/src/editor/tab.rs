@@ -127,7 +127,9 @@ impl Tab {
             self.cached_diffs = Some((self.revision, diffs));
         }
 
-        self.cached_diffs.as_ref().map(|(_, diffs)| diffs.as_slice())
+        self.cached_diffs
+            .as_ref()
+            .map(|(_, diffs)| diffs.as_slice())
     }
 
     pub fn name(&self) -> String {

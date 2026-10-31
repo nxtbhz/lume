@@ -9,8 +9,8 @@ pub enum LineDiffStatus {
 #[derive(Debug, PartialEq, Eq)]
 enum DiffOp {
     Keep(usize, usize), // (base_idx, curr_idx)
-    Insert(usize),       // curr_idx
-    Delete(usize),       // base_idx
+    Insert(usize),      // curr_idx
+    Delete(usize),      // base_idx
 }
 
 /// Computes line-by-line diff status comparing `base_lines` against `current_lines`.
@@ -59,9 +59,7 @@ pub fn compute_line_diffs(base_lines: &[&str], current_lines: &[&str]) -> Vec<Li
 
     // Case: pure additions in the middle
     if base_mid.is_empty() {
-        for idx in curr_mid_start..curr_mid_end {
-            result[idx] = LineDiffStatus::Added;
-        }
+        result[curr_mid_start..curr_mid_end].fill(LineDiffStatus::Added);
         return result;
     }
 
@@ -98,7 +96,8 @@ pub fn compute_line_diffs(base_lines: &[&str], current_lines: &[&str]) -> Vec<Li
     let mut j = n;
 
     while i > 0 || j > 0 {
-        if i > 0 && j > 0 && base_mid[i - 1] == curr_mid[j - 1] && dp[i][j] == dp[i - 1][j - 1] + 1 {
+        if i > 0 && j > 0 && base_mid[i - 1] == curr_mid[j - 1] && dp[i][j] == dp[i - 1][j - 1] + 1
+        {
             ops.push(DiffOp::Keep(curr_mid_start + i - 1, curr_mid_start + j - 1));
             i -= 1;
             j -= 1;
@@ -230,10 +229,7 @@ mod tests {
         let diffs = compute_line_diffs(&base, &curr);
         assert_eq!(
             diffs,
-            vec![
-                LineDiffStatus::Unchanged,
-                LineDiffStatus::DeletedAbove
-            ]
+            vec![LineDiffStatus::Unchanged, LineDiffStatus::DeletedAbove]
         );
     }
 
@@ -244,10 +240,7 @@ mod tests {
         let diffs = compute_line_diffs(&base, &curr);
         assert_eq!(
             diffs,
-            vec![
-                LineDiffStatus::Unchanged,
-                LineDiffStatus::DeletedAbove
-            ]
+            vec![LineDiffStatus::Unchanged, LineDiffStatus::DeletedAbove]
         );
     }
 

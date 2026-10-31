@@ -121,10 +121,7 @@ mod tests {
             parse_git_head_content("ref: refs/heads/feature/zero-cost-git\r\n"),
             Some(GitHead::Branch("feature/zero-cost-git".to_string()))
         );
-        assert_eq!(
-            GitHead::Branch("main".to_string()).display_name(),
-            "main"
-        );
+        assert_eq!(GitHead::Branch("main".to_string()).display_name(), "main");
     }
 
     #[test]

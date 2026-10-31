@@ -158,7 +158,8 @@ pub fn render_status_bar<W: Write>(
                 lang_str
             );
 
-            let spaces = width.saturating_sub(left_status.chars().count() + right_status.chars().count());
+            let spaces =
+                width.saturating_sub(left_status.chars().count() + right_status.chars().count());
             let bar = format!(
                 "{}{:width$}{}",
                 left_status,

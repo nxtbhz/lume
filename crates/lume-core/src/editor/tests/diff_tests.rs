@@ -34,8 +34,9 @@ fn test_tab_diff_markers_lifecycle() {
         let markers = tab
             .diff_markers()
             .expect("dirty tab should produce diff markers");
-        assert!(markers.iter().any(|&status| status == LineDiffStatus::Added
-            || status == LineDiffStatus::Modified));
+        assert!(markers
+            .iter()
+            .any(|&status| status == LineDiffStatus::Added || status == LineDiffStatus::Modified));
     }
 
     // Save tab and verify diffs are cleared
