@@ -42,19 +42,46 @@ impl Journal {
             fs::create_dir_all(parent)?;
         }
 
-        let is_new = !path.exists() || fs::metadata(&path).map(|m| m.len() == 0).unwrap_or(true);
-        let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+        let has_v2_header = fs::File::open(&path)
+            .and_then(|mut f| {
+                use std::io::Read;
+                let mut hdr = [0u8; 5];
+                f.read_exact(&mut hdr)?;
+                Ok(&hdr == MAGIC_V2)
+            })
+            .unwrap_or(false);
 
-        if is_new {
-            let base_bytes = if file_path.exists() {
+        let mut file = if !has_v2_header {
+            let base_bytes = if path.exists() {
+                Self::recover(file_path)
+                    .ok()
+                    .flatten()
+                    .map(|s| s.into_bytes())
+                    .unwrap_or_else(|| {
+                        if file_path.exists() {
+                            fs::read(file_path).unwrap_or_default()
+                        } else {
+                            Vec::new()
+                        }
+                    })
+            } else if file_path.exists() {
                 fs::read(file_path).unwrap_or_default()
             } else {
                 Vec::new()
             };
-            file.write_all(MAGIC_V2)?;
-            file.write_all(&(base_bytes.len() as u64).to_le_bytes())?;
-            file.write_all(&base_bytes)?;
-        }
+
+            let mut f = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&path)?;
+            f.write_all(MAGIC_V2)?;
+            f.write_all(&(base_bytes.len() as u64).to_le_bytes())?;
+            f.write_all(&base_bytes)?;
+            f
+        } else {
+            OpenOptions::new().create(true).append(true).open(&path)?
+        };
 
         for delta in deltas {
             let old_bytes = delta.old_text.as_bytes();
@@ -71,14 +98,18 @@ impl Journal {
         Ok(())
     }
 
-    /// Record full content snapshot directly (for testing or legacy snapshots)
+    /// Record full content snapshot directly with MAGIC_V2 header
     pub fn record(file_path: &Path, content: &str) -> io::Result<()> {
         let path = Self::journal_path(file_path);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        // Write content atomically or directly
-        fs::write(&path, content)
+        let bytes = content.as_bytes();
+        let mut buf = Vec::with_capacity(MAGIC_V2.len() + 8 + bytes.len());
+        buf.extend_from_slice(MAGIC_V2);
+        buf.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+        buf.extend_from_slice(bytes);
+        fs::write(&path, buf)
     }
 
     pub fn has_journal(file_path: &Path) -> bool {
@@ -218,5 +249,72 @@ mod tests {
         let rel = Path::new("Cargo.toml");
         let abs = std::env::current_dir().unwrap().join("Cargo.toml");
         assert_eq!(path_hash(rel), path_hash(&abs));
+    }
+
+    #[test]
+    fn test_journal_record_then_record_deltas_does_not_corrupt() {
+        let dir = std::env::temp_dir().join(format!(
+            "lume_test_journal_undo_corrupt_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("code.rs");
+        fs::write(&file_path, "fn main() {}\n").unwrap();
+        let _ = Journal::remove(&file_path);
+
+        // Simulate Editor::undo() calling Journal::record with full snapshot
+        Journal::record(&file_path, "fn main() {}\n").unwrap();
+
+        // Simulate subsequent edit calling Journal::record_deltas
+        let delta = TextDelta {
+            start_byte: 12,
+            old_text: String::new(),
+            new_text: "// ok".to_string(),
+            timestamp: 100,
+        };
+        Journal::record_deltas(&file_path, &[delta]).unwrap();
+
+        let recovered = Journal::recover(&file_path)
+            .unwrap()
+            .expect("should recover");
+        assert_eq!(recovered, "fn main() {}// ok\n");
+
+        let _ = Journal::remove(&file_path);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_journal_legacy_plain_text_upgraded_on_record_deltas() {
+        let dir =
+            std::env::temp_dir().join(format!("lume_test_journal_legacy_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("legacy.rs");
+        fs::write(&file_path, "disk\n").unwrap();
+        let _ = Journal::remove(&file_path);
+
+        // Write raw plain text directly to the journal path (simulating legacy format)
+        let jpath = Journal::journal_path(&file_path);
+        if let Some(parent) = jpath.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&jpath, "legacy snapshot\n").unwrap();
+
+        let delta = TextDelta {
+            start_byte: 15,
+            old_text: String::new(),
+            new_text: "!".to_string(),
+            timestamp: 101,
+        };
+        Journal::record_deltas(&file_path, &[delta]).unwrap();
+
+        let recovered = Journal::recover(&file_path)
+            .unwrap()
+            .expect("should recover");
+        assert_eq!(recovered, "legacy snapshot!\n");
+
+        let _ = Journal::remove(&file_path);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

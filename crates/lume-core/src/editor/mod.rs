@@ -89,7 +89,15 @@ impl Editor {
         tab.file_path = Some(path.to_path_buf());
         tab.is_dirty = recovered;
         tab.recovered_from_journal = recovered;
-        tab.update_clean_snapshot();
+        if recovered {
+            let disk_rope = std::fs::read_to_string(path)
+                .map(|s| ropey::Rope::from_str(&s))
+                .unwrap_or_else(|_| ropey::Rope::new());
+            tab.clean_snapshot = Some(disk_rope);
+            tab.cached_diffs = None;
+        } else {
+            tab.update_clean_snapshot();
+        }
         if let Some(ref sync) = tab.sync_state {
             sync.is_dirty.store(recovered, Ordering::SeqCst);
         }
