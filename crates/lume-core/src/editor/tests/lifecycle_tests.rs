@@ -535,3 +535,15 @@ fn test_crlf_horizontal_move_and_select_all_multi_cursor() {
         (0, 6)
     );
 }
+
+#[test]
+fn test_tab_cursor_line_col() {
+    let mut tab = crate::editor::Tab::from_str(1, "hello\nworld ✨\nthird");
+    assert_eq!(tab.cursor_line_col(), (0, 0));
+
+    // Move cursor to "world " (line 1, col 6)
+    let char_idx = tab.buffer.rope().line_to_char(1) + 6;
+    let byte_idx = tab.buffer.char_to_byte(char_idx);
+    tab.cursors.set_single(byte_idx);
+    assert_eq!(tab.cursor_line_col(), (1, 6));
+}

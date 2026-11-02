@@ -1,4 +1,4 @@
-use crate::buffer::RopeBuffer;
+use crate::buffer::{RopeBuffer, TextBuffer};
 use crate::cursor::CursorSet;
 use crate::diff::LineDiffStatus;
 use crate::history::History;
@@ -108,5 +108,18 @@ impl Tab {
         } else {
             format!("[Tab {}]", self.id)
         }
+    }
+
+    pub fn cursor_line_col(&self) -> (usize, usize) {
+        self.cursor_line_col_for(&self.cursors)
+    }
+
+    pub fn cursor_line_col_for(&self, cursors: &CursorSet) -> (usize, usize) {
+        let head = cursors.primary().head.min(self.buffer.len_bytes());
+        let line = self.buffer.byte_to_line(head);
+        let line_start_char = self.buffer.rope().line_to_char(line);
+        let cursor_char = self.buffer.byte_to_char(head);
+        let col = cursor_char.saturating_sub(line_start_char);
+        (line, col)
     }
 }

@@ -19,13 +19,7 @@ impl Editor {
     }
 
     pub fn cursor_line_col(&self) -> (usize, usize) {
-        let tab = &self.tabs[self.active_tab];
-        let head = tab.cursors.primary().head;
-        let line = tab.buffer.byte_to_line(head);
-        let line_start_char = tab.buffer.rope().line_to_char(line);
-        let cursor_char = tab.buffer.byte_to_char(head);
-        let col = cursor_char.saturating_sub(line_start_char);
-        (line, col)
+        self.tabs[self.active_tab].cursor_line_col()
     }
 
     pub fn set_cursor_from_line_col(&mut self, line: usize, col: usize, select: bool) {
