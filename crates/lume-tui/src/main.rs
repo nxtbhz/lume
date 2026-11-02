@@ -7,6 +7,7 @@ mod prompt;
 pub(crate) mod quick_open;
 mod render;
 mod search;
+pub(crate) mod split;
 mod terminal;
 mod vim;
 
