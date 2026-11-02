@@ -584,7 +584,12 @@ impl App {
                 self.syntax_cache
                     .insert(res.buffer_id, (res.revision, Arc::new(res.tokens)));
                 self.syntax_in_flight.remove(&res.buffer_id);
-                if res.buffer_id == self.editor.active_tab().id {
+                let is_visible = res.buffer_id == self.editor.active_tab().id
+                    || (self.splits.is_split
+                        && self.splits.panes.iter().any(|p| {
+                            self.editor.tabs().get(p.tab_idx).map(|t| t.id) == Some(res.buffer_id)
+                        }));
+                if is_visible {
                     updated = true;
                 }
             }

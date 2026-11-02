@@ -106,13 +106,7 @@ impl App {
                         g_w,
                     )
                 } else {
-                    (
-                        text_left,
-                        self.text_area_top(),
-                        text_w,
-                        text_h,
-                        gutter_w,
-                    )
+                    (text_left, self.text_area_top(), text_w, text_h, gutter_w)
                 };
 
                 let in_view = cursor_row >= self.scroll_row

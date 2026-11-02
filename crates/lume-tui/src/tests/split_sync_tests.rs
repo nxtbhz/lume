@@ -63,3 +63,54 @@ fn test_shared_buffer_live_editing_across_splits() {
     // Pane 0's cursor must clamp to 0 safely
     assert_eq!(app.splits.panes[0].cursors.primary().head, 0);
 }
+
+#[test]
+fn test_inactive_split_pane_syntax_response_triggers_update_and_mouse_clears_chord() {
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    let mut app = App::new(None).unwrap();
+    app.explorer.is_visible = false;
+    app.terminal_width = 80;
+    app.terminal_height = 24;
+
+    // Tab 0 (empty plain text) and Tab 1 (Rust file)
+    let tab1_idx = app.editor.new_tab();
+    assert_eq!(tab1_idx, 1);
+    app.editor.set_file_path(Some(PathBuf::from("lib.rs")));
+    app.editor.insert_str("fn main() { let x = 42; }").unwrap();
+
+    // Switch active tab back to Tab 0, split vertically, and set Pane 0 (inactive) to view Tab 1
+    app.editor.switch_tab(0);
+    app.execute_command("view.split_vertical");
+    assert_eq!(app.splits.active_pane, 1);
+    app.splits.panes[0].tab_idx = 1;
+    app.splits.panes[1].tab_idx = 0;
+
+    // Request syntax highlights for Tab 1 (viewed by inactive Pane 0) while active tab is Tab 0
+    let _ = app.update_syntax_highlights_for_tab(1);
+    let mut got_update = false;
+    for _ in 0..50 {
+        if app.has_pending_syntax_response() {
+            got_update = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        got_update,
+        "Syntax response for visible inactive split pane must mark UI updated"
+    );
+
+    // Also verify mouse click cancels pending Ctrl+K chord
+    app.pending_chord = Some('k');
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 60,
+        row: 5,
+        modifiers: KeyModifiers::NONE,
+    })
+    .unwrap();
+    assert_eq!(app.pending_chord, None);
+}

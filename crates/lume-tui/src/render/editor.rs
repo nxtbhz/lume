@@ -98,23 +98,20 @@ fn render_pane_viewport<W: Write>(
                     let end_tok = rest_tokens.partition_point(|t| t.start_byte < line_end_byte);
                     let line_tokens = &rest_tokens[..end_tok];
 
-                    let line_matches: Vec<(usize, usize)> =
-                        if let Some(ref search) = app.search_state {
-                            if !search.query.is_empty() {
-                                lume_core::search::find_matches_in_str(
-                                    &line_str,
-                                    &search.query,
-                                    false,
-                                )
+                    let line_matches: Vec<(usize, usize)> = if let Some(ref search) =
+                        app.search_state
+                    {
+                        if !search.query.is_empty() {
+                            lume_core::search::find_matches_in_str(&line_str, &search.query, false)
                                 .into_iter()
                                 .map(|(s, e)| (line_start_byte + s, line_start_byte + e))
                                 .collect()
-                            } else {
-                                Vec::new()
-                            }
                         } else {
                             Vec::new()
-                        };
+                        }
+                    } else {
+                        Vec::new()
+                    };
 
                     let chars: Vec<char> = line_str.chars().collect();
                     let mut current_byte = line_start_byte;
@@ -136,8 +133,8 @@ fn render_pane_viewport<W: Write>(
                         let search_match = line_matches
                             .iter()
                             .find(|(s, e)| *s <= char_byte && char_byte < *e);
-                        let is_bracket_match = bracket_pair
-                            .is_some_and(|(b1, b2)| char_byte == b1 || char_byte == b2);
+                        let is_bracket_match =
+                            bracket_pair.is_some_and(|(b1, b2)| char_byte == b1 || char_byte == b2);
 
                         let style: (Option<Color>, Color) =
                             if let (Some(ref _search), Some(&(ms, me))) =
