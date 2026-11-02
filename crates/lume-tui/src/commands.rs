@@ -169,6 +169,11 @@ pub const COMMANDS: &[CommandItem] = &[
         shortcut: "Ctrl+Alt+V",
     },
     CommandItem {
+        id: "edit.select_all",
+        title: "Edit: Select All",
+        shortcut: "Ctrl+A",
+    },
+    CommandItem {
         id: "app.quit",
         title: "App: Quit",
         shortcut: "Ctrl+Q",
@@ -332,6 +337,10 @@ impl App {
                 if self.editor.paste() {
                     self.set_status("Pasted from clipboard");
                 }
+            }
+            "edit.select_all" => {
+                self.editor.select_all();
+                self.set_status("Selected all");
             }
             "edit.find" => {
                 let cur = *self.editor.cursors().primary();

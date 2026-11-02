@@ -375,7 +375,8 @@ impl InputPrompt {
 
         // Render input cursor
         let cursor_col = self.value[..self.cursor_pos].chars().count();
-        let cursor_x = (start_x + 3 + cursor_col) as u16;
+        let clamped_col = (3 + cursor_col).min(box_w.saturating_sub(1));
+        let cursor_x = (start_x + clamped_col) as u16;
         let cursor_y = (start_y + 1) as u16;
         queue!(
             writer,

@@ -431,4 +431,20 @@ fn test_ctrl_a_selects_entire_buffer_and_ctrl_backtab_switches_prev_tab() {
     ))
     .unwrap();
     assert_eq!(app.editor.active_tab_idx(), 0);
+
+    // Prompt render with very long input must clamp cursor_x inside box_w
+    let mut prompt = InputPrompt::open_file();
+    for _ in 0..100 {
+        prompt.handle_char('a');
+    }
+    let mut out = Vec::new();
+    prompt.render(&mut out, 80, 24).unwrap();
+    // box_w for term_width=80 is 72, start_x is (80 - 72) / 2 = 4.
+    // Rightmost cell inside box is start_x + box_w - 1 = 75 (1-based ANSI col 76).
+    // Cursor MoveTo must not place cursor past column 75 (ANSI ";76H").
+    let ansi = String::from_utf8_lossy(&out);
+    assert!(
+        !ansi.contains(";108H"),
+        "prompt cursor must be clamped to box width, got ANSI: {ansi:?}"
+    );
 }

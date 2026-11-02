@@ -457,9 +457,22 @@ pub(crate) fn lex_yaml(
             continue;
         }
 
-        let indent = line.len() - trimmed.len();
-        if let Some(sep_rel) = trimmed.find(':').or_else(|| trimmed.find('=')) {
-            let key_end_rel = trimmed[..sep_rel].trim_end().len();
+        let mut indent = line.len() - trimmed.len();
+        let mut active = trimmed;
+        if active == "-" || active.starts_with("- ") {
+            tokens.push(HighlightToken {
+                start_byte: line_start + indent,
+                end_byte: line_start + indent + 1,
+                token_type: TokenType::Operator,
+            });
+            let after_dash = &active[1..];
+            let next_trimmed = after_dash.trim_start();
+            indent += 1 + (after_dash.len() - next_trimmed.len());
+            active = next_trimmed;
+        }
+
+        if let Some(sep_rel) = active.find(':').or_else(|| active.find('=')) {
+            let key_end_rel = active[..sep_rel].trim_end().len();
             if key_end_rel > 0 {
                 tokens.push(HighlightToken {
                     start_byte: line_start + indent,
@@ -468,7 +481,7 @@ pub(crate) fn lex_yaml(
                 });
             }
 
-            let after_sep = &trimmed[sep_rel + 1..];
+            let after_sep = &active[sep_rel + 1..];
             let val_trimmed = after_sep.trim();
             if !val_trimmed.is_empty() {
                 let val_lead = after_sep.len() - after_sep.trim_start().len();
@@ -493,7 +506,7 @@ pub(crate) fn lex_yaml(
                     token_type,
                 });
             }
-        } else if trimmed.starts_with('-') {
+        } else if active.starts_with('-') {
             tokens.push(HighlightToken {
                 start_byte: line_start + indent,
                 end_byte: line_start + indent + 1,

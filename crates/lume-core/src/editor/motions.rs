@@ -110,6 +110,7 @@ impl Editor {
         let primary = tab.cursors.primary_mut();
         primary.anchor = 0;
         primary.head = end_byte;
+        tab.cursors.normalize();
     }
 
     pub fn move_left(&mut self, select: bool) {
@@ -123,7 +124,17 @@ impl Editor {
 
         if primary.head > 0 {
             let char_idx = tab.buffer.byte_to_char(primary.head);
-            let prev_byte = tab.buffer.char_to_byte(char_idx - 1);
+            let rope = tab.buffer.rope();
+            let target_char = if char_idx >= 2
+                && rope.char(char_idx - 1) == '\n'
+                && rope.char(char_idx - 2) == '\r'
+            {
+                char_idx - 2
+            } else {
+                char_idx - 1
+            };
+            let prev_byte = tab.buffer.char_to_byte(target_char);
+            let primary = tab.cursors.primary_mut();
             if select {
                 primary.select_to(prev_byte);
             } else {
@@ -143,7 +154,18 @@ impl Editor {
 
         if primary.head < tab.buffer.len_bytes() {
             let char_idx = tab.buffer.byte_to_char(primary.head);
-            let next_byte = tab.buffer.char_to_byte(char_idx + 1);
+            let total_chars = tab.buffer.len_chars();
+            let rope = tab.buffer.rope();
+            let target_char = if char_idx + 1 < total_chars
+                && rope.char(char_idx) == '\r'
+                && rope.char(char_idx + 1) == '\n'
+            {
+                char_idx + 2
+            } else {
+                char_idx + 1
+            };
+            let next_byte = tab.buffer.char_to_byte(target_char);
+            let primary = tab.cursors.primary_mut();
             if select {
                 primary.select_to(next_byte);
             } else {

@@ -507,3 +507,31 @@ fn test_crlf_vertical_cursor_clamping_never_lands_between_cr_and_lf() {
     ed.move_lines(-1, false);
     assert_eq!(ed.cursor_line_col(), (0, 2));
 }
+
+#[test]
+fn test_crlf_horizontal_move_and_select_all_multi_cursor() {
+    let mut ed = Editor::new();
+    *ed.buffer_mut() = crate::buffer::RopeBuffer::from_str("ab\r\ncd");
+
+    // Put cursor at end of line 0 ("ab", col 2, byte 2 before "\r\n")
+    ed.set_cursor_from_line_col(0, 2, false);
+    assert_eq!(ed.cursor_line_col(), (0, 2));
+
+    // Single move_right must cross "\r\n" directly to start of line 1 (col 0, byte 4)
+    ed.move_right(false);
+    assert_eq!(ed.cursor_line_col(), (1, 0));
+
+    // Single move_left from start of line 1 must cross "\r\n" back to end of line 0 (col 2, byte 2)
+    ed.move_left(false);
+    assert_eq!(ed.cursor_line_col(), (0, 2));
+
+    // Multi-cursor select_all must collapse secondary cursors into a single 0..len selection
+    ed.cursors_mut()
+        .set_cursors(vec![Cursor::new(1), Cursor::new(4)]);
+    ed.select_all();
+    assert_eq!(ed.cursors().cursors().len(), 1);
+    assert_eq!(
+        (ed.cursors().primary().min(), ed.cursors().primary().max()),
+        (0, 6)
+    );
+}

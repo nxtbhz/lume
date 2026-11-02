@@ -276,7 +276,7 @@ fn test_markdown_lexer_list_bounds_and_utf8() {
 #[test]
 fn test_yaml_lexer_colon_key_value() {
     let mut hl = SyntaxHighlighter::new(Language::Yaml).unwrap();
-    let code = "# comment\nname: \"lume\"\nenabled: true\ncount: 42\n";
+    let code = "# comment\nname: \"lume\"\nenabled: true\ncount: 42\n  - item: 99\n";
     hl.update(code);
     let tokens = hl.highlight_range(0, code.len(), code);
     assert!(tokens.iter().any(|t| t.token_type == TokenType::Comment));
@@ -288,6 +288,12 @@ fn test_yaml_lexer_colon_key_value() {
         .iter()
         .any(|t| t.token_type == TokenType::Keyword && &code[t.start_byte..t.end_byte] == "true"));
     assert!(tokens.iter().any(|t| t.token_type == TokenType::Number));
+    assert!(tokens
+        .iter()
+        .any(|t| t.token_type == TokenType::Operator && &code[t.start_byte..t.end_byte] == "-"));
+    assert!(tokens
+        .iter()
+        .any(|t| t.token_type == TokenType::Keyword && &code[t.start_byte..t.end_byte] == "item"));
 }
 
 #[test]
