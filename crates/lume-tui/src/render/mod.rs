@@ -87,16 +87,43 @@ impl App {
         {
             if self.focus == ActiveFocus::Editor {
                 let (cursor_row, cursor_col) = self.editor.cursor_line_col();
+                let (pane_left, pane_top, pane_w, pane_h, pane_gutter_w) = if self.splits.is_split {
+                    let area_w = (self.terminal_width as usize).saturating_sub(text_left);
+                    let (p0_rect, _, p1_rect) =
+                        self.splits
+                            .layout(text_left, self.text_area_top(), area_w, text_h);
+                    let active_rect = if self.splits.active_pane == 0 {
+                        p0_rect
+                    } else {
+                        p1_rect.unwrap_or(p0_rect)
+                    };
+                    let g_w = gutter_w.min(active_rect.width);
+                    (
+                        active_rect.left,
+                        active_rect.top,
+                        active_rect.width.saturating_sub(g_w),
+                        active_rect.height,
+                        g_w,
+                    )
+                } else {
+                    (
+                        text_left,
+                        self.text_area_top(),
+                        text_w,
+                        text_h,
+                        gutter_w,
+                    )
+                };
+
                 let in_view = cursor_row >= self.scroll_row
-                    && cursor_row < self.scroll_row + text_h
+                    && cursor_row < self.scroll_row + pane_h
                     && cursor_col >= self.scroll_col
-                    && cursor_col < self.scroll_col + text_w;
+                    && cursor_col < self.scroll_col + pane_w;
 
                 if in_view {
-                    let term_cursor_row =
-                        (self.text_area_top() + cursor_row - self.scroll_row) as u16;
+                    let term_cursor_row = (pane_top + cursor_row - self.scroll_row) as u16;
                     let term_cursor_col =
-                        (text_left + gutter_w + cursor_col - self.scroll_col) as u16;
+                        (pane_left + pane_gutter_w + cursor_col - self.scroll_col) as u16;
                     queue!(writer, MoveTo(term_cursor_col, term_cursor_row), Show)?;
                 } else {
                     queue!(writer, Hide)?;

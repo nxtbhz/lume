@@ -392,13 +392,22 @@ impl App {
         self.terminal_height.saturating_sub(2) as usize
     }
 
-    pub fn gutter_width(&self) -> usize {
+    pub fn gutter_width_for_tab(&self, tab_idx: usize) -> usize {
         if !self.show_line_numbers {
             return 0;
         }
-        let total_lines = self.editor.buffer().len_lines().max(1);
+        let total_lines = self
+            .editor
+            .tabs()
+            .get(tab_idx)
+            .map(|t| t.buffer.len_lines().max(1))
+            .unwrap_or(1);
         let digits = format!("{}", total_lines).len();
         digits + 3 // digits + 1 space + '│' + 1 space
+    }
+
+    pub fn gutter_width(&self) -> usize {
+        self.gutter_width_for_tab(self.editor.active_tab_idx())
     }
 
     pub fn text_area_width(&self) -> usize {
@@ -507,12 +516,17 @@ impl App {
         self.splits.panes[target_pane].cursors = cursors;
     }
 
-    pub fn current_language(&self) -> Option<Language> {
-        if let Some(override_id) = self.editor.language_override() {
+    pub fn language_for_tab(&self, tab_idx: usize) -> Option<Language> {
+        let tab = self.editor.tabs().get(tab_idx)?;
+        if let Some(ref override_id) = tab.language_override {
             Language::from_id(override_id)
         } else {
-            self.editor.file_path().and_then(Language::from_path)
+            tab.file_path.as_deref().and_then(Language::from_path)
         }
+    }
+
+    pub fn current_language(&self) -> Option<Language> {
+        self.language_for_tab(self.editor.active_tab_idx())
     }
 
     pub fn has_pending_syntax_response(&mut self) -> bool {
@@ -552,12 +566,17 @@ impl App {
         updated
     }
 
-    pub fn update_syntax_highlights(&mut self) -> Arc<Vec<HighlightToken>> {
+    pub fn update_syntax_highlights_for_tab(
+        &mut self,
+        tab_idx: usize,
+    ) -> Arc<Vec<HighlightToken>> {
         let _ = self.has_pending_syntax_response();
 
-        let active_tab = self.editor.active_tab();
-        let tab_id = active_tab.id;
-        let tab_rev = active_tab.revision;
+        let Some(tab) = self.editor.tabs().get(tab_idx) else {
+            return Arc::new(Vec::new());
+        };
+        let tab_id = tab.id;
+        let tab_rev = tab.revision;
 
         let needs_request = match self.syntax_cache.get(&tab_id) {
             Some((cached_rev, _)) => *cached_rev != tab_rev,
@@ -565,8 +584,8 @@ impl App {
         };
 
         if needs_request && self.syntax_in_flight.get(&tab_id) != Some(&tab_rev) {
-            if let Some(lang) = self.current_language() {
-                let full_text = self.editor.buffer().rope().to_string();
+            if let Some(lang) = self.language_for_tab(tab_idx) {
+                let full_text = self.editor.tabs()[tab_idx].buffer.rope().to_string();
                 let full_len = full_text.len();
                 self.syntax_in_flight.insert(tab_id, tab_rev);
                 self.syntax_worker.send_request(SyntaxRequest {
@@ -583,6 +602,11 @@ impl App {
             .get(&tab_id)
             .map(|(_, tokens)| Arc::clone(tokens))
             .unwrap_or_else(|| Arc::new(Vec::new()))
+    }
+
+    pub fn update_syntax_highlights(&mut self) -> Arc<Vec<HighlightToken>> {
+        let active_idx = self.editor.active_tab_idx();
+        self.update_syntax_highlights_for_tab(active_idx)
     }
 
     pub fn handle_deleted_folder_tabs(&mut self, folder_path: &std::path::Path) {
