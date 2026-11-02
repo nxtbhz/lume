@@ -63,6 +63,10 @@ pub struct App {
 
     // Clipboard
     pub pending_osc52: Option<String>,
+
+    // Split View & Key Chords
+    pub splits: crate::split::SplitState,
+    pub pending_chord: Option<char>,
 }
 
 impl App {
@@ -212,6 +216,9 @@ impl App {
             last_git_check: Instant::now(),
 
             pending_osc52: None,
+
+            splits: crate::split::SplitState::new(),
+            pending_chord: None,
         };
 
         app.refresh_git_head();
@@ -402,8 +409,28 @@ impl App {
 
     pub fn adjust_viewport(&mut self) {
         let (cursor_row, cursor_col) = self.editor.cursor_line_col();
-        let height = self.text_area_height().max(1);
-        let width = self.text_area_width().max(1);
+        let (height, width) = if self.splits.is_split {
+            let area_w = (self.terminal_width as usize).saturating_sub(self.explorer_width());
+            let (p0, _, p1) = self.splits.layout(
+                self.text_area_left(),
+                self.text_area_top(),
+                area_w,
+                self.text_area_height(),
+            );
+            let active_rect = if self.splits.active_pane == 0 {
+                p0
+            } else {
+                p1.unwrap_or(p0)
+            };
+            let h = active_rect.height.max(1);
+            let w = active_rect.width.saturating_sub(self.gutter_width()).max(1);
+            (h, w)
+        } else {
+            (
+                self.text_area_height().max(1),
+                self.text_area_width().max(1),
+            )
+        };
 
         if cursor_row < self.scroll_row {
             self.scroll_row = cursor_row;
@@ -416,6 +443,68 @@ impl App {
         } else if cursor_col >= self.scroll_col + width {
             self.scroll_col = cursor_col.saturating_sub(width - 1);
         }
+
+        if self.splits.is_split {
+            self.sync_active_pane();
+        }
+    }
+
+    pub fn sync_active_pane(&mut self) {
+        if self.splits.is_split {
+            let active = self.splits.active_pane;
+            self.splits.panes[active].tab_idx = self.editor.active_tab_idx();
+            self.splits.panes[active].scroll_row = self.scroll_row;
+            self.splits.panes[active].scroll_col = self.scroll_col;
+            self.splits.panes[active].cursors = self.editor.cursors().clone();
+        }
+    }
+
+    pub fn clamp_byte_to_buffer(byte_idx: usize, buffer: &lume_core::RopeBuffer) -> usize {
+        let max_bytes = buffer.len_bytes();
+        let mut clamped = byte_idx.min(max_bytes);
+        if clamped < max_bytes {
+            let char_idx = buffer.byte_to_char(clamped);
+            clamped = buffer.char_to_byte(char_idx);
+        }
+        clamped
+    }
+
+    pub fn clamp_cursors_to_buffer(
+        cursors: &mut lume_core::CursorSet,
+        buffer: &lume_core::RopeBuffer,
+    ) {
+        let updated: Vec<lume_core::Cursor> = cursors
+            .cursors()
+            .iter()
+            .map(|c| {
+                let mut copy = *c;
+                copy.head = Self::clamp_byte_to_buffer(copy.head, buffer);
+                copy.anchor = Self::clamp_byte_to_buffer(copy.anchor, buffer);
+                copy
+            })
+            .collect();
+        cursors.set_cursors(updated);
+    }
+
+    pub fn switch_active_pane(&mut self, target_pane: usize) {
+        if !self.splits.is_split || target_pane >= 2 || target_pane == self.splits.active_pane {
+            return;
+        }
+        self.sync_active_pane();
+        self.splits.active_pane = target_pane;
+
+        let tab_idx = self.splits.panes[target_pane]
+            .tab_idx
+            .min(self.editor.tabs().len().saturating_sub(1));
+        self.splits.panes[target_pane].tab_idx = tab_idx;
+        self.editor.switch_tab(tab_idx);
+        self.scroll_row = self.splits.panes[target_pane].scroll_row;
+        self.scroll_col = self.splits.panes[target_pane].scroll_col;
+
+        let mut cursors = self.splits.panes[target_pane].cursors.clone();
+        Self::clamp_cursors_to_buffer(&mut cursors, self.editor.buffer());
+        *self.editor.cursors_mut() = cursors.clone();
+        self.splits.panes[target_pane].cursors = cursors;
     }
 
     pub fn current_language(&self) -> Option<Language> {

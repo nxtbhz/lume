@@ -144,6 +144,26 @@ pub const COMMANDS: &[CommandItem] = &[
         shortcut: "F1",
     },
     CommandItem {
+        id: "view.split_vertical",
+        title: "View: Split Editor Vertically",
+        shortcut: "Ctrl+K \\",
+    },
+    CommandItem {
+        id: "view.split_horizontal",
+        title: "View: Split Editor Horizontally",
+        shortcut: "Ctrl+K -",
+    },
+    CommandItem {
+        id: "view.focus_next_split",
+        title: "View: Focus Next Split Pane",
+        shortcut: "Ctrl+K W",
+    },
+    CommandItem {
+        id: "view.close_split",
+        title: "View: Close Active Split Pane",
+        shortcut: "Ctrl+K Q",
+    },
+    CommandItem {
         id: "view.toggle_line_numbers",
         title: "View: Toggle Line Numbers",
         shortcut: "",
@@ -417,6 +437,44 @@ impl App {
             }
             "view.which_key" => {
                 self.which_key_open = true;
+            }
+            "view.split_vertical" => {
+                let tab_idx = self.editor.active_tab_idx();
+                let scroll = (self.scroll_row, self.scroll_col);
+                let cursors = self.editor.cursors().clone();
+                self.splits.split_vertical(tab_idx, scroll, cursors);
+                self.set_status("Split editor vertically");
+            }
+            "view.split_horizontal" => {
+                let tab_idx = self.editor.active_tab_idx();
+                let scroll = (self.scroll_row, self.scroll_col);
+                let cursors = self.editor.cursors().clone();
+                self.splits.split_horizontal(tab_idx, scroll, cursors);
+                self.set_status("Split editor horizontally");
+            }
+            "view.focus_next_split" => {
+                if self.splits.is_split {
+                    let next = if self.splits.active_pane == 0 { 1 } else { 0 };
+                    self.switch_active_pane(next);
+                    self.set_status(format!("Focused split pane {}", next + 1));
+                }
+            }
+            "view.close_split" => {
+                if self.splits.is_split {
+                    self.sync_active_pane();
+                    self.splits.close_active();
+                    let remaining = self.splits.panes[0].clone();
+                    let tab_idx = remaining
+                        .tab_idx
+                        .min(self.editor.tabs().len().saturating_sub(1));
+                    self.editor.switch_tab(tab_idx);
+                    self.scroll_row = remaining.scroll_row;
+                    self.scroll_col = remaining.scroll_col;
+                    let mut cursors = remaining.cursors;
+                    Self::clamp_cursors_to_buffer(&mut cursors, self.editor.buffer());
+                    *self.editor.cursors_mut() = cursors;
+                    self.set_status("Closed split pane");
+                }
             }
             "view.toggle_line_numbers" => {
                 self.show_line_numbers = !self.show_line_numbers;

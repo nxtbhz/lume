@@ -40,6 +40,35 @@ impl App {
             return self.handle_palette_key(key);
         }
 
+        // 4.5. If Ctrl+K chord is pending, route second key
+        if self.pending_chord == Some('k') {
+            self.pending_chord = None;
+            match key.code {
+                KeyCode::Char('\\') | KeyCode::Char('|') => {
+                    self.execute_command("view.split_vertical");
+                }
+                KeyCode::Char('-') | KeyCode::Char('_') => {
+                    self.execute_command("view.split_horizontal");
+                }
+                KeyCode::Char('w') | KeyCode::Char('W') => {
+                    self.execute_command("view.focus_next_split");
+                }
+                KeyCode::Char('q') | KeyCode::Char('Q') => {
+                    self.execute_command("view.close_split");
+                }
+                KeyCode::Char('m') | KeyCode::Char('M') => {
+                    self.execute_command("language.set_mode");
+                }
+                KeyCode::Esc => {
+                    self.set_status("Cancelled chord");
+                }
+                _ => {
+                    self.set_status("Cancelled chord");
+                }
+            }
+            return Ok(());
+        }
+
         // 5. Global Shortcuts
         if ctrl && alt && (key.code == KeyCode::Char('v') || key.code == KeyCode::Char('V')) {
             self.execute_command("settings.toggle_modal");
@@ -146,6 +175,13 @@ impl App {
                 }
                 KeyCode::Char('g') | KeyCode::Char('G') => {
                     self.execute_command("navigation.goto_line");
+                    return Ok(());
+                }
+                KeyCode::Char('k') | KeyCode::Char('K') => {
+                    self.pending_chord = Some('k');
+                    self.set_status(
+                        "(Ctrl+K) was pressed. Waiting for second key (\\, -, w, q, m)...",
+                    );
                     return Ok(());
                 }
                 _ => {}
