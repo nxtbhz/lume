@@ -444,6 +444,7 @@ impl App {
                 let cursors = self.editor.cursors().clone();
                 self.splits.split_vertical(tab_idx, scroll, cursors);
                 self.set_status("Split editor vertically");
+                return;
             }
             "view.split_horizontal" => {
                 let tab_idx = self.editor.active_tab_idx();
@@ -451,6 +452,7 @@ impl App {
                 let cursors = self.editor.cursors().clone();
                 self.splits.split_horizontal(tab_idx, scroll, cursors);
                 self.set_status("Split editor horizontally");
+                return;
             }
             "view.focus_next_split" => {
                 if self.splits.is_split {
@@ -458,6 +460,7 @@ impl App {
                     self.switch_active_pane(next);
                     self.set_status(format!("Focused split pane {}", next + 1));
                 }
+                return;
             }
             "view.close_split" => {
                 if self.splits.is_split {
@@ -475,6 +478,7 @@ impl App {
                     *self.editor.cursors_mut() = cursors;
                     self.set_status("Closed split pane");
                 }
+                return;
             }
             "view.toggle_line_numbers" => {
                 self.show_line_numbers = !self.show_line_numbers;

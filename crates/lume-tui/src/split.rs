@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use lume_core::CursorSet;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
