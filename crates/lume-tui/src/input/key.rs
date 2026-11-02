@@ -127,18 +127,18 @@ impl App {
                 }
                 KeyCode::Tab => {
                     if shift {
-                        self.editor.prev_tab();
+                        self.execute_command("file.prev_tab");
                     } else {
-                        self.editor.next_tab();
+                        self.execute_command("file.next_tab");
                     }
                     return Ok(());
                 }
                 KeyCode::BackTab => {
-                    self.editor.prev_tab();
+                    self.execute_command("file.prev_tab");
                     return Ok(());
                 }
                 KeyCode::Char('a') | KeyCode::Char('A') => {
-                    self.editor.select_all();
+                    self.execute_command("edit.select_all");
                     return Ok(());
                 }
                 KeyCode::Char('z') => {
@@ -213,11 +213,11 @@ impl App {
                 return Ok(());
             }
             KeyCode::Right if alt => {
-                self.editor.next_tab();
+                self.execute_command("file.next_tab");
                 return Ok(());
             }
             KeyCode::Left if alt => {
-                self.editor.prev_tab();
+                self.execute_command("file.prev_tab");
                 return Ok(());
             }
             _ => {}

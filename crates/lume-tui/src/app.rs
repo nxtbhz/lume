@@ -649,7 +649,7 @@ impl App {
             .unwrap_or_else(|| Arc::new(Vec::new()))
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn update_syntax_highlights(&mut self) -> Arc<Vec<HighlightToken>> {
         let active_idx = self.editor.active_tab_idx();
         self.update_syntax_highlights_for_tab(active_idx)

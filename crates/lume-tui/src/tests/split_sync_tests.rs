@@ -114,3 +114,46 @@ fn test_inactive_split_pane_syntax_response_triggers_update_and_mouse_clears_cho
     .unwrap();
     assert_eq!(app.pending_chord, None);
 }
+
+#[test]
+fn test_tab_switching_shortcuts_sync_split_pane_and_viewport() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = App::new(None).unwrap();
+    app.explorer.is_visible = false;
+    app.terminal_width = 80;
+    app.terminal_height = 10;
+
+    // Tab 0 has 30 lines, scrolled down to line 20
+    let long_text: String = (0..30).map(|i| format!("line {i}\n")).collect();
+    app.editor.insert_str(&long_text).unwrap();
+    app.scroll_row = 20;
+
+    // Tab 1 has 1 line (cursor at line 0)
+    let _ = app.editor.new_tab();
+    app.editor.insert_str("short").unwrap();
+
+    // Switch back to Tab 0 and split vertically (active_pane = 1, viewing Tab 0 at scroll_row = 20)
+    app.editor.switch_tab(0);
+    app.scroll_row = 20;
+    app.execute_command("view.split_vertical");
+    assert_eq!(app.splits.active_pane, 1);
+    assert_eq!(app.splits.panes[1].tab_idx, 0);
+    assert_eq!(app.splits.panes[1].scroll_row, 20);
+
+    // Press Ctrl+Tab to switch active pane to Tab 1
+    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL))
+        .unwrap();
+
+    // Active pane's tab_idx must immediately sync to 1 and scroll_row must clamp to 0
+    assert_eq!(app.editor.active_tab_idx(), 1);
+    assert_eq!(app.splits.panes[1].tab_idx, 1);
+    assert_eq!(app.scroll_row, 0);
+    assert_eq!(app.splits.panes[1].scroll_row, 0);
+
+    // Press Alt+Left to switch back to Tab 0
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT))
+        .unwrap();
+    assert_eq!(app.editor.active_tab_idx(), 0);
+    assert_eq!(app.splits.panes[1].tab_idx, 0);
+}

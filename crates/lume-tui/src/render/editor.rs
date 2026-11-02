@@ -23,6 +23,7 @@ fn render_pane_viewport<W: Write>(
     scroll_col: usize,
     cursors: &CursorSet,
     is_split: bool,
+    is_active_pane: bool,
 ) -> std::io::Result<()> {
     if rect.width == 0 || rect.height == 0 || app.editor.tabs().is_empty() {
         return Ok(());
@@ -48,21 +49,22 @@ fn render_pane_viewport<W: Write>(
         None
     };
 
-    let bracket_pair = if selection_range.is_none() && tab_idx == app.editor.active_tab_idx() {
-        let min_visible_char = app.editor.tabs()[tab_idx]
-            .buffer
-            .rope()
-            .line_to_char(scroll_row.min(total_lines));
-        let max_visible_line = (scroll_row + rect.height).min(total_lines);
-        let max_visible_char = app.editor.tabs()[tab_idx]
-            .buffer
-            .rope()
-            .line_to_char(max_visible_line);
-        app.editor
-            .matching_bracket_for_cursor(min_visible_char, max_visible_char)
-    } else {
-        None
-    };
+    let bracket_pair =
+        if selection_range.is_none() && is_active_pane && tab_idx == app.editor.active_tab_idx() {
+            let min_visible_char = app.editor.tabs()[tab_idx]
+                .buffer
+                .rope()
+                .line_to_char(scroll_row.min(total_lines));
+            let max_visible_line = (scroll_row + rect.height).min(total_lines);
+            let max_visible_char = app.editor.tabs()[tab_idx]
+                .buffer
+                .rope()
+                .line_to_char(max_visible_line);
+            app.editor
+                .matching_bracket_for_cursor(min_visible_char, max_visible_char)
+        } else {
+            None
+        };
 
     for screen_row in 0..rect.height {
         let buffer_line = scroll_row + screen_row;
@@ -282,6 +284,7 @@ pub fn render_editor_viewport<W: Write>(
             scroll_col,
             &cursors,
             false,
+            true,
         );
     }
 
@@ -290,6 +293,7 @@ pub fn render_editor_viewport<W: Write>(
     let p0 = app.splits.panes[0].clone();
     let p1 = app.splits.panes[1].clone();
     let direction = app.splits.direction;
+    let active_pane = app.splits.active_pane;
 
     render_pane_viewport(
         app,
@@ -300,6 +304,7 @@ pub fn render_editor_viewport<W: Write>(
         p0.scroll_col,
         &p0.cursors,
         true,
+        active_pane == 0,
     )?;
 
     if let Some(sep) = sep_rect {
@@ -341,6 +346,7 @@ pub fn render_editor_viewport<W: Write>(
             p1.scroll_col,
             &p1.cursors,
             true,
+            active_pane == 1,
         )?;
     }
 

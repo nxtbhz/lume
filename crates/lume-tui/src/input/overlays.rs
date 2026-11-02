@@ -38,6 +38,7 @@ impl App {
                                 match self.editor.open_or_load(&path) {
                                     Ok(_) => {
                                         self.focus = ActiveFocus::Editor;
+                                        self.adjust_viewport();
                                         self.set_status(format!("Opened {}", path.display()));
                                     }
                                     Err(e) => self.set_status(format!("Open error: {}", e)),
