@@ -91,6 +91,7 @@ impl SplitState {
         }
     }
 
+    #[allow(dead_code)]
     pub fn toggle_focus(&mut self) {
         if self.is_split {
             self.active_pane = if self.active_pane == 0 { 1 } else { 0 };

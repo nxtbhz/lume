@@ -226,9 +226,9 @@ impl App {
                 if col < exp_w && self.explorer.is_visible {
                     self.explorer.move_up();
                 } else if self.splits.is_split {
-                    if let HitTarget::Pane(target_pane) =
-                        self.splits
-                            .hit_test(col, row, text_left, text_top, area_w, text_h)
+                    if let HitTarget::Pane(target_pane) = self
+                        .splits
+                        .hit_test(col, row, text_left, text_top, area_w, text_h)
                     {
                         self.splits.panes[target_pane].scroll_row =
                             self.splits.panes[target_pane].scroll_row.saturating_sub(3);
@@ -244,9 +244,9 @@ impl App {
                 if col < exp_w && self.explorer.is_visible {
                     self.explorer.move_down(text_h);
                 } else if self.splits.is_split {
-                    if let HitTarget::Pane(target_pane) =
-                        self.splits
-                            .hit_test(col, row, text_left, text_top, area_w, text_h)
+                    if let HitTarget::Pane(target_pane) = self
+                        .splits
+                        .hit_test(col, row, text_left, text_top, area_w, text_h)
                     {
                         let tab_idx = self.splits.panes[target_pane]
                             .tab_idx
@@ -267,9 +267,9 @@ impl App {
             }
             MouseEventKind::ScrollLeft => {
                 if self.splits.is_split {
-                    if let HitTarget::Pane(target_pane) =
-                        self.splits
-                            .hit_test(col, row, text_left, text_top, area_w, text_h)
+                    if let HitTarget::Pane(target_pane) = self
+                        .splits
+                        .hit_test(col, row, text_left, text_top, area_w, text_h)
                     {
                         self.splits.panes[target_pane].scroll_col =
                             self.splits.panes[target_pane].scroll_col.saturating_sub(3);
@@ -283,9 +283,9 @@ impl App {
             }
             MouseEventKind::ScrollRight => {
                 if self.splits.is_split {
-                    if let HitTarget::Pane(target_pane) =
-                        self.splits
-                            .hit_test(col, row, text_left, text_top, area_w, text_h)
+                    if let HitTarget::Pane(target_pane) = self
+                        .splits
+                        .hit_test(col, row, text_left, text_top, area_w, text_h)
                     {
                         self.splits.panes[target_pane].scroll_col =
                             self.splits.panes[target_pane].scroll_col.saturating_add(3);
@@ -321,7 +321,7 @@ impl App {
                 if col >= current_col + close_button_offset - 1
                     && col <= current_col + close_button_offset + 1
                 {
-                    self.editor.close_tab(i);
+                    self.close_tab_and_sync_splits(i);
                 } else {
                     self.editor.switch_tab(i);
                 }

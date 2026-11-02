@@ -113,7 +113,7 @@ pub fn render_command_palette<W: Write>(app: &App, writer: &mut W) -> std::io::R
 
 pub fn render_which_key<W: Write>(app: &App, writer: &mut W) -> std::io::Result<()> {
     let box_w = (app.terminal_width as usize).clamp(44, 80);
-    let box_h = 9;
+    let box_h = 10;
     let start_x = (app.terminal_width as usize).saturating_sub(box_w) / 2;
     let start_y = (app.terminal_height as usize).saturating_sub(box_h) / 2;
 
@@ -121,6 +121,7 @@ pub fn render_which_key<W: Write>(app: &App, writer: &mut W) -> std::io::Result<
         " LUME SHORTCUTS CHEAT SHEET (Press any key or Esc to close) ",
         " [File]      Ctrl+O: Open   │ Ctrl+S: Save      │ Ctrl+Shift+S: Save As ",
         " [Tabs]      Ctrl+T: New    │ Ctrl+W: Close     │ Ctrl+Tab / Alt+Left/Right: Switch ",
+        " [Split]     Ctrl+K \\: V-Split │ Ctrl+K -: H-Split │ Ctrl+K W: Switch │ Ctrl+K Q: Close ",
         " [Explorer]  Ctrl+B/F2: Toggle │ a: New File │ n: New Folder │ m/F2: Rename │ d: Del │ r: Refresh ",
         " [Edit]      Ctrl+A: All │ Ctrl+X: Cut │ Ctrl+C: Copy │ Ctrl+V: Paste │ Ctrl+Z/Y: Undo/Redo ",
         " [Cursor]    Arrows: Move   │ Shift+Arrows: Select │ Home / End ",

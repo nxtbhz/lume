@@ -41,4 +41,5 @@ pub mod search_tests;
 pub mod split_command_tests;
 pub mod split_mouse_tests;
 pub mod split_render_tests;
+pub mod split_sync_tests;
 pub mod vim_tests;

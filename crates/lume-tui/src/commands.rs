@@ -326,7 +326,7 @@ impl App {
             }
             "file.close_tab" => {
                 let idx = self.editor.active_tab_idx();
-                self.editor.close_tab(idx);
+                self.close_tab_and_sync_splits(idx);
                 self.set_status("Closed tab");
             }
             "file.next_tab" => self.editor.next_tab(),

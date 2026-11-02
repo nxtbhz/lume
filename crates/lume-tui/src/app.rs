@@ -461,10 +461,53 @@ impl App {
     pub fn sync_active_pane(&mut self) {
         if self.splits.is_split {
             let active = self.splits.active_pane;
-            self.splits.panes[active].tab_idx = self.editor.active_tab_idx();
+            let active_tab_idx = self.editor.active_tab_idx();
+            self.splits.panes[active].tab_idx = active_tab_idx;
             self.splits.panes[active].scroll_row = self.scroll_row;
             self.splits.panes[active].scroll_col = self.scroll_col;
             self.splits.panes[active].cursors = self.editor.cursors().clone();
+
+            let other = if active == 0 { 1 } else { 0 };
+            if self.splits.panes[other].tab_idx == active_tab_idx {
+                if let Some(tab) = self.editor.tabs().get(active_tab_idx) {
+                    Self::clamp_cursors_to_buffer(
+                        &mut self.splits.panes[other].cursors,
+                        &tab.buffer,
+                    );
+                    let max_line = tab.buffer.len_lines().saturating_sub(1);
+                    self.splits.panes[other].scroll_row =
+                        self.splits.panes[other].scroll_row.min(max_line);
+                }
+            }
+        }
+    }
+
+    pub fn close_tab_and_sync_splits(&mut self, tab_idx: usize) {
+        self.editor.close_tab(tab_idx);
+        let max_tab = self.editor.tabs().len().saturating_sub(1);
+        let active_tab_idx = self.editor.active_tab_idx();
+
+        for pane in &mut self.splits.panes {
+            if pane.tab_idx == tab_idx {
+                pane.tab_idx = active_tab_idx.min(max_tab);
+                pane.scroll_row = 0;
+                pane.scroll_col = 0;
+            } else if pane.tab_idx > tab_idx {
+                pane.tab_idx = (pane.tab_idx - 1).min(max_tab);
+            } else {
+                pane.tab_idx = pane.tab_idx.min(max_tab);
+            }
+            if let Some(tab) = self.editor.tabs().get(pane.tab_idx) {
+                Self::clamp_cursors_to_buffer(&mut pane.cursors, &tab.buffer);
+            }
+        }
+
+        if self.splits.is_split {
+            let active = self.splits.active_pane;
+            let target_tab = self.splits.panes[active].tab_idx;
+            self.editor.switch_tab(target_tab);
+            self.scroll_row = self.splits.panes[active].scroll_row;
+            self.scroll_col = self.splits.panes[active].scroll_col;
         }
     }
 
@@ -566,10 +609,7 @@ impl App {
         updated
     }
 
-    pub fn update_syntax_highlights_for_tab(
-        &mut self,
-        tab_idx: usize,
-    ) -> Arc<Vec<HighlightToken>> {
+    pub fn update_syntax_highlights_for_tab(&mut self, tab_idx: usize) -> Arc<Vec<HighlightToken>> {
         let _ = self.has_pending_syntax_response();
 
         let Some(tab) = self.editor.tabs().get(tab_idx) else {
@@ -604,6 +644,7 @@ impl App {
             .unwrap_or_else(|| Arc::new(Vec::new()))
     }
 
+    #[allow(dead_code)]
     pub fn update_syntax_highlights(&mut self) -> Arc<Vec<HighlightToken>> {
         let active_idx = self.editor.active_tab_idx();
         self.update_syntax_highlights_for_tab(active_idx)
