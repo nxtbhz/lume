@@ -532,8 +532,6 @@ dependencies = [
  "crossbeam-channel",
  "proptest",
  "ropey",
- "serde",
- "serde_json",
  "thiserror",
 ]
 

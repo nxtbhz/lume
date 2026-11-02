@@ -394,3 +394,41 @@ fn test_commands_navigation_goto_line_execution() {
     let prompt = app.prompt.as_ref().unwrap();
     assert_eq!(prompt.action, crate::prompt::PromptAction::GoToLine);
 }
+
+#[test]
+fn test_command_palette_scrolls_past_eighth_item() {
+    let mut app = App::new(None).unwrap();
+    app.palette_open = true;
+    app.palette_selected = 15; // 16th command in COMMANDS
+    let mut buf = Vec::new();
+    crate::render::palette::render_command_palette(&app, &mut buf).unwrap();
+
+    let expected_title = crate::commands::COMMANDS[15].title;
+    let rendered_text = String::from_utf8_lossy(&buf);
+    assert!(
+        rendered_text.contains(expected_title),
+        "expected selected item #15 ({expected_title:?}) to be visible in scrolled palette"
+    );
+}
+
+#[test]
+fn test_ctrl_a_selects_entire_buffer_and_ctrl_backtab_switches_prev_tab() {
+    let mut app = App::new(None).unwrap();
+    app.editor.insert_str("hello\nworld").unwrap();
+    app.editor.cursors_mut().set_single(0);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL))
+        .unwrap();
+    let cur = app.editor.cursors().primary();
+    assert_eq!((cur.min(), cur.max()), (0, 11));
+
+    // Also test Ctrl+BackTab (Ctrl+Shift+Tab) cycles to previous tab
+    app.editor.new_tab();
+    assert_eq!(app.editor.active_tab_idx(), 1);
+    app.handle_key(KeyEvent::new(
+        KeyCode::BackTab,
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ))
+    .unwrap();
+    assert_eq!(app.editor.active_tab_idx(), 0);
+}

@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TextDelta {
     pub start_byte: usize,
     pub old_text: String,

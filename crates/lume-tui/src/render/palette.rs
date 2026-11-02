@@ -15,6 +15,10 @@ pub fn render_command_palette<W: Write>(app: &App, writer: &mut W) -> std::io::R
     let start_y = (app.terminal_height as usize).saturating_sub(box_h) / 3;
 
     let commands = app.filtered_commands();
+    let visible_rows = box_h.saturating_sub(3);
+    let max_selected = commands.len().saturating_sub(1);
+    let selected = app.palette_selected.min(max_selected);
+    let scroll_offset = selected.saturating_sub(visible_rows.saturating_sub(1));
 
     // Background box
     for y in 0..box_h {
@@ -31,19 +35,21 @@ pub fn render_command_palette<W: Write>(app: &App, writer: &mut W) -> std::io::R
 
         if y == 0 {
             let title = " Command Palette (Esc to close) ";
-            let fill = box_w.saturating_sub(title.len());
+            let title_fit: String = title.chars().take(box_w).collect();
+            let fill = box_w.saturating_sub(title_fit.chars().count());
             queue!(
                 writer,
                 SetForegroundColor(Color::Cyan),
-                Print(format!("{}{:fill$}", title, "", fill = fill))
+                Print(format!("{}{:fill$}", title_fit, "", fill = fill))
             )?;
         } else if y == 1 {
             let prompt = format!(" > {}█", app.palette_query);
-            let fill = box_w.saturating_sub(prompt.len());
+            let prompt_fit: String = prompt.chars().take(box_w).collect();
+            let fill = box_w.saturating_sub(prompt_fit.chars().count());
             queue!(
                 writer,
                 SetForegroundColor(Color::White),
-                Print(format!("{}{:fill$}", prompt, "", fill = fill))
+                Print(format!("{}{:fill$}", prompt_fit, "", fill = fill))
             )?;
         } else if y == 2 {
             queue!(
@@ -52,18 +58,19 @@ pub fn render_command_palette<W: Write>(app: &App, writer: &mut W) -> std::io::R
                 Print("─".repeat(box_w))
             )?;
         } else {
-            let item_idx = y - 3;
-            if item_idx < commands.len() {
-                let item = commands[item_idx];
-                let is_sel = item_idx == app.palette_selected;
+            let item_idx = scroll_offset + (y - 3);
+            if let Some(item) = commands.get(item_idx) {
+                let is_sel = item_idx == selected;
                 let prefix = if is_sel { " > " } else { "   " };
                 let title = item.title;
                 let shortcut = item.shortcut;
 
-                let avail = box_w.saturating_sub(prefix.len() + shortcut.len() + 2);
+                let prefix_chars = prefix.chars().count();
+                let shortcut_chars = shortcut.chars().count();
+                let avail = box_w.saturating_sub(prefix_chars + shortcut_chars + 2);
                 let title_fit: String = title.chars().take(avail).collect();
-                let spaces =
-                    box_w.saturating_sub(prefix.len() + title_fit.len() + shortcut.len() + 1);
+                let title_chars = title_fit.chars().count();
+                let spaces = box_w.saturating_sub(prefix_chars + title_chars + shortcut_chars + 1);
 
                 if is_sel {
                     queue!(
@@ -86,7 +93,7 @@ pub fn render_command_palette<W: Write>(app: &App, writer: &mut W) -> std::io::R
                 queue!(
                     writer,
                     Print(format!(
-                        "{}{}{:spaces$}{}",
+                        "{}{}{:spaces$}{} ",
                         prefix,
                         title_fit,
                         "",
@@ -115,7 +122,7 @@ pub fn render_which_key<W: Write>(app: &App, writer: &mut W) -> std::io::Result<
         " [File]      Ctrl+O: Open   │ Ctrl+S: Save      │ Ctrl+Shift+S: Save As ",
         " [Tabs]      Ctrl+T: New    │ Ctrl+W: Close     │ Ctrl+Tab / Alt+Left/Right: Switch ",
         " [Explorer]  Ctrl+B/F2: Toggle │ a: New File │ n: New Folder │ m/F2: Rename │ d: Del │ r: Refresh ",
-        " [Edit]      Ctrl+X: Cut │ Ctrl+C: Copy │ Ctrl+V: Paste │ Ctrl+Z/Y: Undo/Redo ",
+        " [Edit]      Ctrl+A: All │ Ctrl+X: Cut │ Ctrl+C: Copy │ Ctrl+V: Paste │ Ctrl+Z/Y: Undo/Redo ",
         " [Cursor]    Arrows: Move   │ Shift+Arrows: Select │ Home / End ",
         " [Mouse]     Click: Position/Open │ 2xClick: Word │ 3xClick: Line │ Drag: Sel ",
         " [Features]  Ctrl+P: Quick Open │ Ctrl+G: Go to Line │ Ctrl+Shift+P: Palette ",
@@ -133,8 +140,12 @@ pub fn render_which_key<W: Write>(app: &App, writer: &mut W) -> std::io::Result<
             }),
             SetForegroundColor(if i == 0 { Color::Yellow } else { Color::White })
         )?;
-        let fill = box_w.saturating_sub(line.len());
-        queue!(writer, Print(format!("{}{:fill$}", line, "", fill = fill)))?;
+        let line_fit: String = line.chars().take(box_w).collect();
+        let fill = box_w.saturating_sub(line_fit.chars().count());
+        queue!(
+            writer,
+            Print(format!("{}{:fill$}", line_fit, "", fill = fill))
+        )?;
     }
 
     queue!(writer, ResetColor)?;

@@ -4,7 +4,7 @@
 
 [![Rust](https://img.shields.io/badge/Rust-2021_Edition-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![License: MIT / Apache-2.0](https://img.shields.io/badge/License-MIT%20%2F%20Apache--2.0-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-48%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-250%2B%20passing-brightgreen.svg)]()
 [![Startup](https://img.shields.io/badge/Cold%20Start-1.7%20ms-success.svg)]()
 [![Memory RSS](https://img.shields.io/badge/Peak%20RSS-3.1%20MB-purple.svg)]()
 [![Binary Size](https://img.shields.io/badge/Binary%20Size-7.4%20MB-informational.svg)]()
@@ -113,10 +113,10 @@ lume/
     ├── lume-core/             # Headless core editing engine
     │   ├── src/buffer/        # B-Tree RopeBuffer (ropey), UTF-8 boundaries, metrics
     │   ├── src/cursor/        # Multi-cursor engine, automatic merge & normalization
-    │   ├── src/editor.rs      # Multi-tab editor, multi-line navigation, PageUp/Down
+    │   ├── src/editor/        # Multi-tab editor, motions, lines, indent, bracket, save, search
     │   ├── src/history/       # Linear undo/redo stack with property-based test proofs
     │   ├── src/autosave.rs    # Debounced background atomic autosave controller
-    │   └── src/journal.rs     # Append-only binary crash recovery journal (LUMJ\x01)
+    │   └── src/journal.rs     # Append-only binary crash recovery journal (LUMJ\x02)
     │
     ├── lume-syntax/           # Syntax highlighting engine
     │   ├── src/lib.rs         # Tree-sitter AST queries + fast native lexers
@@ -124,6 +124,8 @@ lume/
     │
     └── lume-tui/              # Terminal frontend
         ├── src/main.rs        # Terminal loop, synchronized frame updates, event router
+        ├── src/input/         # Modular keyboard, modal, mouse, and overlay event handlers
+        ├── src/render/        # Modular editor, explorer, gutter, palette, and bar renderers
         ├── src/explorer.rs    # Collapsible directory tree file explorer (F2 / Ctrl+B)
         └── src/prompt.rs      # Interactive modal overlays (Open, Save As, Language)
 ```

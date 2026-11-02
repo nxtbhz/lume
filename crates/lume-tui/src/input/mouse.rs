@@ -205,7 +205,7 @@ impl App {
                 format!("  {}: {}{} x   ", i + 1, tab.name(), dirty)
             };
 
-            let tab_len = tab_text.len();
+            let tab_len = tab_text.chars().count();
             if col >= current_col && col < current_col + tab_len {
                 // Check if clicked the 'x' button inside tab (always located 4 characters before the end)
                 let close_button_offset = tab_len.saturating_sub(4);

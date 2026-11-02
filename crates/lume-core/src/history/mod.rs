@@ -1,8 +1,7 @@
 use crate::buffer::{TextBuffer, TextDelta};
 use crate::cursor::Cursor;
-use std::path::Path;
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug)]
 pub struct HistoryEntry {
     pub deltas: Vec<TextDelta>,
     pub cursors_before: Vec<Cursor>,
@@ -26,11 +25,10 @@ pub trait HistoryManager {
     );
     fn undo(&mut self, current_buffer: &mut dyn TextBuffer) -> Option<Vec<Cursor>>;
     fn redo(&mut self, current_buffer: &mut dyn TextBuffer) -> Option<Vec<Cursor>>;
-    fn persist_to_disk(&self, path: &Path) -> std::io::Result<()>;
 }
 
 // shortcut: linear undo stack for M0; full branched undo-tree with snapshot journal in M1
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default)]
 pub struct History {
     undo_stack: Vec<HistoryEntry>,
     redo_stack: Vec<HistoryEntry>,
@@ -110,20 +108,6 @@ impl HistoryManager for History {
         self.undo_stack.push(entry);
         Some(cursors)
     }
-
-    fn persist_to_disk(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let file = std::fs::File::create(path)?;
-        // serialize history
-        bincode_like_json(self, file)
-    }
-}
-
-fn bincode_like_json<W: std::io::Write>(history: &History, writer: W) -> std::io::Result<()> {
-    // shortcut: use JSON for history persistence in M0; binary bincode in M1
-    serde_json::to_writer(writer, history).map_err(std::io::Error::other)
 }
 
 #[cfg(test)]
@@ -183,15 +167,5 @@ mod tests {
             // Invariant: buffer must match initial string exactly
             prop_assert_eq!(buf.slice_to_cow(0, buf.len_bytes()), initial);
         }
-    }
-
-    #[test]
-    fn test_history_persistence() {
-        let tmp = std::env::temp_dir().join(format!("lume_hist_{}", std::process::id()));
-        let path = tmp.join("sub/history.json");
-        let history = History::new();
-        assert!(history.persist_to_disk(&path).is_ok());
-        assert!(path.exists());
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

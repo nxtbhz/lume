@@ -104,6 +104,14 @@ impl Editor {
         primary.head = end_byte;
     }
 
+    pub fn select_all(&mut self) {
+        let tab = &mut self.tabs[self.active_tab];
+        let end_byte = tab.buffer.len_bytes();
+        let primary = tab.cursors.primary_mut();
+        primary.anchor = 0;
+        primary.head = end_byte;
+    }
+
     pub fn move_left(&mut self, select: bool) {
         let tab = &mut self.tabs[self.active_tab];
         let primary = tab.cursors.primary_mut();

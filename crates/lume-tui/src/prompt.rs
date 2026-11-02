@@ -310,15 +310,19 @@ impl InputPrompt {
             )?;
 
             if y == 0 {
-                let fill = box_w.saturating_sub(self.title.len());
+                let title_fit: String = self.title.chars().take(box_w).collect();
+                let fill = box_w.saturating_sub(title_fit.chars().count());
                 queue!(
                     writer,
                     SetForegroundColor(Color::Cyan),
-                    Print(format!("{}{:fill$}", self.title, "", fill = fill))
+                    Print(format!("{}{:fill$}", title_fit, "", fill = fill))
                 )?;
             } else if y == 1 {
                 let prompt_prefix = " > ";
-                let input_disp = format!("{}{}", prompt_prefix, self.value);
+                let input_disp: String = format!("{}{}", prompt_prefix, self.value)
+                    .chars()
+                    .take(box_w.saturating_sub(1))
+                    .collect();
                 let fill = box_w.saturating_sub(input_disp.chars().count() + 1);
                 queue!(
                     writer,
@@ -356,7 +360,8 @@ impl InputPrompt {
                         )?;
                     }
 
-                    let line_content = format!("{}{}", prefix, sugg);
+                    let line_content: String =
+                        format!("{}{}", prefix, sugg).chars().take(box_w).collect();
                     let fill = box_w.saturating_sub(line_content.chars().count());
                     queue!(
                         writer,

@@ -97,7 +97,19 @@ impl App {
                     return Ok(());
                 }
                 KeyCode::Tab => {
-                    self.editor.next_tab();
+                    if shift {
+                        self.editor.prev_tab();
+                    } else {
+                        self.editor.next_tab();
+                    }
+                    return Ok(());
+                }
+                KeyCode::BackTab => {
+                    self.editor.prev_tab();
+                    return Ok(());
+                }
+                KeyCode::Char('a') | KeyCode::Char('A') => {
+                    self.editor.select_all();
                     return Ok(());
                 }
                 KeyCode::Char('z') => {

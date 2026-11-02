@@ -233,3 +233,20 @@ fn test_app_mouse_interaction_and_scrolling() {
     })
     .unwrap();
 }
+
+#[test]
+fn test_tab_bar_click_with_multibyte_utf8_filename_switches_instead_of_closing() {
+    let mut app = App::new(None).unwrap();
+    app.editor.set_file_path(Some(PathBuf::from("ação.rs")));
+    app.editor.new_tab();
+    app.editor.set_file_path(Some(PathBuf::from("sec.rs")));
+    assert_eq!(app.editor.tabs().len(), 2);
+
+    // Tab 0 (inactive) is "  1: ação.rs x   " -> 17 display chars (cols 0..17),
+    // with 'x' at col 13 (close hitbox cols 12..=14).
+    // Clicking col 16 (trailing space of Tab 0) must select Tab 0, NOT close it,
+    // and clicking col 18 must stay on Tab 1.
+    app.handle_tab_bar_click(16);
+    assert_eq!(app.editor.tabs().len(), 2);
+    assert_eq!(app.editor.active_tab_idx(), 0);
+}
