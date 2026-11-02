@@ -246,3 +246,86 @@ fn test_python_and_javascript_highlighting() {
     let tokens = ts_hl.highlight_range(0, ts_code.len(), ts_code);
     assert!(tokens.iter().any(|t| t.token_type == TokenType::Keyword));
 }
+
+#[test]
+fn test_markdown_lexer_list_bounds_and_utf8() {
+    let mut hl = SyntaxHighlighter::new(Language::Markdown).unwrap();
+    // Bare "-" without newline, indented list, and UTF-8 char immediately after "-"
+    for src in ["-", "  - item\n", "-ação\n", "1. item\n"] {
+        hl.update(src);
+        let tokens = hl.highlight_range(0, src.len(), src);
+        assert!(!tokens.is_empty(), "expected token for {src:?}");
+        for tok in &tokens {
+            assert!(tok.start_byte <= tok.end_byte);
+            assert!(
+                tok.end_byte <= src.len(),
+                "out of bounds for {src:?}: {tok:?}"
+            );
+            assert!(
+                src.is_char_boundary(tok.start_byte),
+                "start_byte not char boundary for {src:?}: {tok:?}"
+            );
+            assert!(
+                src.is_char_boundary(tok.end_byte),
+                "end_byte not char boundary for {src:?}: {tok:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_yaml_lexer_colon_key_value() {
+    let mut hl = SyntaxHighlighter::new(Language::Yaml).unwrap();
+    let code = "# comment\nname: \"lume\"\nenabled: true\ncount: 42\n";
+    hl.update(code);
+    let tokens = hl.highlight_range(0, code.len(), code);
+    assert!(tokens.iter().any(|t| t.token_type == TokenType::Comment));
+    assert!(tokens
+        .iter()
+        .any(|t| t.token_type == TokenType::Keyword && &code[t.start_byte..t.end_byte] == "name"));
+    assert!(tokens.iter().any(|t| t.token_type == TokenType::String));
+    assert!(tokens
+        .iter()
+        .any(|t| t.token_type == TokenType::Keyword && &code[t.start_byte..t.end_byte] == "true"));
+    assert!(tokens.iter().any(|t| t.token_type == TokenType::Number));
+}
+
+#[test]
+fn test_syntax_worker_does_not_starve_other_tabs() {
+    let worker = SyntaxWorker::spawn();
+    // First request occupies the worker with Tree-sitter initialization,
+    // while requests for buffer 1 and buffer 2 queue up simultaneously.
+    worker.send_request(SyntaxRequest {
+        buffer_id: 0,
+        revision: 1,
+        language: Language::Rust,
+        text: "fn init() {}".to_string(),
+        visible_range: 0..12,
+    });
+    worker.send_request(SyntaxRequest {
+        buffer_id: 1,
+        revision: 1,
+        language: Language::Rust,
+        text: "fn a() {}".to_string(),
+        visible_range: 0..9,
+    });
+    worker.send_request(SyntaxRequest {
+        buffer_id: 2,
+        revision: 1,
+        language: Language::Rust,
+        text: "fn b() {}".to_string(),
+        visible_range: 0..9,
+    });
+
+    let mut received_tabs = Vec::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while received_tabs.len() < 3 && std::time::Instant::now() < deadline {
+        if let Some(resp) = worker.try_recv_response() {
+            received_tabs.push(resp.buffer_id);
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+    received_tabs.sort_unstable();
+    assert_eq!(received_tabs, vec![0, 1, 2]);
+}

@@ -262,9 +262,11 @@ pub(crate) fn lex_markdown(
             });
         } else if trimmed.starts_with('-') || trimmed.starts_with('*') || trimmed.starts_with("1.")
         {
+            let indent = line.len() - trimmed.len();
+            let marker_len = if trimmed.starts_with("1.") { 2 } else { 1 };
             tokens.push(HighlightToken {
-                start_byte: line_start,
-                end_byte: line_start + 2,
+                start_byte: line_start + indent,
+                end_byte: line_start + indent + marker_len,
                 token_type: TokenType::Keyword,
             });
         }
@@ -430,7 +432,75 @@ pub(crate) fn lex_yaml(
     end_byte: usize,
     tokens: &mut Vec<HighlightToken>,
 ) {
-    lex_toml(text, start_byte, end_byte, tokens);
+    let sub = &text[..end_byte.min(text.len())];
+    let mut offset = 0;
+    for raw_line in sub.split_inclusive('\n') {
+        let line_start = offset;
+        offset += raw_line.len();
+        let line = raw_line.trim_end_matches(['\r', '\n']);
+        let line_end = line_start + line.len();
+
+        if line_end <= start_byte {
+            continue;
+        }
+
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with('#') {
+            tokens.push(HighlightToken {
+                start_byte: line_start,
+                end_byte: line_end,
+                token_type: TokenType::Comment,
+            });
+            continue;
+        }
+
+        let indent = line.len() - trimmed.len();
+        if let Some(sep_rel) = trimmed.find(':').or_else(|| trimmed.find('=')) {
+            let key_end_rel = trimmed[..sep_rel].trim_end().len();
+            if key_end_rel > 0 {
+                tokens.push(HighlightToken {
+                    start_byte: line_start + indent,
+                    end_byte: line_start + indent + key_end_rel,
+                    token_type: TokenType::Keyword,
+                });
+            }
+
+            let after_sep = &trimmed[sep_rel + 1..];
+            let val_trimmed = after_sep.trim();
+            if !val_trimmed.is_empty() {
+                let val_lead = after_sep.len() - after_sep.trim_start().len();
+                let val_start = line_start + indent + sep_rel + 1 + val_lead;
+                let val_end = val_start + val_trimmed.len();
+                let token_type = if val_trimmed.starts_with('"') || val_trimmed.starts_with('\'') {
+                    TokenType::String
+                } else if matches!(val_trimmed, "true" | "false" | "null" | "~") {
+                    TokenType::Keyword
+                } else if val_trimmed
+                    .as_bytes()
+                    .first()
+                    .is_some_and(|b| b.is_ascii_digit() || *b == b'-')
+                {
+                    TokenType::Number
+                } else {
+                    TokenType::String
+                };
+                tokens.push(HighlightToken {
+                    start_byte: val_start,
+                    end_byte: val_end,
+                    token_type,
+                });
+            }
+        } else if trimmed.starts_with('-') {
+            tokens.push(HighlightToken {
+                start_byte: line_start + indent,
+                end_byte: line_start + indent + 1,
+                token_type: TokenType::Operator,
+            });
+        }
+    }
 }
 
 pub(crate) fn lex_html_css(

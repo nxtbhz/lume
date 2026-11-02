@@ -542,7 +542,6 @@ name = "lume-syntax"
 version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
- "lume-core",
  "tree-sitter",
  "tree-sitter-c",
  "tree-sitter-cpp",

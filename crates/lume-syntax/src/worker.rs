@@ -34,44 +34,48 @@ impl SyntaxWorker {
             let mut highlighters: std::collections::HashMap<Language, SyntaxHighlighter> =
                 std::collections::HashMap::new();
 
-            while let Ok(mut req) = req_rx.recv() {
+            while let Ok(first_req) = req_rx.recv() {
+                let mut pending = std::collections::BTreeMap::new();
+                pending.insert(first_req.buffer_id, first_req);
                 while let Ok(newer) = req_rx.try_recv() {
-                    req = newer;
+                    pending.insert(newer.buffer_id, newer);
                 }
 
-                let highlighter = highlighters
-                    .entry(req.language)
-                    .or_insert_with(|| SyntaxHighlighter::new(req.language).unwrap());
+                for req in pending.into_values() {
+                    let highlighter = highlighters
+                        .entry(req.language)
+                        .or_insert_with(|| SyntaxHighlighter::new(req.language).unwrap());
 
-                let base_offset = req.visible_range.start;
-                let expected_chunk_len = req
-                    .visible_range
-                    .end
-                    .saturating_sub(req.visible_range.start);
-                let slice = if (base_offset == 0 && req.visible_range.end >= req.text.len())
-                    || req.text.len() == expected_chunk_len
-                {
-                    req.text.as_str()
-                } else {
-                    let start = req.visible_range.start.min(req.text.len());
-                    let end = req.visible_range.end.min(req.text.len());
-                    &req.text[start..end]
-                };
+                    let base_offset = req.visible_range.start;
+                    let expected_chunk_len = req
+                        .visible_range
+                        .end
+                        .saturating_sub(req.visible_range.start);
+                    let slice = if (base_offset == 0 && req.visible_range.end >= req.text.len())
+                        || req.text.len() == expected_chunk_len
+                    {
+                        req.text.as_str()
+                    } else {
+                        let start = req.visible_range.start.min(req.text.len());
+                        let end = req.visible_range.end.min(req.text.len());
+                        &req.text[start..end]
+                    };
 
-                highlighter.update(slice);
-                let mut tokens = highlighter.highlight_range(0, slice.len(), slice);
-                if base_offset > 0 {
-                    for token in &mut tokens {
-                        token.start_byte += base_offset;
-                        token.end_byte += base_offset;
+                    highlighter.update(slice);
+                    let mut tokens = highlighter.highlight_range(0, slice.len(), slice);
+                    if base_offset > 0 {
+                        for token in &mut tokens {
+                            token.start_byte += base_offset;
+                            token.end_byte += base_offset;
+                        }
                     }
-                }
 
-                let _ = res_tx.send(SyntaxResponse {
-                    buffer_id: req.buffer_id,
-                    revision: req.revision,
-                    tokens,
-                });
+                    let _ = res_tx.send(SyntaxResponse {
+                        buffer_id: req.buffer_id,
+                        revision: req.revision,
+                        tokens,
+                    });
+                }
             }
         });
 
