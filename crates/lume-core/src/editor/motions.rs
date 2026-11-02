@@ -2,6 +2,22 @@ use crate::buffer::TextBuffer;
 use crate::editor::Editor;
 
 impl Editor {
+    pub(crate) fn line_content_len_chars(rope: &ropey::Rope, line: usize) -> usize {
+        let line_start_char = rope.line_to_char(line);
+        let line_len = rope.line(line).len_chars();
+        if line_len > 0 && rope.char(line_start_char + line_len - 1) == '\n' {
+            if line_len > 1 && rope.char(line_start_char + line_len - 2) == '\r' {
+                line_len - 2
+            } else {
+                line_len - 1
+            }
+        } else if line_len > 0 && rope.char(line_start_char + line_len - 1) == '\r' {
+            line_len - 1
+        } else {
+            line_len
+        }
+    }
+
     pub fn cursor_line_col(&self) -> (usize, usize) {
         let tab = &self.tabs[self.active_tab];
         let head = tab.cursors.primary().head;
@@ -17,20 +33,7 @@ impl Editor {
         let total_lines = tab.buffer.len_lines();
         let target_line = line.min(total_lines.saturating_sub(1));
         let line_start_char = tab.buffer.rope().line_to_char(target_line);
-        let line_len_chars = tab.buffer.line_len_chars(target_line);
-        let content_len = if line_len_chars > 0
-            && tab.buffer.rope().char(line_start_char + line_len_chars - 1) == '\n'
-        {
-            if line_len_chars > 1
-                && tab.buffer.rope().char(line_start_char + line_len_chars - 2) == '\r'
-            {
-                line_len_chars - 2
-            } else {
-                line_len_chars - 1
-            }
-        } else {
-            line_len_chars
-        };
+        let content_len = Self::line_content_len_chars(tab.buffer.rope(), target_line);
 
         let target_char = line_start_char + col.min(content_len);
         let target_byte = tab.buffer.char_to_byte(target_char);
@@ -160,18 +163,7 @@ impl Editor {
 
         let prev_line = line - 1;
         let prev_line_start_char = tab.buffer.rope().line_to_char(prev_line);
-        let prev_line_len = tab.buffer.line_len_chars(prev_line);
-        let prev_line_content_len = if prev_line_len > 0
-            && tab
-                .buffer
-                .rope()
-                .char(prev_line_start_char + prev_line_len - 1)
-                == '\n'
-        {
-            prev_line_len - 1
-        } else {
-            prev_line_len
-        };
+        let prev_line_content_len = Self::line_content_len_chars(tab.buffer.rope(), prev_line);
 
         let target_char = prev_line_start_char + col.min(prev_line_content_len);
         let target_byte = tab.buffer.char_to_byte(target_char);
@@ -205,18 +197,7 @@ impl Editor {
 
         let next_line = line + 1;
         let next_line_start_char = tab.buffer.rope().line_to_char(next_line);
-        let next_line_len = tab.buffer.line_len_chars(next_line);
-        let next_line_content_len = if next_line_len > 0
-            && tab
-                .buffer
-                .rope()
-                .char(next_line_start_char + next_line_len - 1)
-                == '\n'
-        {
-            next_line_len - 1
-        } else {
-            next_line_len
-        };
+        let next_line_content_len = Self::line_content_len_chars(tab.buffer.rope(), next_line);
 
         let target_char = next_line_start_char + col.min(next_line_content_len);
         let target_byte = tab.buffer.char_to_byte(target_char);
@@ -248,17 +229,7 @@ impl Editor {
         let head = tab.cursors.primary().head;
         let line = tab.buffer.byte_to_line(head);
         let line_start_char = tab.buffer.rope().line_to_char(line);
-        let line_len = tab.buffer.line_len_chars(line);
-        let content_len =
-            if line_len > 0 && tab.buffer.rope().char(line_start_char + line_len - 1) == '\n' {
-                if line_len > 1 && tab.buffer.rope().char(line_start_char + line_len - 2) == '\r' {
-                    line_len - 2
-                } else {
-                    line_len - 1
-                }
-            } else {
-                line_len
-            };
+        let content_len = Self::line_content_len_chars(tab.buffer.rope(), line);
 
         let target_char = line_start_char + content_len;
         let target_byte = tab.buffer.char_to_byte(target_char);
@@ -295,18 +266,7 @@ impl Editor {
         let col = cursor_char.saturating_sub(line_start_char);
 
         let target_line_start_char = tab.buffer.rope().line_to_char(target_line);
-        let target_line_len = tab.buffer.line_len_chars(target_line);
-        let target_content_len = if target_line_len > 0
-            && tab
-                .buffer
-                .rope()
-                .char(target_line_start_char + target_line_len - 1)
-                == '\n'
-        {
-            target_line_len - 1
-        } else {
-            target_line_len
-        };
+        let target_content_len = Self::line_content_len_chars(tab.buffer.rope(), target_line);
 
         let target_char = target_line_start_char + col.min(target_content_len);
         let target_byte = tab.buffer.char_to_byte(target_char);

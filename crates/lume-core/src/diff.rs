@@ -235,6 +235,9 @@ pub fn compute_rope_diffs(base: &ropey::Rope, curr: &ropey::Rope) -> Vec<LineDif
             break;
         }
     }
+    // Keep 1 line of the common suffix in the middle slice so deletions right
+    // before the suffix anchor `DeletedAbove` onto the first suffix line.
+    let s = s.saturating_sub(1);
 
     // 3. Extract only the middle slice strings
     let base_mid_start = p;
@@ -400,6 +403,21 @@ mod tests {
                 LineDiffStatus::Unchanged,
                 LineDiffStatus::Modified,
                 LineDiffStatus::Added
+            ]
+        );
+    }
+
+    #[test]
+    fn test_rope_diffs_deletion_before_common_suffix_marks_line_below() {
+        let base = ropey::Rope::from_str("alpha\nkeep\ndelete_me\ntail\n");
+        let curr = ropey::Rope::from_str("alpha_mod\nkeep\ntail\n");
+        assert_eq!(
+            compute_rope_diffs(&base, &curr),
+            vec![
+                LineDiffStatus::Modified,     // "alpha_mod"
+                LineDiffStatus::Unchanged,    // "keep"
+                LineDiffStatus::DeletedAbove, // "tail" (line immediately below "delete_me")
+                LineDiffStatus::Unchanged,    // trailing empty line after '\n'
             ]
         );
     }

@@ -483,3 +483,27 @@ fn test_editor_crlf_line_clamping_and_move_end() {
     ed.move_end(false);
     assert_eq!(ed.cursor_line_col(), (1, 11));
 }
+
+#[test]
+fn test_crlf_vertical_cursor_clamping_never_lands_between_cr_and_lf() {
+    let mut ed = Editor::new();
+    *ed.buffer_mut() = crate::buffer::RopeBuffer::from_str("ab\r\nlonger_line\r\ncd\r\n");
+
+    // Put cursor at end of line 1 ("longer_line")
+    ed.set_cursor_from_line_col(1, 11, false);
+    assert_eq!(ed.cursor_line_col(), (1, 11));
+
+    // Move up to shorter CRLF line 0 ("ab\r\n" -> content len 2)
+    ed.move_up(false);
+    assert_eq!(ed.cursor_line_col(), (0, 2));
+
+    // Move down back to line 1, go to end, then move down to shorter CRLF line 2 ("cd\r\n")
+    ed.set_cursor_from_line_col(1, 11, false);
+    ed.move_down(false);
+    assert_eq!(ed.cursor_line_col(), (2, 2));
+
+    // Page/multi-line move from line 1 col 11 up by 1 line
+    ed.set_cursor_from_line_col(1, 11, false);
+    ed.move_lines(-1, false);
+    assert_eq!(ed.cursor_line_col(), (0, 2));
+}
