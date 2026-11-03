@@ -465,4 +465,5 @@ fn test_command_palette_shortcuts_advertise_legacy_fallback() {
     let rendered = String::from_utf8_lossy(&buf);
     assert!(rendered.contains("Ctrl+Shift+P"));
     assert!(rendered.contains("Alt+P"));
+    assert!(rendered.contains("Palette"));
 }

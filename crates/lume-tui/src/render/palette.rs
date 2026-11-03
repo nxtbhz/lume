@@ -126,7 +126,7 @@ pub fn render_which_key<W: Write>(app: &App, writer: &mut W) -> std::io::Result<
         " [Edit]      Ctrl+A: All │ Ctrl+X: Cut │ Ctrl+C: Copy │ Ctrl+V: Paste │ Ctrl+Z/Y: Undo/Redo ",
         " [Cursor]    Arrows: Move   │ Shift+Arrows: Select │ Home / End ",
         " [Mouse]     Click: Position/Open │ 2xClick: Word │ 3xClick: Line │ Drag: Sel ",
-        " [Features]  Ctrl+P: Quick Open │ Ctrl+G: Go to Line │ Ctrl+Shift+P / Alt+P: Palette ",
+        " [Features]  Ctrl+P: Quick Open │ Ctrl+G: Line │ Ctrl+Shift+P / Alt+P: Palette ",
         " [Quit]      Ctrl+Q: Exit Lume ",
     ];
 
