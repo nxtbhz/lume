@@ -448,3 +448,21 @@ fn test_ctrl_a_selects_entire_buffer_and_ctrl_backtab_switches_prev_tab() {
         "prompt cursor must be clamped to box width, got ANSI: {ansi:?}"
     );
 }
+
+#[test]
+fn test_command_palette_shortcuts_advertise_legacy_fallback() {
+    let cmd = COMMANDS
+        .iter()
+        .find(|c| c.id == "view.command_palette")
+        .unwrap();
+    assert_eq!(cmd.shortcut, "Ctrl+Shift+P / Alt+P");
+
+    let mut app = App::new(None).unwrap();
+    app.terminal_width = 100;
+    app.terminal_height = 30;
+    let mut buf = Vec::new();
+    crate::render::render_which_key(&app, &mut buf).unwrap();
+    let rendered = String::from_utf8_lossy(&buf);
+    assert!(rendered.contains("Ctrl+Shift+P"));
+    assert!(rendered.contains("Alt+P"));
+}

@@ -21,7 +21,7 @@ pub const COMMANDS: &[CommandItem] = &[
     CommandItem {
         id: "view.command_palette",
         title: "View: Command Palette...",
-        shortcut: "Ctrl+Shift+P",
+        shortcut: "Ctrl+Shift+P / Alt+P",
     },
     CommandItem {
         id: "file.open",

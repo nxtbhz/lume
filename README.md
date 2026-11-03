@@ -199,8 +199,11 @@ cargo bench -p lume-core
 | `Ctrl+Z` | Undo last transaction |
 | `Ctrl+Y` | Redo last transaction |
 | `Ctrl+K M` | Change / override syntax language |
-| `Ctrl+Shift+P` | Open Command Palette |
+| `Ctrl+P` | Quick Open (fuzzy file finder) |
+| `Ctrl+Shift+P` / `Alt+P` | Open Command Palette (`Alt+P` legacy fallback) |
 | `F1` | Open Which-Key shortcuts overlay |
+
+> **Terminal Modifier Compatibility:** `Ctrl+P` opens Quick Open across all terminals. For the Command Palette, Lume negotiates enhanced keyboard reporting (Kitty keyboard protocol) where supported to distinguish `Ctrl+Shift+P`. In legacy terminals that collapse `Ctrl+Shift+P` and `Ctrl+P` into the same control byte, use `Alt+P` as the portable fallback to open the Command Palette.
 
 ### Mouse & Trackpad Gestures
 | Mouse Action | Effect |
