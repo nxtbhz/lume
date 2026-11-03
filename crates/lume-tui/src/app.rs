@@ -302,6 +302,12 @@ impl App {
         self.quick_open = Some(crate::quick_open::QuickOpenState::new(files));
     }
 
+    pub(crate) fn open_command_palette(&mut self) {
+        self.palette_open = true;
+        self.palette_query.clear();
+        self.palette_selected = 0;
+    }
+
     pub fn update_search_query(&mut self, state: &mut SearchState) {
         self.last_search_query = if !state.query.is_empty() {
             Some(state.query.clone())

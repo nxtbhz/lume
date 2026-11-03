@@ -68,7 +68,7 @@ fn test_app_quick_open_esc_cancels() {
 }
 
 #[test]
-fn test_app_ctrl_shift_p_opens_command_palette() {
+fn test_command_palette_shortcut_ctrl_shift_p_accepts_enhanced_events() {
     let mut app = App::new(None).unwrap();
     assert!(!app.palette_open);
 
@@ -91,6 +91,42 @@ fn test_app_ctrl_shift_p_opens_command_palette() {
         .unwrap();
     assert!(app.palette_open);
     assert!(app.quick_open.is_none());
+}
+
+#[test]
+fn test_command_palette_shortcut_alt_p_opens_in_legacy_terminal() {
+    let mut app = App::new(None).unwrap();
+    assert!(!app.palette_open);
+
+    // Alt+P opens Command Palette in legacy terminals
+    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::ALT))
+        .unwrap();
+    assert!(app.palette_open);
+    assert!(app.quick_open.is_none());
+
+    // Close palette
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .unwrap();
+    assert!(!app.palette_open);
+
+    // Alt+Shift+P / Alt+P with uppercase Char('P')
+    app.handle_key(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::ALT))
+        .unwrap();
+    assert!(app.palette_open);
+    assert!(app.quick_open.is_none());
+}
+
+#[test]
+fn test_command_palette_shortcut_legacy_ctrl_p_still_opens_only_quick_open() {
+    let mut app = App::new(None).unwrap();
+    assert!(!app.palette_open);
+    assert!(app.quick_open.is_none());
+
+    // Ctrl+P opens Quick Open, not Command Palette
+    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(!app.palette_open);
+    assert!(app.quick_open.is_some());
 }
 
 #[test]

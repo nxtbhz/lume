@@ -75,6 +75,11 @@ impl App {
             return Ok(());
         }
 
+        if alt && !ctrl && (key.code == KeyCode::Char('p') || key.code == KeyCode::Char('P')) {
+            self.open_command_palette();
+            return Ok(());
+        }
+
         if ctrl && !alt {
             match key.code {
                 KeyCode::Char('q') => {
@@ -82,16 +87,12 @@ impl App {
                     return Ok(());
                 }
                 KeyCode::Char('P') => {
-                    self.palette_open = true;
-                    self.palette_query.clear();
-                    self.palette_selected = 0;
+                    self.open_command_palette();
                     return Ok(());
                 }
                 KeyCode::Char('p') => {
                     if shift {
-                        self.palette_open = true;
-                        self.palette_query.clear();
-                        self.palette_selected = 0;
+                        self.open_command_palette();
                     } else {
                         self.open_quick_open();
                     }

@@ -221,9 +221,7 @@ impl App {
                 self.open_quick_open();
             }
             "view.command_palette" => {
-                self.palette_open = true;
-                self.palette_query.clear();
-                self.palette_selected = 0;
+                self.open_command_palette();
             }
             "file.open" => {
                 self.prompt = Some(InputPrompt::open_file());
