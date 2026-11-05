@@ -18,7 +18,7 @@ ropey = "1.6"
 crossbeam-channel = "0.5"
 crossterm = "0.29"
 thiserror = "2.0"
-criterion = "0.5"
+criterion = "0.8"
 unicode-width = "0.2"
 
 [profile.release]
