@@ -83,7 +83,7 @@ impl App {
         if ctrl && !alt {
             match key.code {
                 KeyCode::Char('q') => {
-                    self.running = false;
+                    self.execute_command("app.quit");
                     return Ok(());
                 }
                 KeyCode::Char('P') => {

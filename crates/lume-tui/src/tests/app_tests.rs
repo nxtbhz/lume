@@ -432,6 +432,10 @@ fn test_app_key_navigation_and_tab_shortcuts() {
 
     app.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL))
         .unwrap();
+    // Dirty tab requires confirmation before closing
+    assert!(app.prompt.is_some());
+    app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE))
+        .unwrap();
     assert_eq!(app.editor.tabs().len(), 1);
 
     // Open Which-Key via F1, render, and close via Esc

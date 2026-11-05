@@ -324,8 +324,18 @@ impl App {
             }
             "file.close_tab" => {
                 let idx = self.editor.active_tab_idx();
-                self.close_tab_and_sync_splits(idx);
-                self.set_status("Closed tab");
+                if self.editor.tabs().get(idx).is_some_and(|t| t.is_dirty) {
+                    let name = self.editor.tabs()[idx]
+                        .file_path
+                        .as_ref()
+                        .and_then(|p| p.file_name())
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("Untitled");
+                    self.prompt = Some(InputPrompt::confirm_close_tab(idx, name));
+                } else {
+                    self.close_tab_and_sync_splits(idx);
+                    self.set_status("Closed tab");
+                }
             }
             "file.next_tab" => self.editor.next_tab(),
             "file.prev_tab" => self.editor.prev_tab(),
@@ -524,7 +534,11 @@ impl App {
                 }
             }
             "app.quit" => {
-                self.running = false;
+                if self.editor.is_any_dirty() {
+                    self.prompt = Some(InputPrompt::confirm_quit());
+                } else {
+                    self.running = false;
+                }
             }
             _ => {}
         }

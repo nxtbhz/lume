@@ -17,6 +17,81 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
 
+        if matches!(
+            prompt.action,
+            PromptAction::ConfirmQuit | PromptAction::ConfirmCloseTab { .. }
+        ) {
+            match key.code {
+                KeyCode::Char('s') | KeyCode::Char('S') => {
+                    match prompt.action {
+                        PromptAction::ConfirmQuit => {
+                            let mut all_saved = true;
+                            for i in 0..self.editor.tabs().len() {
+                                if self.editor.tabs()[i].is_dirty {
+                                    if self.editor.tabs()[i].file_path.is_some() {
+                                        if let Err(e) = self.editor.save_tab(i) {
+                                            self.set_status(format!("Save error: {}", e));
+                                            return Ok(());
+                                        }
+                                    } else {
+                                        self.editor.switch_tab(i);
+                                        self.prompt = Some(InputPrompt::save_as(None));
+                                        all_saved = false;
+                                        break;
+                                    }
+                                }
+                            }
+                            if all_saved {
+                                self.running = false;
+                            }
+                        }
+                        PromptAction::ConfirmCloseTab { tab_idx } => {
+                            if self
+                                .editor
+                                .tabs()
+                                .get(tab_idx)
+                                .and_then(|t| t.file_path.as_ref())
+                                .is_some()
+                            {
+                                if let Err(e) = self.editor.save_tab(tab_idx) {
+                                    self.set_status(format!("Save error: {}", e));
+                                    return Ok(());
+                                }
+                                self.close_tab_and_sync_splits(tab_idx);
+                                self.set_status("Saved and closed tab");
+                            } else {
+                                self.editor.switch_tab(tab_idx);
+                                self.prompt = Some(InputPrompt::save_as(None));
+                            }
+                        }
+                        _ => {}
+                    }
+                    return Ok(());
+                }
+                KeyCode::Char('d') | KeyCode::Char('D') => {
+                    match prompt.action {
+                        PromptAction::ConfirmQuit => {
+                            self.running = false;
+                        }
+                        PromptAction::ConfirmCloseTab { tab_idx } => {
+                            self.close_tab_and_sync_splits(tab_idx);
+                            self.set_status("Closed tab (changes discarded)");
+                        }
+                        _ => {}
+                    }
+                    return Ok(());
+                }
+                KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Esc => {
+                    self.set_status("Cancelled");
+                    return Ok(());
+                }
+                _ => {
+                    self.prompt = Some(prompt);
+                    return Ok(());
+                }
+            }
+        }
+
         match key.code {
             KeyCode::Esc => {
                 self.set_status("Cancelled");
@@ -185,6 +260,46 @@ impl App {
                             ));
                         } else {
                             self.set_status(format!("Invalid line[:col] format: '{}'", val));
+                        }
+                    }
+                    PromptAction::ConfirmQuit => {
+                        let mut all_saved = true;
+                        for i in 0..self.editor.tabs().len() {
+                            if self.editor.tabs()[i].is_dirty {
+                                if self.editor.tabs()[i].file_path.is_some() {
+                                    if let Err(e) = self.editor.save_tab(i) {
+                                        self.set_status(format!("Save error: {}", e));
+                                        return Ok(());
+                                    }
+                                } else {
+                                    self.editor.switch_tab(i);
+                                    self.prompt = Some(InputPrompt::save_as(None));
+                                    all_saved = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if all_saved {
+                            self.running = false;
+                        }
+                    }
+                    PromptAction::ConfirmCloseTab { tab_idx } => {
+                        if self
+                            .editor
+                            .tabs()
+                            .get(tab_idx)
+                            .and_then(|t| t.file_path.as_ref())
+                            .is_some()
+                        {
+                            if let Err(e) = self.editor.save_tab(tab_idx) {
+                                self.set_status(format!("Save error: {}", e));
+                                return Ok(());
+                            }
+                            self.close_tab_and_sync_splits(tab_idx);
+                            self.set_status("Saved and closed tab");
+                        } else {
+                            self.editor.switch_tab(tab_idx);
+                            self.prompt = Some(InputPrompt::save_as(None));
                         }
                     }
                 }

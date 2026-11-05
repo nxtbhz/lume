@@ -34,8 +34,48 @@ pub struct TerminalGuard {
     keyboard_enhancement_enabled: Arc<AtomicBool>,
 }
 
+#[cfg(unix)]
+static ORIGINAL_TERMIOS: std::sync::OnceLock<libc::termios> = std::sync::OnceLock::new();
+
+#[cfg(unix)]
+extern "C" fn posix_signal_handler(sig: libc::c_int) {
+    let cleanup: &[u8] =
+        b"\x1b[<u\x1b[?25h\x1b[0m\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?1049l";
+    unsafe {
+        libc::write(
+            libc::STDOUT_FILENO,
+            cleanup.as_ptr() as *const libc::c_void,
+            cleanup.len(),
+        );
+        if let Some(termios) = ORIGINAL_TERMIOS.get() {
+            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, termios);
+        }
+        libc::signal(sig, libc::SIG_DFL);
+        libc::raise(sig);
+    }
+}
+
 impl TerminalGuard {
     pub fn init() -> Result<Self, std::io::Error> {
+        #[cfg(unix)]
+        unsafe {
+            let mut termios = std::mem::zeroed();
+            if libc::tcgetattr(libc::STDIN_FILENO, &mut termios) == 0 {
+                let _ = ORIGINAL_TERMIOS.set(termios);
+            }
+            libc::signal(
+                libc::SIGINT,
+                posix_signal_handler as *const () as libc::sighandler_t,
+            );
+            libc::signal(
+                libc::SIGTERM,
+                posix_signal_handler as *const () as libc::sighandler_t,
+            );
+            libc::signal(
+                libc::SIGHUP,
+                posix_signal_handler as *const () as libc::sighandler_t,
+            );
+        }
         let keyboard_enhancement_enabled = Arc::new(AtomicBool::new(false));
         let panic_enhancement = Arc::clone(&keyboard_enhancement_enabled);
 

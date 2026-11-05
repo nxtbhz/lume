@@ -1,4 +1,5 @@
 use std::io::Write;
+use unicode_width::UnicodeWidthChar;
 
 use crossterm::{
     cursor::MoveTo,
@@ -200,6 +201,16 @@ fn render_pane_viewport<W: Write>(
                                 (None, fg)
                             };
 
+                        let char_w = if c == '\t' {
+                            4 - (printed_cols % 4)
+                        } else {
+                            c.width().unwrap_or(0)
+                        };
+
+                        if is_split && printed_cols + char_w > rect.width {
+                            break;
+                        }
+
                         if run_style == Some(style) {
                             run_text.push(c);
                         } else {
@@ -218,7 +229,7 @@ fn render_pane_viewport<W: Write>(
                             run_style = Some(style);
                             run_text.push(c);
                         }
-                        printed_cols += 1;
+                        printed_cols += char_w;
                     }
 
                     if let Some((prev_bg, prev_fg)) = run_style {

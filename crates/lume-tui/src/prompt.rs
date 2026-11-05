@@ -18,6 +18,8 @@ pub enum PromptAction {
     RenameItem { source_path: PathBuf, is_dir: bool },
     ConfirmDeleteFolder { path: PathBuf },
     GoToLine,
+    ConfirmQuit,
+    ConfirmCloseTab { tab_idx: usize },
 }
 
 #[derive(Clone, Debug)]
@@ -153,6 +155,32 @@ impl InputPrompt {
         }
     }
 
+    pub fn confirm_quit() -> Self {
+        Self {
+            action: PromptAction::ConfirmQuit,
+            title: Cow::Borrowed(" Unsaved changes! [S]ave, [D]iscard, [C]ancel / Esc "),
+            value: String::new(),
+            cursor_pos: 0,
+            suggestions: Vec::new(),
+            selected_suggestion: 0,
+        }
+    }
+
+    pub fn confirm_close_tab(tab_idx: usize, file_name: &str) -> Self {
+        let formatted = format!(
+            " Unsaved changes in '{}'! [S]ave, [D]iscard, [C]ancel / Esc ",
+            file_name
+        );
+        Self {
+            action: PromptAction::ConfirmCloseTab { tab_idx },
+            title: Cow::Owned(formatted),
+            value: String::new(),
+            cursor_pos: 0,
+            suggestions: Vec::new(),
+            selected_suggestion: 0,
+        }
+    }
+
     pub fn update_suggestions(&mut self) {
         match self.action {
             PromptAction::OpenFile | PromptAction::SaveFileAs => {
@@ -205,7 +233,9 @@ impl InputPrompt {
             | PromptAction::CreateFile { .. }
             | PromptAction::RenameItem { .. }
             | PromptAction::ConfirmDeleteFolder { .. }
-            | PromptAction::GoToLine => {
+            | PromptAction::GoToLine
+            | PromptAction::ConfirmQuit
+            | PromptAction::ConfirmCloseTab { .. } => {
                 // Handled in handle_key with filter or no suggestions needed
             }
         }
@@ -279,7 +309,9 @@ impl InputPrompt {
             | PromptAction::CreateFile { .. }
             | PromptAction::RenameItem { .. }
             | PromptAction::ConfirmDeleteFolder { .. }
-            | PromptAction::GoToLine => {}
+            | PromptAction::GoToLine
+            | PromptAction::ConfirmQuit
+            | PromptAction::ConfirmCloseTab { .. } => {}
         }
     }
 

@@ -86,7 +86,7 @@ impl App {
             && self.quick_open.is_none()
         {
             if self.focus == ActiveFocus::Editor {
-                let (cursor_row, cursor_col) = self.editor.cursor_line_col();
+                let (cursor_row, cursor_col) = self.editor.cursor_visual_line_col();
                 let (pane_left, pane_top, pane_w, pane_h, pane_gutter_w) = if self.splits.is_split {
                     let area_w = (self.terminal_width as usize).saturating_sub(text_left);
                     let (p0_rect, _, p1_rect) =
