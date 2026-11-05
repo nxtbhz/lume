@@ -87,6 +87,7 @@ impl Editor {
         tab.cursors.set_single(0);
         tab.history.clear();
         tab.file_path = Some(path.to_path_buf());
+        tab.journal_path = Some(crate::journal::Journal::journal_path(path));
         tab.is_dirty = recovered;
         tab.recovered_from_journal = recovered;
         if recovered {
@@ -259,6 +260,9 @@ impl Editor {
     }
 
     pub fn set_file_path(&mut self, path: Option<PathBuf>) {
+        self.tabs[self.active_tab].journal_path = path
+            .as_ref()
+            .map(|p| crate::journal::Journal::journal_path(p));
         self.tabs[self.active_tab].file_path = path;
     }
 
@@ -277,6 +281,16 @@ impl Editor {
         } else {
             tab.is_dirty
         }
+    }
+
+    pub fn is_any_dirty(&self) -> bool {
+        self.tabs.iter().any(|tab| {
+            if let Some(ref sync) = tab.sync_state {
+                tab.is_dirty && sync.is_dirty.load(Ordering::SeqCst)
+            } else {
+                tab.is_dirty
+            }
+        })
     }
 
     pub fn autosave_controller(&self) -> &AutoSaveController {

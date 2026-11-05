@@ -1,11 +1,23 @@
 use crate::buffer::{TextBuffer, TextDelta};
 use crate::cursor::Cursor;
+use std::collections::VecDeque;
+
+pub const DEFAULT_MAX_UNDO_ENTRIES: usize = 5_000;
+pub const DEFAULT_MAX_HISTORY_BYTES: usize = 50 * 1024 * 1024; // 50 MB
 
 #[derive(Clone, Debug)]
 pub struct HistoryEntry {
     pub deltas: Vec<TextDelta>,
     pub cursors_before: Vec<Cursor>,
     pub cursors_after: Vec<Cursor>,
+}
+
+fn entry_bytes(entry: &HistoryEntry) -> usize {
+    entry
+        .deltas
+        .iter()
+        .map(|d| d.old_text.len() + d.new_text.len())
+        .sum()
 }
 
 pub trait HistoryManager {
@@ -27,18 +39,33 @@ pub trait HistoryManager {
     fn redo(&mut self, current_buffer: &mut dyn TextBuffer) -> Option<Vec<Cursor>>;
 }
 
-// shortcut: linear undo stack for M0; full branched undo-tree with snapshot journal in M1
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct History {
-    undo_stack: Vec<HistoryEntry>,
+    undo_stack: VecDeque<HistoryEntry>,
     redo_stack: Vec<HistoryEntry>,
+    max_entries: usize,
+    max_bytes: usize,
+    current_bytes: usize,
+}
+
+impl Default for History {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl History {
     pub fn new() -> Self {
+        Self::with_limits(DEFAULT_MAX_UNDO_ENTRIES, DEFAULT_MAX_HISTORY_BYTES)
+    }
+
+    pub fn with_limits(max_entries: usize, max_bytes: usize) -> Self {
         Self {
-            undo_stack: Vec::new(),
+            undo_stack: VecDeque::new(),
             redo_stack: Vec::new(),
+            max_entries: max_entries.max(1),
+            max_bytes: max_bytes.max(1),
+            current_bytes: 0,
         }
     }
 
@@ -53,6 +80,21 @@ impl History {
     pub fn clear(&mut self) {
         self.undo_stack.clear();
         self.redo_stack.clear();
+        self.current_bytes = 0;
+    }
+
+    fn push_undo(&mut self, entry: HistoryEntry) {
+        let bytes = entry_bytes(&entry);
+        self.current_bytes += bytes;
+        self.undo_stack.push_back(entry);
+
+        while self.undo_stack.len() > self.max_entries
+            || (self.current_bytes > self.max_bytes && self.undo_stack.len() > 1)
+        {
+            if let Some(oldest) = self.undo_stack.pop_front() {
+                self.current_bytes = self.current_bytes.saturating_sub(entry_bytes(&oldest));
+            }
+        }
     }
 }
 
@@ -64,7 +106,7 @@ impl HistoryManager for History {
         cursors_after: Vec<Cursor>,
     ) {
         self.redo_stack.clear();
-        self.undo_stack.push(HistoryEntry {
+        self.push_undo(HistoryEntry {
             deltas,
             cursors_before,
             cursors_after,
@@ -72,7 +114,8 @@ impl HistoryManager for History {
     }
 
     fn undo(&mut self, current_buffer: &mut dyn TextBuffer) -> Option<Vec<Cursor>> {
-        let entry = self.undo_stack.pop()?;
+        let entry = self.undo_stack.pop_back()?;
+        self.current_bytes = self.current_bytes.saturating_sub(entry_bytes(&entry));
 
         // Revert edits in reverse order
         for delta in entry.deltas.iter().rev() {
@@ -105,7 +148,7 @@ impl HistoryManager for History {
         }
 
         let cursors = entry.cursors_after.clone();
-        self.undo_stack.push(entry);
+        self.push_undo(entry);
         Some(cursors)
     }
 }
@@ -139,6 +182,25 @@ mod tests {
         let cursors = history.redo(&mut buf).unwrap();
         assert_eq!(cursors[0].head, 13);
         assert_eq!(buf.slice_to_cow(0, buf.len_bytes()), "Hello, Brave World");
+    }
+
+    #[test]
+    fn test_history_limits_retention() {
+        let mut buf = RopeBuffer::from_str("Initial");
+        let mut history = History::with_limits(3, 100);
+
+        for i in 1..=5 {
+            let s = format!(" {}", i);
+            let delta = buf.insert(buf.len_bytes(), &s).unwrap();
+            history.record_edit(
+                delta,
+                vec![Cursor::new(0)],
+                vec![Cursor::new(buf.len_bytes())],
+            );
+        }
+
+        // Stack size must not exceed 3
+        assert_eq!(history.undo_stack.len(), 3);
     }
 
     proptest! {

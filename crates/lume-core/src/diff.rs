@@ -197,6 +197,19 @@ pub fn compute_line_diffs(base_lines: &[&str], current_lines: &[&str]) -> Vec<Li
 }
 
 /// Computes line-by-line diff between two ropes, avoiding string allocations for common prefix and suffix.
+#[inline]
+fn lines_equal_normalized(a: ropey::RopeSlice, b: ropey::RopeSlice) -> bool {
+    if a == b {
+        return true;
+    }
+    if let (Some(s1), Some(s2)) = (a.as_str(), b.as_str()) {
+        return s1.trim_end_matches(['\r', '\n']) == s2.trim_end_matches(['\r', '\n']);
+    }
+    let a_str = a.to_string();
+    let b_str = b.to_string();
+    a_str.trim_end_matches(['\r', '\n']) == b_str.trim_end_matches(['\r', '\n'])
+}
+
 pub fn compute_rope_diffs(base: &ropey::Rope, curr: &ropey::Rope) -> Vec<LineDiffStatus> {
     let curr_len = curr.len_lines();
     if curr_len == 0 {
@@ -208,12 +221,12 @@ pub fn compute_rope_diffs(base: &ropey::Rope, curr: &ropey::Rope) -> Vec<LineDif
         return vec![LineDiffStatus::Added; curr_len];
     }
 
-    // 1. Common prefix trimming directly on RopeSlice (zero string allocations)
+    // 1. Common prefix trimming directly on RopeSlice (normalized CRLF/LF)
     let mut p = 0;
     while p < base_len && p < curr_len {
         let base_line = base.line(p);
         let curr_line = curr.line(p);
-        if base_line == curr_line {
+        if lines_equal_normalized(base_line, curr_line) {
             p += 1;
         } else {
             break;
@@ -224,12 +237,12 @@ pub fn compute_rope_diffs(base: &ropey::Rope, curr: &ropey::Rope) -> Vec<LineDif
         return vec![LineDiffStatus::Unchanged; curr_len];
     }
 
-    // 2. Common suffix trimming directly on RopeSlice (zero string allocations)
+    // 2. Common suffix trimming directly on RopeSlice (normalized CRLF/LF)
     let mut s = 0;
     while s < (base_len - p) && s < (curr_len - p) {
         let base_line = base.line(base_len - 1 - s);
         let curr_line = curr.line(curr_len - 1 - s);
-        if base_line == curr_line {
+        if lines_equal_normalized(base_line, curr_line) {
             s += 1;
         } else {
             break;

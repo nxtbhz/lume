@@ -12,18 +12,35 @@ const MAGIC_V2: &[u8; 5] = b"LUMJ\x02";
 
 impl Journal {
     pub fn journal_dir() -> PathBuf {
-        if let Ok(dir) = std::env::var("LUME_JOURNAL_DIR") {
+        let dir = if let Ok(dir) = std::env::var("LUME_JOURNAL_DIR") {
             PathBuf::from(dir)
         } else if let Ok(cache) = std::env::var("XDG_CACHE_HOME") {
             PathBuf::from(cache).join("lume/journal")
+        } else if let Ok(home) = std::env::var("HOME") {
+            PathBuf::from(home).join(".cache/lume/journal")
         } else {
-            std::env::temp_dir().join("lume_journal")
+            std::env::temp_dir().join(format!("lume_journal_{}", std::process::id()))
+        };
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            let mut builder = fs::DirBuilder::new();
+            builder.recursive(true);
+            builder.mode(0o700);
+            let _ = builder.create(&dir);
         }
+        #[cfg(not(unix))]
+        {
+            let _ = fs::create_dir_all(&dir);
+        }
+
+        dir
     }
 
-    fn journal_path(file_path: &Path) -> PathBuf {
+    pub fn journal_path(file_path: &Path) -> PathBuf {
         let dir = Self::journal_dir();
-        // Generate stable filename based on path hash
+        // Generate stable filename based on deterministic FNV-1a path hash
         let hash = path_hash(file_path);
         let name = file_path
             .file_name()
@@ -34,15 +51,24 @@ impl Journal {
 
     /// Record append-only binary deltas to the crash recovery journal
     pub fn record_deltas(file_path: &Path, deltas: &[TextDelta]) -> io::Result<()> {
+        let path = Self::journal_path(file_path);
+        Self::record_deltas_with_journal_path(file_path, &path, deltas)
+    }
+
+    /// Fast-path: record append-only binary deltas using a pre-computed journal path
+    pub fn record_deltas_with_journal_path(
+        file_path: &Path,
+        journal_path: &Path,
+        deltas: &[TextDelta],
+    ) -> io::Result<()> {
         if deltas.is_empty() {
             return Ok(());
         }
-        let path = Self::journal_path(file_path);
-        if let Some(parent) = path.parent() {
+        if let Some(parent) = journal_path.parent() {
             fs::create_dir_all(parent)?;
         }
 
-        let has_v2_header = fs::File::open(&path)
+        let has_v2_header = fs::File::open(journal_path)
             .and_then(|mut f| {
                 use std::io::Read;
                 let mut hdr = [0u8; 5];
@@ -52,7 +78,7 @@ impl Journal {
             .unwrap_or(false);
 
         let mut file = if !has_v2_header {
-            let base_bytes = if path.exists() {
+            let base_bytes = if journal_path.exists() {
                 Self::recover(file_path)
                     .ok()
                     .flatten()
@@ -74,13 +100,16 @@ impl Journal {
                 .create(true)
                 .write(true)
                 .truncate(true)
-                .open(&path)?;
+                .open(journal_path)?;
             f.write_all(MAGIC_V2)?;
             f.write_all(&(base_bytes.len() as u64).to_le_bytes())?;
             f.write_all(&base_bytes)?;
             f
         } else {
-            OpenOptions::new().create(true).append(true).open(&path)?
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(journal_path)?
         };
 
         for delta in deltas {
@@ -95,21 +124,32 @@ impl Journal {
             file.write_all(&delta.timestamp.to_le_bytes())?;
         }
 
+        file.sync_data()?;
         Ok(())
     }
 
     /// Record full content snapshot directly with MAGIC_V2 header
     pub fn record(file_path: &Path, content: &str) -> io::Result<()> {
         let path = Self::journal_path(file_path);
-        if let Some(parent) = path.parent() {
+        Self::record_with_journal_path(&path, content)
+    }
+
+    /// Fast-path: record full content snapshot with pre-computed journal path
+    pub fn record_with_journal_path(journal_path: &Path, content: &str) -> io::Result<()> {
+        if let Some(parent) = journal_path.parent() {
             fs::create_dir_all(parent)?;
         }
         let bytes = content.as_bytes();
-        let mut buf = Vec::with_capacity(MAGIC_V2.len() + 8 + bytes.len());
-        buf.extend_from_slice(MAGIC_V2);
-        buf.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
-        buf.extend_from_slice(bytes);
-        fs::write(&path, buf)
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(journal_path)?;
+        file.write_all(MAGIC_V2)?;
+        file.write_all(&(bytes.len() as u64).to_le_bytes())?;
+        file.write_all(bytes)?;
+        file.sync_data()?;
+        Ok(())
     }
 
     pub fn has_journal(file_path: &Path) -> bool {
@@ -216,12 +256,18 @@ fn resolve_path(path: &Path) -> PathBuf {
     })
 }
 
+fn fnv1a_64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for &b in bytes {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
 fn path_hash(path: &Path) -> u64 {
-    use std::hash::{Hash, Hasher};
     let resolved = resolve_path(path);
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    resolved.to_string_lossy().hash(&mut hasher);
-    hasher.finish()
+    fnv1a_64(resolved.to_string_lossy().as_bytes())
 }
 
 #[cfg(test)]

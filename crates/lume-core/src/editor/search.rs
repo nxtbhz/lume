@@ -91,6 +91,8 @@ impl Editor {
         };
 
         if tab.buffer.insert(target_start, replacement).is_err() {
+            // Rollback deletion atomically if insertion fails
+            let _ = tab.buffer.insert(target_start, &old_text);
             return false;
         }
 
@@ -142,18 +144,25 @@ impl Editor {
         let mut last_end = 0;
 
         for (orig_start, orig_end) in matches {
-            let start = (orig_start as isize + delta_offset) as usize;
-            let end = (orig_end as isize + delta_offset) as usize;
+            let start = (orig_start as isize + delta_offset).max(0) as usize;
+            let end = (orig_end as isize + delta_offset).max(0) as usize;
 
             if let Ok(del_delta) = tab.buffer.delete(start, end) {
-                if let Ok(ins_delta) = tab.buffer.insert(start, replacement) {
-                    last_end = start + ins_delta.new_text.len();
-                    deltas.push(TextDelta::new(
-                        start,
-                        del_delta.old_text,
-                        ins_delta.new_text,
-                    ));
-                    delta_offset += replacement.len() as isize - (orig_end - orig_start) as isize;
+                match tab.buffer.insert(start, replacement) {
+                    Ok(ins_delta) => {
+                        last_end = start + ins_delta.new_text.len();
+                        deltas.push(TextDelta::new(
+                            start,
+                            del_delta.old_text,
+                            ins_delta.new_text,
+                        ));
+                        delta_offset +=
+                            replacement.len() as isize - (orig_end - orig_start) as isize;
+                    }
+                    Err(_) => {
+                        // Rollback deletion atomically if insertion fails
+                        let _ = tab.buffer.insert(start, &del_delta.old_text);
+                    }
                 }
             }
         }
@@ -169,6 +178,6 @@ impl Editor {
             .record_edits(deltas.clone(), cursors_before, cursors_after);
         self.record_edit_internal(&deltas);
 
-        count
+        deltas.len()
     }
 }

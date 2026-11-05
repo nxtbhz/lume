@@ -9,6 +9,37 @@ pub struct FuzzyMatch {
     pub match_indices: Vec<usize>,
 }
 
+use std::cell::RefCell;
+
+#[derive(Default)]
+struct DpScratchpad {
+    memo: Vec<Option<Option<i64>>>,
+    best_choice: Vec<usize>,
+}
+
+thread_local! {
+    static DP_SCRATCHPAD: RefCell<DpScratchpad> =
+        RefCell::new(DpScratchpad::default());
+}
+
+fn is_subsequence_ascii(token: &str, candidate: &str) -> bool {
+    let mut cand_bytes = candidate.bytes();
+    for tb in token.bytes() {
+        let tb_lower = tb.to_ascii_lowercase();
+        let mut found = false;
+        for cb in cand_bytes.by_ref() {
+            if cb.to_ascii_lowercase() == tb_lower {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return false;
+        }
+    }
+    true
+}
+
 /// Matches a query pattern against a candidate string.
 ///
 /// Supports:
@@ -31,6 +62,15 @@ pub fn fuzzy_match(pattern: &str, candidate: &str) -> Option<FuzzyMatch> {
             score: 0,
             match_indices: Vec::new(),
         });
+    }
+
+    // Fast-path: greedy subsequence check on ASCII bytes with zero heap allocations
+    if pattern.is_ascii() && candidate.is_ascii() {
+        for token in &tokens {
+            if !is_subsequence_ascii(token, candidate) {
+                return None;
+            }
+        }
     }
 
     let cand_chars: Vec<char> = candidate.chars().collect();
@@ -125,119 +165,130 @@ fn match_single_token(
     // DP with memoization: state is (p, prev), where prev is 0..=n (n denotes None)
     // Table dimensions: (m + 1) * (n + 1)
     let stride = n + 1;
-    let mut memo = vec![None; (m + 1) * stride];
-    let mut best_choice = vec![0usize; (m + 1) * stride];
+    let size = (m + 1) * stride;
 
-    struct MatchContext<'a> {
-        token_chars: &'a [char],
-        token_lower: &'a [char],
-        cand_chars: &'a [char],
-        cand_lower: &'a [char],
-        filename_start: usize,
-        stride: usize,
-    }
+    DP_SCRATCHPAD.with(|scratch| {
+        let mut borrowed = scratch.borrow_mut();
+        let DpScratchpad {
+            ref mut memo,
+            ref mut best_choice,
+        } = *borrowed;
+        memo.clear();
+        memo.resize(size, None);
+        best_choice.clear();
+        best_choice.resize(size, 0);
 
-    let ctx = MatchContext {
-        token_chars,
-        token_lower,
-        cand_chars,
-        cand_lower,
-        filename_start,
-        stride,
-    };
-
-    fn solve(
-        p: usize,
-        prev: usize,
-        ctx: &MatchContext<'_>,
-        memo: &mut [Option<Option<i64>>],
-        best_choice: &mut [usize],
-    ) -> Option<i64> {
-        let m = ctx.token_chars.len();
-        let n = ctx.cand_chars.len();
-
-        if p == m {
-            return Some(0);
+        struct MatchContext<'a> {
+            token_chars: &'a [char],
+            token_lower: &'a [char],
+            cand_chars: &'a [char],
+            cand_lower: &'a [char],
+            filename_start: usize,
+            stride: usize,
         }
 
-        let idx = p * ctx.stride + prev;
-        if let Some(res) = memo[idx] {
-            return res;
-        }
+        let ctx = MatchContext {
+            token_chars,
+            token_lower,
+            cand_chars,
+            cand_lower,
+            filename_start,
+            stride,
+        };
 
-        let min_c = if prev == n { 0 } else { prev + 1 };
-        let remaining_tokens = m - p - 1;
-        let max_c = n.saturating_sub(remaining_tokens);
+        fn solve(
+            p: usize,
+            prev: usize,
+            ctx: &MatchContext<'_>,
+            memo: &mut [Option<Option<i64>>],
+            best_choice: &mut [usize],
+        ) -> Option<i64> {
+            let m = ctx.token_chars.len();
+            let n = ctx.cand_chars.len();
 
-        let mut max_score: Option<i64> = None;
-        let mut choice = 0;
-
-        let target_char = ctx.token_lower[p];
-
-        for curr in min_c..max_c {
-            if ctx.cand_lower[curr] != target_char {
-                continue;
+            if p == m {
+                return Some(0);
             }
 
-            // Calculate bonuses for matching at `curr`
-            let mut char_score = 10i64; // Base hit
-
-            // Boundary bonus: start of string or after separator
-            if curr == 0 || is_separator(ctx.cand_chars[curr - 1]) {
-                char_score += 30;
+            let idx = p * ctx.stride + prev;
+            if let Some(res) = memo[idx] {
+                return res;
             }
 
-            // Filename bonus: in filename portion
-            if curr >= ctx.filename_start {
-                char_score += 25;
-            }
+            let min_c = if prev == n { 0 } else { prev + 1 };
+            let remaining_tokens = m - p - 1;
+            let max_c = n.saturating_sub(remaining_tokens);
 
-            // Exact case bonus
-            if ctx.cand_chars[curr] == ctx.token_chars[p] {
-                char_score += 5;
-            }
+            let mut max_score: Option<i64> = None;
+            let mut choice = 0;
 
-            // Consecutive bonus & distance penalty
-            if prev != n {
-                if curr == prev + 1 {
+            let target_char = ctx.token_lower[p];
+
+            for curr in min_c..max_c {
+                if ctx.cand_lower[curr] != target_char {
+                    continue;
+                }
+
+                // Calculate bonuses for matching at `curr`
+                let mut char_score = 10i64; // Base hit
+
+                // Boundary bonus: start of string or after separator
+                if curr == 0 || is_separator(ctx.cand_chars[curr - 1]) {
+                    char_score += 30;
+                }
+
+                // Filename bonus: in filename portion
+                if curr >= ctx.filename_start {
                     char_score += 25;
-                } else {
-                    let gap = (curr - prev - 1) as i64;
-                    char_score -= gap;
+                }
+
+                // Exact case bonus
+                if ctx.cand_chars[curr] == ctx.token_chars[p] {
+                    char_score += 5;
+                }
+
+                // Consecutive bonus & distance penalty
+                if prev != n {
+                    if curr == prev + 1 {
+                        char_score += 25;
+                    } else {
+                        let gap = (curr - prev - 1) as i64;
+                        char_score -= gap;
+                    }
+                }
+
+                if let Some(rest_score) = solve(p + 1, curr, ctx, memo, best_choice) {
+                    let candidate_total = char_score + rest_score;
+                    if max_score.is_none() || candidate_total > max_score.unwrap() {
+                        max_score = Some(candidate_total);
+                        choice = curr;
+                    }
                 }
             }
 
-            if let Some(rest_score) = solve(p + 1, curr, ctx, memo, best_choice) {
-                let candidate_total = char_score + rest_score;
-                if max_score.is_none() || candidate_total > max_score.unwrap() {
-                    max_score = Some(candidate_total);
-                    choice = curr;
-                }
+            memo[idx] = Some(max_score);
+            if max_score.is_some() {
+                best_choice[idx] = choice;
             }
+            max_score
         }
 
-        memo[idx] = Some(max_score);
-        if max_score.is_some() {
-            best_choice[idx] = choice;
+        let best_score = solve(0, n, &ctx, memo, best_choice)?;
+
+        // Reconstruct matched indices
+        let mut indices = Vec::with_capacity(m);
+        let mut p = 0;
+        let mut prev = n;
+        while p < m {
+            let idx = p * stride + prev;
+            let curr = best_choice[idx];
+            indices.push(curr);
+            prev = curr;
+            p += 1;
         }
-        max_score
-    }
 
-    let best_score = solve(0, n, &ctx, &mut memo, &mut best_choice)?;
-
-    // Reconstruct matched indices
-    let mut indices = Vec::with_capacity(m);
-    let mut p = 0;
-    let mut prev = n;
-    while p < m {
-        let idx = p * stride + prev;
-        let curr = best_choice[idx];
-        indices.push(curr);
-        prev = curr;
-        p += 1;
-    }
-
-    Some((best_score, indices))
+        Some((best_score, indices))
+    })
 }
 
 #[cfg(test)]

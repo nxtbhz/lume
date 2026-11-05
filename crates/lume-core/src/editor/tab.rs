@@ -11,6 +11,7 @@ pub struct TabSyncState {
     pub revision: AtomicU64,
     pub is_dirty: AtomicBool,
     pub journal_lock: Mutex<()>,
+    pub save_lock: Mutex<()>,
 }
 
 #[derive(Clone, Debug)]
@@ -33,6 +34,7 @@ pub struct Tab {
     pub is_dirty: bool,
     pub recovered_from_journal: bool,
     pub clean_snapshot: Option<ropey::Rope>,
+    pub journal_path: Option<PathBuf>,
     pub(crate) cached_diffs: Option<(u64, Arc<Vec<LineDiffStatus>>)>,
     pub(crate) sync_state: Option<Arc<TabSyncState>>,
 }
@@ -46,6 +48,7 @@ impl Tab {
             cursors: CursorSet::new(),
             history: History::new(),
             file_path: None,
+            journal_path: None,
             language_override: None,
             is_dirty: false,
             recovered_from_journal: false,
@@ -63,6 +66,7 @@ impl Tab {
             cursors: CursorSet::new(),
             history: History::new(),
             file_path: None,
+            journal_path: None,
             language_override: None,
             is_dirty: false,
             recovered_from_journal: false,
@@ -121,5 +125,26 @@ impl Tab {
         let cursor_char = self.buffer.byte_to_char(head);
         let col = cursor_char.saturating_sub(line_start_char);
         (line, col)
+    }
+
+    pub fn cursor_visual_line_col(&self) -> (usize, usize) {
+        self.cursor_visual_line_col_for(&self.cursors)
+    }
+
+    pub fn cursor_visual_line_col_for(&self, cursors: &CursorSet) -> (usize, usize) {
+        use unicode_width::UnicodeWidthChar;
+        let head = cursors.primary().head.min(self.buffer.len_bytes());
+        let line = self.buffer.byte_to_line(head);
+        let line_start_byte = self.buffer.line_to_byte(line);
+        let line_prefix = self.buffer.slice_to_cow(line_start_byte, head);
+        let mut visual_col = 0;
+        for c in line_prefix.chars() {
+            if c == '\t' {
+                visual_col += 4 - (visual_col % 4);
+            } else {
+                visual_col += c.width().unwrap_or(0);
+            }
+        }
+        (line, visual_col)
     }
 }

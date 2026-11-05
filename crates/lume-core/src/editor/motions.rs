@@ -22,6 +22,10 @@ impl Editor {
         self.tabs[self.active_tab].cursor_line_col()
     }
 
+    pub fn cursor_visual_line_col(&self) -> (usize, usize) {
+        self.tabs[self.active_tab].cursor_visual_line_col()
+    }
+
     pub fn set_cursor_from_line_col(&mut self, line: usize, col: usize, select: bool) {
         let tab = &mut self.tabs[self.active_tab];
         let total_lines = tab.buffer.len_lines();

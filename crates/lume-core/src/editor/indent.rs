@@ -33,8 +33,12 @@ impl Editor {
         }
         self.autosave.notify_change();
 
-        // Write append-only binary deltas to crash recovery journal if file path is known
+        // Write append-only binary deltas to crash recovery journal using cached journal path
         if let Some(ref path) = self.tabs[self.active_tab].file_path {
+            let jpath = self.tabs[self.active_tab]
+                .journal_path
+                .clone()
+                .unwrap_or_else(|| Journal::journal_path(path));
             let _guard = sync_clone
                 .as_ref()
                 .map(|s| s.journal_lock.lock().unwrap_or_else(|e| e.into_inner()));
@@ -42,9 +46,9 @@ impl Editor {
                 let text = self.tabs[self.active_tab]
                     .buffer
                     .slice_to_cow(0, self.tabs[self.active_tab].buffer.len_bytes());
-                let _ = Journal::record(path, &text);
+                let _ = Journal::record_with_journal_path(&jpath, &text);
             } else {
-                let _ = Journal::record_deltas(path, deltas);
+                let _ = Journal::record_deltas_with_journal_path(path, &jpath, deltas);
             }
         }
     }
@@ -144,8 +148,8 @@ impl Editor {
         let mut delta_offset: isize = 0;
 
         for cursor in sorted_cursors {
-            let start = (cursor.min() as isize + delta_offset) as usize;
-            let end = (cursor.max() as isize + delta_offset) as usize;
+            let start = (cursor.min() as isize + delta_offset).max(0) as usize;
+            let end = (cursor.max() as isize + delta_offset).max(0) as usize;
 
             let mut old_text = String::new();
             let del_len = if cursor.is_selection() && start < end && end <= tab.buffer.len_bytes() {
@@ -328,8 +332,8 @@ impl Editor {
         let mut delta_offset: isize = 0;
 
         for cursor in sorted_cursors {
-            let start = (cursor.min() as isize + delta_offset) as usize;
-            let end = (cursor.max() as isize + delta_offset) as usize;
+            let start = (cursor.min() as isize + delta_offset).max(0) as usize;
+            let end = (cursor.max() as isize + delta_offset).max(0) as usize;
 
             if cursor.is_selection() {
                 if start < end && end <= tab.buffer.len_bytes() {
