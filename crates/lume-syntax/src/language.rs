@@ -91,7 +91,7 @@ impl Language {
         if let Some(file_name) = p.file_name().and_then(|n| n.to_str()) {
             match file_name.to_ascii_lowercase().as_str() {
                 "cargo.toml" => return Some(Language::Toml),
-                "makefile" | "gnumakefile" => return Some(Language::Assembly),
+                "makefile" | "gnumakefile" => return Some(Language::Shell),
                 "dockerfile" => return Some(Language::Shell),
                 _ => {}
             }

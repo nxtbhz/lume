@@ -134,6 +134,13 @@ impl SyntaxHighlighter {
     }
 }
 
+#[inline]
+fn safe_node_slice<'a>(text: &'a str, node: &Node) -> &'a str {
+    let start = crate::lexer::floor_char_boundary(text, node.start_byte());
+    let end = crate::lexer::floor_char_boundary(text, node.end_byte()).max(start);
+    &text[start..end]
+}
+
 fn classify_c_node(kind: &str, node: Node, text: &str) -> Option<TokenType> {
     match kind {
         "primitive_type" | "type_identifier" | "sized_type_specifier" => Some(TokenType::Type),
@@ -154,7 +161,7 @@ fn classify_c_node(kind: &str, node: Node, text: &str) -> Option<TokenType> {
             None
         }
         _ => {
-            let slice = &text[node.start_byte()..node.end_byte().min(text.len())];
+            let slice = safe_node_slice(text, &node);
             match slice {
                 "if" | "else" | "for" | "while" | "do" | "return" | "break" | "continue"
                 | "switch" | "case" | "default" | "goto" | "struct" | "union" | "enum"
@@ -191,7 +198,7 @@ fn classify_cpp_node(kind: &str, node: Node, text: &str) -> Option<TokenType> {
             None
         }
         _ => {
-            let slice = &text[node.start_byte()..node.end_byte().min(text.len())];
+            let slice = safe_node_slice(text, &node);
             match slice {
                 "class" | "struct" | "union" | "enum" | "public" | "private" | "protected"
                 | "virtual" | "override" | "final" | "template" | "typename" | "namespace"
@@ -227,7 +234,7 @@ fn classify_rust_node(kind: &str, node: Node, text: &str) -> Option<TokenType> {
             None
         }
         _ => {
-            let slice = &text[node.start_byte()..node.end_byte().min(text.len())];
+            let slice = safe_node_slice(text, &node);
             match slice {
                 "fn" | "let" | "mut" | "pub" | "use" | "mod" | "struct" | "enum" | "impl"
                 | "trait" | "match" | "if" | "else" | "for" | "while" | "loop" | "return"
@@ -255,7 +262,7 @@ fn classify_python_node(kind: &str, node: Node, text: &str) -> Option<TokenType>
             None
         }
         _ => {
-            let slice = &text[node.start_byte()..node.end_byte().min(text.len())];
+            let slice = safe_node_slice(text, &node);
             match slice {
                 "def" | "class" | "import" | "from" | "as" | "if" | "elif" | "else" | "for"
                 | "while" | "return" | "yield" | "break" | "continue" | "try" | "except"
@@ -293,7 +300,7 @@ fn classify_java_node(kind: &str, node: Node, text: &str) -> Option<TokenType> {
             None
         }
         _ => {
-            let slice = &text[node.start_byte()..node.end_byte().min(text.len())];
+            let slice = safe_node_slice(text, &node);
             match slice {
                 "public" | "private" | "protected" | "static" | "final" | "abstract" | "class"
                 | "interface" | "enum" | "record" | "extends" | "implements" | "new"
@@ -326,7 +333,7 @@ fn classify_javascript_node(kind: &str, node: Node, text: &str) -> Option<TokenT
             None
         }
         _ => {
-            let slice = &text[node.start_byte()..node.end_byte().min(text.len())];
+            let slice = safe_node_slice(text, &node);
             match slice {
                 "function" | "const" | "let" | "var" | "return" | "if" | "else" | "for"
                 | "while" | "do" | "switch" | "case" | "default" | "break" | "continue"

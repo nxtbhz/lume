@@ -1,13 +1,30 @@
 use crate::language::{is_assembly_mnemonic, is_assembly_register};
 use crate::token::{HighlightToken, TokenType};
 
+#[inline]
+pub(crate) fn floor_char_boundary(text: &str, mut idx: usize) -> usize {
+    if idx >= text.len() {
+        return text.len();
+    }
+    while !text.is_char_boundary(idx) {
+        idx = idx.saturating_sub(1);
+    }
+    idx
+}
+
+#[inline]
+pub(crate) fn sub_slice(text: &str, end_byte: usize) -> &str {
+    let end = floor_char_boundary(text, end_byte);
+    &text[..end]
+}
+
 pub(crate) fn lex_assembly(
     text: &str,
     start_byte: usize,
     end_byte: usize,
     tokens: &mut Vec<HighlightToken>,
 ) {
-    let sub = &text[..end_byte.min(text.len())];
+    let sub = sub_slice(text, end_byte);
     let mut offset = 0;
     for raw_line in sub.split_inclusive('\n') {
         let line_start = offset;
@@ -88,7 +105,7 @@ pub(crate) fn lex_json(
     end_byte: usize,
     tokens: &mut Vec<HighlightToken>,
 ) {
-    let sub = &text[..end_byte.min(text.len())];
+    let sub = sub_slice(text, end_byte);
     let bytes = sub.as_bytes();
     let mut i = 0;
 
@@ -167,7 +184,7 @@ pub(crate) fn lex_toml(
     end_byte: usize,
     tokens: &mut Vec<HighlightToken>,
 ) {
-    let sub = &text[..end_byte.min(text.len())];
+    let sub = sub_slice(text, end_byte);
     let mut offset = 0;
     for raw_line in sub.split_inclusive('\n') {
         let line_start = offset;
@@ -229,7 +246,7 @@ pub(crate) fn lex_markdown(
     end_byte: usize,
     tokens: &mut Vec<HighlightToken>,
 ) {
-    let sub = &text[..end_byte.min(text.len())];
+    let sub = sub_slice(text, end_byte);
     let mut offset = 0;
     for raw_line in sub.split_inclusive('\n') {
         let line_start = offset;
@@ -279,7 +296,7 @@ pub(crate) fn lex_shell(
     end_byte: usize,
     tokens: &mut Vec<HighlightToken>,
 ) {
-    let sub = &text[..end_byte.min(text.len())];
+    let sub = sub_slice(text, end_byte);
     let mut offset = 0;
     for raw_line in sub.split_inclusive('\n') {
         let line_start = offset;
@@ -351,7 +368,7 @@ pub(crate) fn lex_go(
     end_byte: usize,
     tokens: &mut Vec<HighlightToken>,
 ) {
-    let sub = &text[..end_byte.min(text.len())];
+    let sub = sub_slice(text, end_byte);
     let mut offset = 0;
     for raw_line in sub.split_inclusive('\n') {
         let line_start = offset;
@@ -432,7 +449,7 @@ pub(crate) fn lex_yaml(
     end_byte: usize,
     tokens: &mut Vec<HighlightToken>,
 ) {
-    let sub = &text[..end_byte.min(text.len())];
+    let sub = sub_slice(text, end_byte);
     let mut offset = 0;
     for raw_line in sub.split_inclusive('\n') {
         let line_start = offset;
@@ -522,7 +539,7 @@ pub(crate) fn lex_html_css(
     end_byte: usize,
     tokens: &mut Vec<HighlightToken>,
 ) {
-    let sub = &text[..end_byte.min(text.len())];
+    let sub = sub_slice(text, end_byte);
     let bytes = sub.as_bytes();
     let mut i = 0;
 

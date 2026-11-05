@@ -144,7 +144,7 @@ fn test_language_id_and_path_resolution() {
 
     // Path resolution
     assert_eq!(Language::from_path("Cargo.toml"), Some(Language::Toml));
-    assert_eq!(Language::from_path("Makefile"), Some(Language::Assembly));
+    assert_eq!(Language::from_path("Makefile"), Some(Language::Shell));
     assert_eq!(Language::from_path("Dockerfile"), Some(Language::Shell));
     assert_eq!(Language::from_path("main.rs"), Some(Language::Rust));
     assert_eq!(Language::from_path("script.py"), Some(Language::Python));
@@ -334,4 +334,30 @@ fn test_syntax_worker_does_not_starve_other_tabs() {
     }
     received_tabs.sort_unstable();
     assert_eq!(received_tabs, vec![0, 1, 2]);
+}
+
+#[test]
+fn test_utf8_char_boundary_safety_in_lexers_and_worker() {
+    let text = "# Comentário com acentuação e emojis 🦀 🚀\nname = \"lume\"\n";
+    let mut tokens = Vec::new();
+    // Test every single byte index as boundary, including mid-multibyte indices
+    for byte_idx in 0..text.len() {
+        tokens.clear();
+        crate::lexer::lex_toml(text, 0, byte_idx, &mut tokens);
+        crate::lexer::lex_assembly(text, 0, byte_idx, &mut tokens);
+        crate::lexer::lex_markdown(text, 0, byte_idx, &mut tokens);
+        crate::lexer::lex_shell(text, 0, byte_idx, &mut tokens);
+        crate::lexer::lex_yaml(text, 0, byte_idx, &mut tokens);
+    }
+
+    let worker = SyntaxWorker::spawn();
+    for byte_idx in 0..text.len() {
+        worker.send_request(SyntaxRequest {
+            buffer_id: 99,
+            revision: byte_idx as u64,
+            language: Language::Toml,
+            text: text.to_string(),
+            visible_range: 0..byte_idx,
+        });
+    }
 }

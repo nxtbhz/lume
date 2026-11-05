@@ -51,22 +51,26 @@ impl SyntaxWorker {
                         .visible_range
                         .end
                         .saturating_sub(req.visible_range.start);
-                    let slice = if (base_offset == 0 && req.visible_range.end >= req.text.len())
+                    let (slice, actual_offset) = if (base_offset == 0
+                        && req.visible_range.end >= req.text.len())
                         || req.text.len() == expected_chunk_len
                     {
-                        req.text.as_str()
+                        (req.text.as_str(), base_offset)
                     } else {
-                        let start = req.visible_range.start.min(req.text.len());
-                        let end = req.visible_range.end.min(req.text.len());
-                        &req.text[start..end]
+                        let start =
+                            crate::lexer::floor_char_boundary(&req.text, req.visible_range.start);
+                        let end =
+                            crate::lexer::floor_char_boundary(&req.text, req.visible_range.end)
+                                .max(start);
+                        (&req.text[start..end], start)
                     };
 
                     highlighter.update(slice);
                     let mut tokens = highlighter.highlight_range(0, slice.len(), slice);
-                    if base_offset > 0 {
+                    if actual_offset > 0 {
                         for token in &mut tokens {
-                            token.start_byte += base_offset;
-                            token.end_byte += base_offset;
+                            token.start_byte += actual_offset;
+                            token.end_byte += actual_offset;
                         }
                     }
 
