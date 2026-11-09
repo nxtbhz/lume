@@ -205,22 +205,21 @@ fn test_close_dirty_tab_preserves_journal() {
     let _ = std::fs::remove_file(&file_path);
 }
 
+#[cfg(unix)]
 #[test]
 fn test_atomic_save_preserves_symlinks_and_posix_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
     let tmp_dir = std::env::temp_dir();
     let real_file = tmp_dir.join(format!("lume_real_target_{}.sh", std::process::id()));
     let symlink_file = tmp_dir.join(format!("lume_symlink_{}.sh", std::process::id()));
 
     std::fs::write(&real_file, "#!/bin/sh\necho old\n").unwrap();
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o755);
-        std::fs::set_permissions(&real_file, perms).unwrap();
-        let _ = std::fs::remove_file(&symlink_file);
-        std::os::unix::fs::symlink(&real_file, &symlink_file).unwrap();
-    }
+    let perms = std::fs::Permissions::from_mode(0o755);
+    std::fs::set_permissions(&real_file, perms).unwrap();
+    let _ = std::fs::remove_file(&symlink_file);
+    std::os::unix::fs::symlink(&real_file, &symlink_file).unwrap();
 
     // Save atomically via symlink
     let mut ed = Editor::open(&symlink_file).unwrap();
@@ -232,19 +231,14 @@ fn test_atomic_save_preserves_symlinks_and_posix_permissions() {
     let updated_content = std::fs::read_to_string(&real_file).unwrap();
     assert_eq!(updated_content, "#!/bin/sh\necho updated\n");
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        // Symlink must still be a symlink!
-        let sym_meta = std::fs::symlink_metadata(&symlink_file).unwrap();
-        assert!(sym_meta.file_type().is_symlink());
+    // Symlink must still be a symlink!
+    let sym_meta = std::fs::symlink_metadata(&symlink_file).unwrap();
+    assert!(sym_meta.file_type().is_symlink());
 
-        // Target file must still have 0755 executable permissions!
-        let real_meta = std::fs::metadata(&real_file).unwrap();
-        assert_eq!(real_meta.permissions().mode() & 0o777, 0o755);
+    // Target file must still have 0755 executable permissions!
+    let real_meta = std::fs::metadata(&real_file).unwrap();
+    assert_eq!(real_meta.permissions().mode() & 0o777, 0o755);
 
-        let _ = std::fs::remove_file(&symlink_file);
-    }
-
+    let _ = std::fs::remove_file(&symlink_file);
     let _ = std::fs::remove_file(&real_file);
 }

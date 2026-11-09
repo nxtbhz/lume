@@ -93,13 +93,13 @@ impl Editor {
         }
 
         // Durably sync directory entry on transactional POSIX filesystems
+        #[cfg(unix)]
         if let Some(parent) = target_path.parent() {
             let parent = if parent.as_os_str().is_empty() {
                 Path::new(".")
             } else {
                 parent
             };
-            #[cfg(unix)]
             if let Ok(dir) = std::fs::File::open(parent) {
                 let _ = dir.sync_all();
             }
