@@ -1,6 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::app::{ActiveFocus, App};
+use lume_core::TextBuffer;
 
 impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> std::io::Result<()> {
@@ -233,6 +234,8 @@ impl App {
         if self.modal_enabled {
             self.handle_modal_key(key)?;
         } else {
+            let tab_id = self.editor.active_tab().id;
+            let cursor = *self.editor.cursors().primary();
             match (key.code, ctrl, alt) {
                 (KeyCode::Left, false, false) => self.editor.move_left(shift),
                 (KeyCode::Right, false, false) => self.editor.move_right(shift),
@@ -249,19 +252,76 @@ impl App {
                 (KeyCode::Home, false, false) => self.editor.move_home(shift),
                 (KeyCode::End, false, false) => self.editor.move_end(shift),
                 (KeyCode::Backspace, false, false) => {
-                    let _ = self.editor.delete_backwards();
+                    let len_before = self.editor.buffer().len_bytes();
+                    let min_pos = cursor.min();
+                    if self.editor.delete_backwards().is_ok() {
+                        let len_after = self.editor.buffer().len_bytes();
+                        let deleted = len_before.saturating_sub(len_after);
+                        if deleted > 0 {
+                            let start = if cursor.is_selection() {
+                                min_pos
+                            } else {
+                                min_pos.saturating_sub(deleted)
+                            };
+                            self.shift_syntax_for_delta(tab_id, start, deleted, 0);
+                        }
+                    }
                 }
                 (KeyCode::Delete, false, false) => {
-                    let _ = self.editor.delete_forwards();
+                    let len_before = self.editor.buffer().len_bytes();
+                    let start = cursor.min();
+                    if self.editor.delete_forwards().is_ok() {
+                        let len_after = self.editor.buffer().len_bytes();
+                        let deleted = len_before.saturating_sub(len_after);
+                        if deleted > 0 {
+                            self.shift_syntax_for_delta(tab_id, start, deleted, 0);
+                        }
+                    }
                 }
                 (KeyCode::Enter, false, false) => {
-                    let _ = self.editor.insert_newline();
+                    let len_before = self.editor.buffer().len_bytes();
+                    let start = cursor.min();
+                    let old_len = if cursor.is_selection() {
+                        cursor.max() - cursor.min()
+                    } else {
+                        0
+                    };
+                    if self.editor.insert_newline().is_ok() {
+                        let len_after = self.editor.buffer().len_bytes();
+                        let new_len = (len_after as isize - len_before as isize + old_len as isize)
+                            .max(0) as usize;
+                        self.shift_syntax_for_delta(tab_id, start, old_len, new_len);
+                    }
                 }
                 (KeyCode::Tab, false, false) => {
-                    let _ = self.editor.insert_str("    ");
+                    let len_before = self.editor.buffer().len_bytes();
+                    let start = cursor.min();
+                    let old_len = if cursor.is_selection() {
+                        cursor.max() - cursor.min()
+                    } else {
+                        0
+                    };
+                    if self.editor.insert_str("    ").is_ok() {
+                        let len_after = self.editor.buffer().len_bytes();
+                        let new_len = (len_after as isize - len_before as isize + old_len as isize)
+                            .max(0) as usize;
+                        self.shift_syntax_for_delta(tab_id, start, old_len, new_len);
+                    }
                 }
                 (KeyCode::Char(c), false, false) => {
-                    let _ = self.editor.insert_char(c);
+                    let len_before = self.editor.buffer().len_bytes();
+                    let start = cursor.min();
+                    let old_len = if cursor.is_selection() {
+                        cursor.max() - cursor.min()
+                    } else {
+                        0
+                    };
+                    if self.editor.insert_char(c).is_ok() {
+                        let len_after = self.editor.buffer().len_bytes();
+                        let new_len = (len_after as isize - len_before as isize + old_len as isize)
+                            .max(0) as usize;
+                        self.shift_syntax_for_delta(tab_id, start, old_len, new_len);
+                    }
                 }
                 _ => {}
             }

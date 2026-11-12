@@ -43,7 +43,10 @@ fn test_editor_crash_recovery() {
     }
 
     // 2. User re-opens file after crash
-    let recovered_ed = Editor::open(&file_path).unwrap();
+    let mut recovered_ed = Editor::open(&file_path).unwrap();
+    assert!(recovered_ed.active_tab().pending_recovery.is_some());
+    assert!(!recovered_ed.is_dirty());
+    assert!(recovered_ed.recover_tab_journal(0));
     assert!(recovered_ed.active_tab().recovered_from_journal);
     assert!(recovered_ed.is_dirty());
     let text = recovered_ed
@@ -63,6 +66,7 @@ fn test_editor_async_autosave() {
 
     let mut ed = Editor::new();
     ed.set_file_path(Some(file_path.clone()));
+    ed.autosave_controller_mut().config.enabled = true;
     ed.autosave_controller_mut().config.debounce = std::time::Duration::from_millis(0);
 
     ed.insert_str("async autosave content").unwrap();
@@ -130,7 +134,9 @@ fn test_async_save_preserves_journal_for_newer_edits() {
     );
 
     // Recovering from journal must include edit2
-    let recovered = Editor::open(&file_path).unwrap();
+    let mut recovered = Editor::open(&file_path).unwrap();
+    assert!(recovered.active_tab().pending_recovery.is_some());
+    assert!(recovered.recover_tab_journal(0));
     assert_eq!(
         recovered
             .buffer()
@@ -193,7 +199,9 @@ fn test_close_dirty_tab_preserves_journal() {
     assert!(Journal::has_journal(&file_path));
 
     // Re-opening recovers the unsaved edits
-    let recovered = Editor::open(&file_path).unwrap();
+    let mut recovered = Editor::open(&file_path).unwrap();
+    assert!(recovered.active_tab().pending_recovery.is_some());
+    assert!(recovered.recover_tab_journal(0));
     assert_eq!(
         recovered
             .buffer()

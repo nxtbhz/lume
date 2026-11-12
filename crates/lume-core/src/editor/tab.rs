@@ -33,6 +33,7 @@ pub struct Tab {
     pub language_override: Option<String>,
     pub is_dirty: bool,
     pub recovered_from_journal: bool,
+    pub pending_recovery: Option<String>,
     pub clean_snapshot: Option<ropey::Rope>,
     pub journal_path: Option<PathBuf>,
     pub(crate) cached_diffs: Option<(u64, Arc<Vec<LineDiffStatus>>)>,
@@ -52,6 +53,7 @@ impl Tab {
             language_override: None,
             is_dirty: false,
             recovered_from_journal: false,
+            pending_recovery: None,
             clean_snapshot: None,
             cached_diffs: None,
             sync_state: None,
@@ -70,6 +72,26 @@ impl Tab {
             language_override: None,
             is_dirty: false,
             recovered_from_journal: false,
+            pending_recovery: None,
+            clean_snapshot: None,
+            cached_diffs: None,
+            sync_state: None,
+        }
+    }
+
+    pub fn from_rope(id: usize, rope: ropey::Rope) -> Self {
+        Self {
+            id,
+            revision: 0,
+            buffer: RopeBuffer::from_rope(rope),
+            cursors: CursorSet::new(),
+            history: History::new(),
+            file_path: None,
+            journal_path: None,
+            language_override: None,
+            is_dirty: false,
+            recovered_from_journal: false,
+            pending_recovery: None,
             clean_snapshot: None,
             cached_diffs: None,
             sync_state: None,

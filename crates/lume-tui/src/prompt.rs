@@ -20,6 +20,7 @@ pub enum PromptAction {
     GoToLine,
     ConfirmQuit,
     ConfirmCloseTab { tab_idx: usize },
+    ConfirmRecoverJournal { tab_idx: usize },
 }
 
 #[derive(Clone, Debug)]
@@ -181,6 +182,21 @@ impl InputPrompt {
         }
     }
 
+    pub fn confirm_recover_journal(tab_idx: usize, file_name: &str) -> Self {
+        let formatted = format!(
+            " Found crash journal for '{}'! [R]ecover, [D]iscard, [C]ancel / Esc ",
+            file_name
+        );
+        Self {
+            action: PromptAction::ConfirmRecoverJournal { tab_idx },
+            title: Cow::Owned(formatted),
+            value: String::new(),
+            cursor_pos: 0,
+            suggestions: Vec::new(),
+            selected_suggestion: 0,
+        }
+    }
+
     pub fn update_suggestions(&mut self) {
         match self.action {
             PromptAction::OpenFile | PromptAction::SaveFileAs => {
@@ -235,7 +251,8 @@ impl InputPrompt {
             | PromptAction::ConfirmDeleteFolder { .. }
             | PromptAction::GoToLine
             | PromptAction::ConfirmQuit
-            | PromptAction::ConfirmCloseTab { .. } => {
+            | PromptAction::ConfirmCloseTab { .. }
+            | PromptAction::ConfirmRecoverJournal { .. } => {
                 // Handled in handle_key with filter or no suggestions needed
             }
         }
@@ -311,7 +328,8 @@ impl InputPrompt {
             | PromptAction::ConfirmDeleteFolder { .. }
             | PromptAction::GoToLine
             | PromptAction::ConfirmQuit
-            | PromptAction::ConfirmCloseTab { .. } => {}
+            | PromptAction::ConfirmCloseTab { .. }
+            | PromptAction::ConfirmRecoverJournal { .. } => {}
         }
     }
 

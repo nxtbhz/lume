@@ -73,6 +73,8 @@ fn test_editor_undo_then_edit_crash_recovery_and_diff_baseline() {
     }
 
     let mut recovered_ed = Editor::open(&file_path).unwrap();
+    assert!(recovered_ed.active_tab().pending_recovery.is_some());
+    assert!(recovered_ed.recover_tab_journal(0));
     assert!(recovered_ed.is_dirty());
     assert_eq!(
         recovered_ed

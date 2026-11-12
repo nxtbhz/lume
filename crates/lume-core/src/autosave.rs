@@ -9,7 +9,7 @@ pub struct AutoSaveConfig {
 impl Default for AutoSaveConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             debounce: Duration::from_millis(1000),
         }
     }
@@ -78,5 +78,12 @@ mod tests {
 
         controller.mark_saved();
         assert!(!controller.should_autosave(true));
+    }
+
+    #[test]
+    fn test_autosave_config_default_disabled() {
+        let config = AutoSaveConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.debounce, Duration::from_millis(1000));
     }
 }

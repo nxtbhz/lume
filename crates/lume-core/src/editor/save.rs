@@ -110,8 +110,14 @@ impl Editor {
 
     pub fn save_buffer_atomically(path: &Path, buffer: &RopeBuffer) -> Result<(), std::io::Error> {
         Self::write_buffer_atomically(path, buffer)?;
-        let _ = Journal::remove(path);
+        let jpath = Journal::journal_path(path);
+        Journal::enqueue_remove(jpath);
         Ok(())
+    }
+
+    /// Synchronous save alias ensuring compatibility with M2 save interfaces.
+    pub fn save_sync(&mut self) -> Result<(), std::io::Error> {
+        self.save()
     }
 
     pub fn save_as<P: AsRef<Path>>(&mut self, path: P) -> Result<(), std::io::Error> {
@@ -182,7 +188,8 @@ impl Editor {
                 Ok(()) => {
                     let _guard = sync.journal_lock.lock().unwrap_or_else(|e| e.into_inner());
                     if sync.revision.load(Ordering::SeqCst) == save_revision {
-                        let _ = Journal::remove(&path);
+                        let jpath = Journal::journal_path(&path);
+                        Journal::enqueue_remove(jpath);
                         sync.is_dirty.store(false, Ordering::SeqCst);
                     }
                     Ok(())
@@ -222,10 +229,12 @@ impl Editor {
                                     sync.journal_lock.lock().unwrap_or_else(|e| e.into_inner());
                                 if sync.revision.load(Ordering::SeqCst) == ev.save_revision {
                                     sync.is_dirty.store(false, Ordering::SeqCst);
-                                    let _ = Journal::remove(&ev.path);
+                                    let jpath = Journal::journal_path(&ev.path);
+                                    Journal::enqueue_remove(jpath);
                                 }
                             } else {
-                                let _ = Journal::remove(&ev.path);
+                                let jpath = Journal::journal_path(&ev.path);
+                                Journal::enqueue_remove(jpath);
                             }
                         }
                     }
