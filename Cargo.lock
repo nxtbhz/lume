@@ -541,6 +541,7 @@ name = "lume-syntax"
 version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
+ "ropey",
  "tree-sitter",
  "tree-sitter-c",
  "tree-sitter-cpp",
