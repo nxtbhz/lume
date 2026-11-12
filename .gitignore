@@ -4,3 +4,5 @@
 /docs/
 benchmark.sh
 rust_out
+.agents/
+*.proptest-regressions
