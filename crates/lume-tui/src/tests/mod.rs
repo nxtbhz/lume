@@ -28,6 +28,8 @@ impl Drop for TestDir {
 }
 
 pub mod app_tests;
+pub mod challenger_m1_adversarial;
+pub mod challenger_m1_tests;
 pub mod clipboard_tests;
 pub mod explorer_tests;
 pub mod git_status_tests;

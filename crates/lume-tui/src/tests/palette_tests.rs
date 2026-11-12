@@ -243,6 +243,7 @@ fn test_app_events_tick_and_overlay_edge_cases() {
     assert!(app.editor.is_dirty());
 
     // AppEvent::FocusLost triggers async save when dirty and file_path is set
+    app.editor.autosave_controller_mut().config.enabled = true;
     app.handle_event(AppEvent::FocusLost, &mut sink).unwrap();
     for _ in 0..20 {
         app.handle_tick(&mut sink).unwrap();

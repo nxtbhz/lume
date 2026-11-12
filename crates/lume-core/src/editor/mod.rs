@@ -11,6 +11,7 @@ pub mod tab;
 pub use config::EditorConfig;
 pub use tab::{AsyncSaveEvent, Tab, TabSyncState};
 
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
@@ -74,37 +75,61 @@ impl Editor {
     pub fn open_in_current_tab<P: AsRef<Path>>(&mut self, path: P) -> Result<(), std::io::Error> {
         let path = path.as_ref();
 
-        // Check if crash recovery journal exists for this file
-        let (buffer, recovered) = if let Ok(Some(recovered_text)) = Journal::recover(path) {
-            (RopeBuffer::from_str(&recovered_text), true)
-        } else {
-            let file = std::fs::File::open(path)?;
-            (RopeBuffer::from_reader(file)?, false)
-        };
+        // 1. Open file and probe first 8 KiB for NUL bytes (\0)
+        let mut file = std::fs::File::open(path)?;
+        let mut probe = [0u8; 8192];
+        let n = file.read(&mut probe)?;
+        if probe[..n].contains(&0x00) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Binary file detected (NUL byte in first 8 KiB)",
+            ));
+        }
 
+        // 2. Rewind file and read into RopeBuffer, validating UTF-8 encoding
+        file.seek(SeekFrom::Start(0))?;
+        let buffer = RopeBuffer::from_reader(file).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::InvalidData {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid UTF-8 encoding")
+            } else {
+                e
+            }
+        })?;
+
+        // 3. Check for crash recovery journal:
+        //    - If stale (disk mtime > journal mtime): remove stale journal and load cleanly
+        //    - If fresh and content differs: stage in pending_recovery without marking dirty
+        //    - If fresh and content identical: remove redundant journal
+        let journal_path = Journal::journal_path(path);
+        let mut pending_recovery = None;
+
+        if Journal::has_journal(path) {
+            if !Journal::is_fresh_for(path) {
+                let _ = Journal::remove(path);
+            } else if let Ok(Some(recovered_text)) = Journal::recover(path) {
+                let disk_content = buffer.slice_to_cow(0, buffer.len_bytes());
+                if recovered_text == disk_content {
+                    let _ = Journal::remove(path);
+                } else {
+                    pending_recovery = Some(recovered_text);
+                }
+            }
+        }
+
+        // 4. All checks passed — safe to mutate active tab state
         let tab = &mut self.tabs[self.active_tab];
         tab.buffer = buffer;
         tab.cursors.set_single(0);
         tab.history.clear();
         tab.file_path = Some(path.to_path_buf());
-        tab.journal_path = Some(crate::journal::Journal::journal_path(path));
-        tab.is_dirty = recovered;
-        tab.recovered_from_journal = recovered;
-        if recovered {
-            let disk_rope = std::fs::read_to_string(path)
-                .map(|s| ropey::Rope::from_str(&s))
-                .unwrap_or_else(|_| ropey::Rope::new());
-            tab.clean_snapshot = Some(disk_rope);
-            tab.cached_diffs = None;
-        } else {
-            tab.update_clean_snapshot();
-        }
+        tab.journal_path = Some(journal_path);
+        tab.is_dirty = false;
+        tab.recovered_from_journal = false;
+        tab.pending_recovery = pending_recovery;
+        tab.update_clean_snapshot();
         if let Some(ref sync) = tab.sync_state {
-            sync.is_dirty.store(recovered, Ordering::SeqCst);
-        }
-
-        if recovered {
-            self.autosave.notify_change();
+            sync.is_dirty.store(false, Ordering::SeqCst);
+            sync.revision.store(tab.revision, Ordering::SeqCst);
         }
 
         Ok(())
@@ -156,7 +181,13 @@ impl Editor {
         }
 
         let idx = self.new_tab();
-        self.open_in_current_tab(path)?;
+        if let Err(e) = self.open_in_current_tab(path) {
+            self.tabs.pop();
+            if self.active_tab >= self.tabs.len() && !self.tabs.is_empty() {
+                self.active_tab = self.tabs.len() - 1;
+            }
+            return Err(e);
+        }
         Ok(idx)
     }
 
@@ -187,7 +218,13 @@ impl Editor {
         }
 
         let idx = self.new_tab();
-        self.open_in_current_tab(path)?;
+        if let Err(e) = self.open_in_current_tab(path) {
+            self.tabs.pop();
+            if self.active_tab >= self.tabs.len() && !self.tabs.is_empty() {
+                self.active_tab = self.tabs.len() - 1;
+            }
+            return Err(e);
+        }
         Ok(idx)
     }
 
@@ -333,6 +370,67 @@ impl Editor {
         } else {
             false
         }
+    }
+
+    /// Restores pending recovery text into the tab buffer, marks the buffer dirty,
+    /// updates revision, and notifies autosave.
+    pub fn recover_tab_journal(&mut self, tab_idx: usize) -> bool {
+        if tab_idx >= self.tabs.len() {
+            return false;
+        }
+        let tab = &mut self.tabs[tab_idx];
+        if let Some(text) = tab.pending_recovery.take() {
+            tab.buffer = RopeBuffer::from_str(&text);
+            tab.cursors.set_single(0);
+            tab.history.clear();
+            tab.revision += 1;
+            tab.is_dirty = true;
+            tab.recovered_from_journal = true;
+            tab.cached_diffs = None;
+            if let Some(ref sync) = tab.sync_state {
+                sync.revision.store(tab.revision, Ordering::SeqCst);
+                sync.is_dirty.store(true, Ordering::SeqCst);
+            }
+            self.autosave.notify_change();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Discards pending recovery and unlinks the `.journal` crash recovery file for the tab.
+    pub fn discard_tab_changes(&mut self, tab_idx: usize) -> bool {
+        if tab_idx >= self.tabs.len() {
+            return false;
+        }
+        let tab = &mut self.tabs[tab_idx];
+        tab.pending_recovery = None;
+        let jpath = tab
+            .journal_path
+            .clone()
+            .or_else(|| tab.file_path.as_ref().map(|p| Journal::journal_path(p)));
+        if let Some(jp) = jpath {
+            Journal::enqueue_remove(jp.clone());
+            Journal::flush();
+        }
+        true
+    }
+
+    /// Discards pending recovery and unlinks all `.journal` files for all currently open tabs.
+    pub fn discard_all_journals(&mut self) {
+        for i in 0..self.tabs.len() {
+            self.discard_tab_changes(i);
+        }
+    }
+
+    /// Returns pending recovery text for the active tab, if present.
+    pub fn pending_recovery(&self) -> Option<&str> {
+        self.tabs[self.active_tab].pending_recovery.as_deref()
+    }
+
+    /// Flushes all pending background journal operations and blocks until durability is achieved.
+    pub fn flush_journal(&self) {
+        Journal::flush();
     }
 }
 

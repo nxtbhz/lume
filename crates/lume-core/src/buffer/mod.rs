@@ -89,6 +89,10 @@ impl RopeBuffer {
         }
     }
 
+    pub fn from_rope(rope: ropey::Rope) -> Self {
+        Self { rope }
+    }
+
     pub fn from_reader<R: std::io::Read>(reader: R) -> Result<Self, std::io::Error> {
         let rope = ropey::Rope::from_reader(reader)?;
         Ok(Self { rope })

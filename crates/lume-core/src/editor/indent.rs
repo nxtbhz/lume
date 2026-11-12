@@ -39,16 +39,14 @@ impl Editor {
                 .journal_path
                 .clone()
                 .unwrap_or_else(|| Journal::journal_path(path));
-            let _guard = sync_clone
-                .as_ref()
-                .map(|s| s.journal_lock.lock().unwrap_or_else(|e| e.into_inner()));
             if deltas.is_empty() {
-                let text = self.tabs[self.active_tab]
-                    .buffer
-                    .slice_to_cow(0, self.tabs[self.active_tab].buffer.len_bytes());
-                let _ = Journal::record_with_journal_path(&jpath, &text);
+                Journal::enqueue_snapshot(
+                    path.clone(),
+                    jpath,
+                    self.tabs[self.active_tab].buffer.rope().clone(),
+                );
             } else {
-                let _ = Journal::record_deltas_with_journal_path(path, &jpath, deltas);
+                Journal::enqueue_deltas(path.clone(), jpath, deltas.to_vec());
             }
         }
     }

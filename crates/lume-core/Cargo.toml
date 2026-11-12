@@ -19,3 +19,12 @@ proptest = "1.6"
 [[bench]]
 name = "latency"
 harness = false
+
+[features]
+default = []
+m1 = []
+m2 = []
+m3 = []
+m4 = []
+m5 = []
+e2e = ["m1", "m2", "m3", "m4", "m5"]

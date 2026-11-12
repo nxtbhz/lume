@@ -29,8 +29,9 @@ impl App {
                 self.render(writer)?;
             }
             AppEvent::Mouse(mouse) => {
-                self.handle_mouse(mouse)?;
-                self.render(writer)?;
+                if self.handle_mouse(mouse)? {
+                    self.render(writer)?;
+                }
             }
             AppEvent::Resize(w, h) => {
                 self.terminal_width = w;
@@ -39,7 +40,10 @@ impl App {
                 self.render(writer)?;
             }
             AppEvent::FocusLost => {
-                if self.editor.is_dirty() && self.editor.file_path().is_some() {
+                if self.editor.autosave_controller().config.enabled
+                    && self.editor.is_dirty()
+                    && self.editor.file_path().is_some()
+                {
                     if let Err(e) = self.editor.save_async() {
                         self.set_status(format!("Save error: {}", e));
                     }
