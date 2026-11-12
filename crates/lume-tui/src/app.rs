@@ -12,7 +12,7 @@ use crate::prompt::InputPrompt;
 use crate::search::{SearchField, SearchState};
 use crate::vim::VimState;
 use lume_core::{Editor, TextBuffer};
-use lume_syntax::{HighlightToken, Language, SyntaxRequest, SyntaxWorker};
+use lume_syntax::{ByteDelta, HighlightToken, Language, SyntaxRequest, SyntaxWorker};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActiveFocus {
@@ -148,7 +148,6 @@ impl App {
                             Err(e) => {
                                 initial_status =
                                     Some(format!("Error opening {}: {}", file_path.display(), e));
-                                editor.set_file_path(Some(file_path.clone()));
                             }
                         }
                         first = false;
@@ -158,8 +157,6 @@ impl App {
                             Err(e) => {
                                 initial_status =
                                     Some(format!("Error opening {}: {}", file_path.display(), e));
-                                let _ = editor.new_tab();
-                                editor.set_file_path(Some(file_path.clone()));
                             }
                         }
                     }
@@ -236,6 +233,8 @@ impl App {
         } else if targets.workspace.is_some() {
             app.set_status(format!("Workspace: {}", workspace_root.display()));
         }
+
+        app.prompt_next_recovery_if_any();
 
         Ok(app)
     }
@@ -369,7 +368,20 @@ impl App {
             prompt.insert_str(single_line);
             self.prompt = Some(prompt);
         } else {
+            let tab_id = self.editor.active_tab().id;
+            let cursor = *self.editor.cursors().primary();
+            let len_before = self.editor.buffer().len_bytes();
+            let start = cursor.min();
+            let old_len = if cursor.is_selection() {
+                cursor.max() - cursor.min()
+            } else {
+                0
+            };
             let _ = self.editor.insert_str(text);
+            let len_after = self.editor.buffer().len_bytes();
+            let new_len =
+                (len_after as isize - len_before as isize + old_len as isize).max(0) as usize;
+            self.shift_syntax_for_delta(tab_id, start, old_len, new_len);
             if self.modal_enabled && self.vim_state.mode == crate::vim::VimMode::Visual {
                 self.vim_state.set_mode(crate::vim::VimMode::Normal);
             }
@@ -489,6 +501,12 @@ impl App {
     }
 
     pub fn close_tab_and_sync_splits(&mut self, tab_idx: usize) {
+        if let Some(tab) = self.editor.tabs().get(tab_idx) {
+            let tab_id = tab.id;
+            self.syntax_cache.remove(&tab_id);
+            self.syntax_in_flight.remove(&tab_id);
+            self.syntax_worker.drop_buffer(tab_id);
+        }
         self.editor.close_tab(tab_idx);
         let max_tab = self.editor.tabs().len().saturating_sub(1);
         let active_tab_idx = self.editor.active_tab_idx();
@@ -514,6 +532,60 @@ impl App {
             self.editor.switch_tab(target_tab);
             self.scroll_row = self.splits.panes[active].scroll_row;
             self.scroll_col = self.splits.panes[active].scroll_col;
+        }
+    }
+
+    pub fn request_close_tab(&mut self, idx: usize) {
+        if idx >= self.editor.tabs().len() {
+            return;
+        }
+        if self.editor.tabs()[idx].is_dirty {
+            let name = self.editor.tabs()[idx].name();
+            self.prompt = Some(crate::prompt::InputPrompt::confirm_close_tab(idx, &name));
+        } else {
+            self.close_tab_and_sync_splits(idx);
+            self.set_status("Closed tab");
+        }
+    }
+
+    pub fn prompt_recover_if_needed(&mut self, tab_idx: usize) {
+        if self.prompt.is_none() {
+            if let Some(tab) = self.editor.tabs().get(tab_idx) {
+                if tab.pending_recovery.is_some() {
+                    let name = tab.name();
+                    self.prompt = Some(crate::prompt::InputPrompt::confirm_recover_journal(
+                        tab_idx, &name,
+                    ));
+                }
+            }
+        }
+    }
+
+    pub fn prompt_next_recovery_if_any(&mut self) {
+        if self.prompt.is_none() {
+            let active = self.editor.active_tab_idx();
+            if self
+                .editor
+                .tabs()
+                .get(active)
+                .and_then(|t| t.pending_recovery.as_ref())
+                .is_some()
+            {
+                let name = self.editor.tabs()[active].name();
+                self.prompt = Some(crate::prompt::InputPrompt::confirm_recover_journal(
+                    active, &name,
+                ));
+                return;
+            }
+            for (idx, tab) in self.editor.tabs().iter().enumerate() {
+                if tab.pending_recovery.is_some() {
+                    let name = tab.name();
+                    self.prompt = Some(crate::prompt::InputPrompt::confirm_recover_journal(
+                        idx, &name,
+                    ));
+                    break;
+                }
+            }
         }
     }
 
@@ -563,6 +635,7 @@ impl App {
         Self::clamp_cursors_to_buffer(&mut cursors, self.editor.buffer());
         *self.editor.cursors_mut() = cursors.clone();
         self.splits.panes[target_pane].cursors = cursors;
+        self.prompt_recover_if_needed(tab_idx);
     }
 
     pub fn language_for_tab(&self, tab_idx: usize) -> Option<Language> {
@@ -620,11 +693,9 @@ impl App {
         updated
     }
 
-    pub fn update_syntax_highlights_for_tab(&mut self, tab_idx: usize) -> Arc<Vec<HighlightToken>> {
-        let _ = self.has_pending_syntax_response();
-
+    pub fn request_syntax_highlighting(&mut self, tab_idx: usize) {
         let Some(tab) = self.editor.tabs().get(tab_idx) else {
-            return Arc::new(Vec::new());
+            return;
         };
         let tab_id = tab.id;
         let tab_rev = tab.revision;
@@ -636,18 +707,29 @@ impl App {
 
         if needs_request && self.syntax_in_flight.get(&tab_id) != Some(&tab_rev) {
             if let Some(lang) = self.language_for_tab(tab_idx) {
-                let full_text = self.editor.tabs()[tab_idx].buffer.rope().to_string();
-                let full_len = full_text.len();
+                let rope = tab.buffer.rope().clone();
+                let full_len = rope.len_bytes();
                 self.syntax_in_flight.insert(tab_id, tab_rev);
                 self.syntax_worker.send_request(SyntaxRequest {
                     buffer_id: tab_id,
                     revision: tab_rev,
                     language: lang,
-                    text: full_text,
+                    text: rope,
                     visible_range: 0..full_len,
                 });
             }
         }
+    }
+
+    pub fn update_syntax_highlights_for_tab(&mut self, tab_idx: usize) -> Arc<Vec<HighlightToken>> {
+        let _ = self.has_pending_syntax_response();
+
+        self.request_syntax_highlighting(tab_idx);
+
+        let Some(tab) = self.editor.tabs().get(tab_idx) else {
+            return Arc::new(Vec::new());
+        };
+        let tab_id = tab.id;
 
         self.syntax_cache
             .get(&tab_id)
@@ -659,6 +741,27 @@ impl App {
     pub fn update_syntax_highlights(&mut self) -> Arc<Vec<HighlightToken>> {
         let active_idx = self.editor.active_tab_idx();
         self.update_syntax_highlights_for_tab(active_idx)
+    }
+
+    pub fn shift_syntax_cache_for_tab(&mut self, tab_id: usize, deltas: &[ByteDelta]) {
+        if deltas.is_empty() {
+            return;
+        }
+        if let Some((_, cached_tokens)) = self.syntax_cache.get_mut(&tab_id) {
+            let shifted = lume_syntax::shift_tokens_for_deltas(cached_tokens, deltas);
+            *cached_tokens = Arc::new(shifted);
+        }
+    }
+
+    pub fn shift_syntax_for_delta(
+        &mut self,
+        tab_id: usize,
+        start_byte: usize,
+        old_len: usize,
+        new_len: usize,
+    ) {
+        let delta = ByteDelta::new(start_byte, old_len, new_len);
+        self.shift_syntax_cache_for_tab(tab_id, &[delta]);
     }
 
     pub fn handle_deleted_folder_tabs(&mut self, folder_path: &std::path::Path) {
@@ -688,6 +791,7 @@ impl App {
                     let _ = lume_core::Journal::remove(&p_canon);
                     let _ = lume_core::Journal::remove(&p_abs);
                     tab.file_path = None;
+                    tab.journal_path = None;
                     tab.is_dirty = true;
                 }
             }
@@ -737,8 +841,10 @@ impl App {
                     let _ = lume_core::Journal::remove(&p_canon);
                     let _ = lume_core::Journal::remove(&p_abs);
                     tab.file_path = Some(new_canon.clone());
+                    tab.journal_path = Some(lume_core::Journal::journal_path(&new_canon));
                     self.syntax_cache.remove(&tab.id);
                     self.syntax_in_flight.remove(&tab.id);
+                    self.syntax_worker.drop_buffer(tab.id);
                 } else if p_canon.starts_with(&old_canon)
                     || p_abs.starts_with(&old_canon)
                     || p_abs.starts_with(old_path)
@@ -752,9 +858,11 @@ impl App {
                         let _ = lume_core::Journal::remove(p);
                         let _ = lume_core::Journal::remove(&p_canon);
                         let _ = lume_core::Journal::remove(&p_abs);
-                        tab.file_path = Some(updated);
+                        tab.file_path = Some(updated.clone());
+                        tab.journal_path = Some(lume_core::Journal::journal_path(&updated));
                         self.syntax_cache.remove(&tab.id);
                         self.syntax_in_flight.remove(&tab.id);
+                        self.syntax_worker.drop_buffer(tab.id);
                     }
                 }
             }

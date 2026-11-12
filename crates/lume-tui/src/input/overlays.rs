@@ -17,6 +17,37 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
 
+        if let PromptAction::ConfirmRecoverJournal { tab_idx } = prompt.action {
+            match key.code {
+                KeyCode::Char('r') | KeyCode::Char('R') => {
+                    self.editor.recover_tab_journal(tab_idx);
+                    self.adjust_viewport();
+                    self.update_syntax_highlights_for_tab(tab_idx);
+                    self.set_status("Recovered changes from journal");
+                    self.prompt_next_recovery_if_any();
+                    return Ok(());
+                }
+                KeyCode::Char('d') | KeyCode::Char('D') => {
+                    self.editor.discard_tab_changes(tab_idx);
+                    self.set_status("Discarded journal recovery");
+                    self.prompt_next_recovery_if_any();
+                    return Ok(());
+                }
+                KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Esc => {
+                    if let Some(tab) = self.editor.tabs_mut().get_mut(tab_idx) {
+                        tab.pending_recovery = None;
+                    }
+                    self.set_status("Cancelled");
+                    self.prompt_next_recovery_if_any();
+                    return Ok(());
+                }
+                _ => {
+                    self.prompt = Some(prompt);
+                    return Ok(());
+                }
+            }
+        }
+
         if matches!(
             prompt.action,
             PromptAction::ConfirmQuit | PromptAction::ConfirmCloseTab { .. }
@@ -71,9 +102,11 @@ impl App {
                 KeyCode::Char('d') | KeyCode::Char('D') => {
                     match prompt.action {
                         PromptAction::ConfirmQuit => {
+                            self.editor.discard_all_journals();
                             self.running = false;
                         }
                         PromptAction::ConfirmCloseTab { tab_idx } => {
+                            self.editor.discard_tab_changes(tab_idx);
                             self.close_tab_and_sync_splits(tab_idx);
                             self.set_status("Closed tab (changes discarded)");
                         }
@@ -111,10 +144,11 @@ impl App {
                             };
                             if path.exists() {
                                 match self.editor.open_or_load(&path) {
-                                    Ok(_) => {
+                                    Ok(idx) => {
                                         self.focus = ActiveFocus::Editor;
                                         self.adjust_viewport();
                                         self.set_status(format!("Opened {}", path.display()));
+                                        self.prompt_recover_if_needed(idx);
                                     }
                                     Err(e) => self.set_status(format!("Open error: {}", e)),
                                 }
@@ -204,13 +238,14 @@ impl App {
                         if !val.is_empty() {
                             match self.explorer.create_file(&parent_dir, &val) {
                                 Ok(created) => match self.editor.open_or_load(&created) {
-                                    Ok(_) => {
+                                    Ok(idx) => {
                                         self.focus = ActiveFocus::Editor;
                                         self.adjust_viewport();
                                         self.set_status(format!(
                                             "Created and opened file: {}",
                                             created.display()
                                         ));
+                                        self.prompt_recover_if_needed(idx);
                                     }
                                     Err(e) => {
                                         self.set_status(format!(
@@ -302,6 +337,7 @@ impl App {
                             self.prompt = Some(InputPrompt::save_as(None));
                         }
                     }
+                    PromptAction::ConfirmRecoverJournal { .. } => {}
                 }
             }
             KeyCode::Tab => {
@@ -656,10 +692,11 @@ impl App {
             KeyCode::Enter | KeyCode::Char(' ') => {
                 if let Some(path) = self.explorer.activate_selected() {
                     match self.editor.open_or_load(&path) {
-                        Ok(_) => {
+                        Ok(idx) => {
                             self.focus = ActiveFocus::Editor;
                             self.adjust_viewport();
                             self.set_status(format!("Opened {}", path.display()));
+                            self.prompt_recover_if_needed(idx);
                         }
                         Err(e) => self.set_status(format!("Open error: {}", e)),
                     }
@@ -735,10 +772,11 @@ impl App {
                     let full_path = item.full_path.clone();
                     self.quick_open = None;
                     match self.editor.open_or_load(&full_path) {
-                        Ok(_) => {
+                        Ok(idx) => {
                             self.focus = ActiveFocus::Editor;
                             self.adjust_viewport();
                             self.set_status(format!("Opened {}", full_path.display()));
+                            self.prompt_recover_if_needed(idx);
                         }
                         Err(e) => self.set_status(format!("Open error: {}", e)),
                     }

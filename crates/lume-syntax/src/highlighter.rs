@@ -25,17 +25,22 @@ impl SyntaxHighlighter {
                 tree: None,
             })
         } else {
-            Ok(Self {
-                language,
-                parser: None,
-                tree: None,
-            })
+            Ok(Self::plain(language))
+        }
+    }
+
+    /// Creates a fallback syntax highlighter without tree-sitter parser
+    pub fn plain(language: Language) -> Self {
+        Self {
+            language,
+            parser: None,
+            tree: None,
         }
     }
 
     pub fn update(&mut self, text: &str) {
         if let Some(ref mut parser) = self.parser {
-            self.tree = parser.parse(text, None);
+            self.tree = parser.parse(text, self.tree.as_ref());
         }
     }
 

@@ -324,21 +324,16 @@ impl App {
             }
             "file.close_tab" => {
                 let idx = self.editor.active_tab_idx();
-                if self.editor.tabs().get(idx).is_some_and(|t| t.is_dirty) {
-                    let name = self.editor.tabs()[idx]
-                        .file_path
-                        .as_ref()
-                        .and_then(|p| p.file_name())
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("Untitled");
-                    self.prompt = Some(InputPrompt::confirm_close_tab(idx, name));
-                } else {
-                    self.close_tab_and_sync_splits(idx);
-                    self.set_status("Closed tab");
-                }
+                self.request_close_tab(idx);
             }
-            "file.next_tab" => self.editor.next_tab(),
-            "file.prev_tab" => self.editor.prev_tab(),
+            "file.next_tab" => {
+                self.editor.next_tab();
+                self.prompt_recover_if_needed(self.editor.active_tab_idx());
+            }
+            "file.prev_tab" => {
+                self.editor.prev_tab();
+                self.prompt_recover_if_needed(self.editor.active_tab_idx());
+            }
             "edit.undo" => {
                 if self.editor.undo() {
                     self.set_status("Undo");

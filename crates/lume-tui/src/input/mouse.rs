@@ -5,7 +5,7 @@ use lume_core::TextBuffer;
 use std::time::{Duration, Instant};
 
 impl App {
-    pub fn handle_mouse(&mut self, mouse: MouseEvent) -> std::io::Result<()> {
+    pub fn handle_mouse(&mut self, mouse: MouseEvent) -> std::io::Result<bool> {
         let col = mouse.column as usize;
         let row = mouse.row as usize;
 
@@ -32,40 +32,42 @@ impl App {
                                     let full_path = item.full_path.clone();
                                     self.quick_open = None;
                                     match self.editor.open_or_load(&full_path) {
-                                        Ok(_) => {
+                                        Ok(idx) => {
                                             self.focus = ActiveFocus::Editor;
                                             self.adjust_viewport();
                                             self.set_status(format!(
                                                 "Opened {}",
                                                 full_path.display()
                                             ));
+                                            self.prompt_recover_if_needed(idx);
                                         }
                                         Err(e) => self.set_status(format!("Open error: {}", e)),
                                     }
-                                    return Ok(());
+                                    return Ok(true);
                                 }
                             }
                         }
                         self.quick_open = Some(state);
+                        return Ok(false);
                     } else {
                         // Click outside closes quick open
                         self.quick_open = None;
+                        return Ok(true);
                     }
-                    return Ok(());
                 }
                 MouseEventKind::ScrollUp => {
                     state.move_up();
                     self.quick_open = Some(state);
-                    return Ok(());
+                    return Ok(true);
                 }
                 MouseEventKind::ScrollDown => {
                     state.move_down(10);
                     self.quick_open = Some(state);
-                    return Ok(());
+                    return Ok(true);
                 }
                 _ => {
                     self.quick_open = Some(state);
-                    return Ok(());
+                    return Ok(false);
                 }
             }
         }
@@ -85,7 +87,7 @@ impl App {
                 if row == status_row {
                     // Click on language area (Ln ..., Col ... | <Lang>)
                     self.execute_command("language.set_mode");
-                    return Ok(());
+                    return Ok(true);
                 }
 
                 // Click in Tab Bar (Row 0)
@@ -98,7 +100,7 @@ impl App {
                         self.focus = ActiveFocus::Editor;
                         self.handle_tab_bar_click(col.saturating_sub(exp_w));
                     }
-                    return Ok(());
+                    return Ok(true);
                 }
 
                 // Click in main body (Rows 1..status_row)
@@ -109,15 +111,16 @@ impl App {
                         let rel_row = row - text_top;
                         if let Some(path) = self.explorer.click_at(rel_row) {
                             match self.editor.open_or_load(&path) {
-                                Ok(_) => {
+                                Ok(idx) => {
                                     self.focus = ActiveFocus::Editor;
                                     self.adjust_viewport();
                                     self.set_status(format!("Opened {}", path.display()));
+                                    self.prompt_recover_if_needed(idx);
                                 }
                                 Err(e) => self.set_status(format!("Open error: {}", e)),
                             }
                         }
-                        return Ok(());
+                        return Ok(true);
                     }
 
                     // Click in Editor text area
@@ -149,7 +152,7 @@ impl App {
                             }
                             HitTarget::Separator | HitTarget::Outside => {
                                 self.mouse_dragging = false;
-                                return Ok(());
+                                return Ok(false);
                             }
                         }
                     } else {
@@ -187,7 +190,9 @@ impl App {
                         self.mouse_dragging = true;
                     }
                     self.sync_active_pane();
+                    return Ok(true);
                 }
+                Ok(false)
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 if self.mouse_dragging && row >= text_top && row < status_row && col >= text_left {
@@ -218,10 +223,14 @@ impl App {
                     self.editor
                         .set_cursor_from_line_col(buffer_line, buffer_col, true);
                     self.sync_active_pane();
+                    Ok(true)
+                } else {
+                    Ok(false)
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
                 self.mouse_dragging = false;
+                Ok(false)
             }
             MouseEventKind::ScrollUp => {
                 if col < exp_w && self.explorer.is_visible {
@@ -240,6 +249,7 @@ impl App {
                 } else {
                     self.scroll_row = self.scroll_row.saturating_sub(3);
                 }
+                Ok(true)
             }
             MouseEventKind::ScrollDown => {
                 if col < exp_w && self.explorer.is_visible {
@@ -265,6 +275,7 @@ impl App {
                     let max_lines = total_lines.saturating_sub(1);
                     self.scroll_row = (self.scroll_row + 3).min(max_lines);
                 }
+                Ok(true)
             }
             MouseEventKind::ScrollLeft => {
                 if self.splits.is_split {
@@ -281,6 +292,7 @@ impl App {
                 } else {
                     self.scroll_col = self.scroll_col.saturating_sub(3);
                 }
+                Ok(true)
             }
             MouseEventKind::ScrollRight => {
                 if self.splits.is_split {
@@ -297,11 +309,11 @@ impl App {
                 } else {
                     self.scroll_col = self.scroll_col.saturating_add(3);
                 }
+                Ok(true)
             }
-            _ => {}
+            MouseEventKind::Moved => Ok(false),
+            _ => Ok(false),
         }
-
-        Ok(())
     }
 
     pub fn handle_tab_bar_click(&mut self, col: usize) {
@@ -322,9 +334,10 @@ impl App {
                 if col >= current_col + close_button_offset - 1
                     && col <= current_col + close_button_offset + 1
                 {
-                    self.close_tab_and_sync_splits(i);
+                    self.request_close_tab(i);
                 } else {
                     self.editor.switch_tab(i);
+                    self.prompt_recover_if_needed(i);
                 }
                 self.adjust_viewport();
                 return;
