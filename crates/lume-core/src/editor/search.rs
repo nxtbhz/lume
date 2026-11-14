@@ -107,8 +107,28 @@ impl Editor {
             .record_edits(deltas.clone(), cursors_before, cursors_after);
         self.record_edit_internal(&deltas);
 
-        // Advance to next match after this replacement
-        let _ = self.find_next(query, case_sensitive);
+        // Advance to next match after this replacement without wrapping into the inserted span
+        if let Some((next_start, next_end)) = self.find_next(query, case_sensitive) {
+            if next_start < new_pos && next_end > target_start {
+                let tab = &mut self.tabs[self.active_tab];
+                if let Some((earlier_start, earlier_end)) = crate::search::find_matches_in_range(
+                    &tab.buffer,
+                    query,
+                    0,
+                    target_start,
+                    case_sensitive,
+                )
+                .into_iter()
+                .next()
+                {
+                    let primary = tab.cursors.primary_mut();
+                    primary.anchor = earlier_start;
+                    primary.head = earlier_end;
+                } else {
+                    tab.cursors.set_single(new_pos);
+                }
+            }
+        }
 
         true
     }

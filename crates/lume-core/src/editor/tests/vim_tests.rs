@@ -139,3 +139,12 @@ fn test_delete_line_eof_and_paste_normalization() {
     editor2.paste_yank(&deleted2, true).unwrap();
     assert_eq!(editor2.buffer().rope().to_string(), "line A\nline B\n");
 }
+
+#[test]
+fn test_delete_line_crlf_last_line_no_trailing_newline() {
+    let mut ed = Editor::from_str("line A\r\nline B");
+    ed.set_cursor_from_line_col(1, 0, false);
+    let deleted = ed.delete_line().unwrap();
+    assert_eq!(ed.buffer().rope().to_string(), "line A");
+    assert_eq!(deleted, "line B\n");
+}

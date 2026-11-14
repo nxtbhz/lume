@@ -275,6 +275,74 @@ impl Editor {
         Ok(())
     }
 
+    fn rollback_deltas(buffer: &mut crate::buffer::RopeBuffer, deltas: Vec<TextDelta>) {
+        for delta in deltas.into_iter().rev() {
+            if !delta.new_text.is_empty() {
+                let _ = buffer.delete(delta.start_byte, delta.start_byte + delta.new_text.len());
+            }
+            if !delta.old_text.is_empty() {
+                let _ = buffer.insert(delta.start_byte, &delta.old_text);
+            }
+        }
+    }
+
+    fn delete_range_or_rollback(
+        buffer: &mut crate::buffer::RopeBuffer,
+        deltas: &mut Vec<TextDelta>,
+        start: usize,
+        end: usize,
+    ) -> Result<usize, BufferError> {
+        match buffer.delete(start, end) {
+            Ok(delta) => {
+                deltas.push(delta);
+                Ok(end - start)
+            }
+            Err(e) => {
+                let to_rollback = std::mem::take(deltas);
+                Self::rollback_deltas(buffer, to_rollback);
+                Err(e)
+            }
+        }
+    }
+
+    fn finish_delete_batch(
+        &mut self,
+        deltas: Vec<TextDelta>,
+        new_cursors: Vec<Cursor>,
+        cursors_before: Vec<Cursor>,
+    ) {
+        if !deltas.is_empty() {
+            let tab = &mut self.tabs[self.active_tab];
+            tab.cursors.set_cursors(new_cursors);
+            let cursors_after = tab.cursors.cursors().to_vec();
+            tab.history
+                .record_edits(deltas.clone(), cursors_before, cursors_after);
+            self.record_edit_internal(&deltas);
+        }
+    }
+
+    fn delete_selection_or_rollback(
+        buffer: &mut crate::buffer::RopeBuffer,
+        deltas: &mut Vec<TextDelta>,
+        new_cursors: &mut Vec<Cursor>,
+        delta_offset: &mut isize,
+        start: usize,
+        end: usize,
+    ) -> Result<(), BufferError> {
+        let len = buffer.len_bytes();
+        if end > len {
+            let to_rollback = std::mem::take(deltas);
+            Self::rollback_deltas(buffer, to_rollback);
+            return Err(BufferError::OutOfBounds(end, len));
+        }
+        if start < end {
+            let removed = Self::delete_range_or_rollback(buffer, deltas, start, end)?;
+            *delta_offset -= removed as isize;
+        }
+        new_cursors.push(Cursor::new(start));
+        Ok(())
+    }
+
     pub fn delete_backwards(&mut self) -> Result<(), BufferError> {
         let tab = &mut self.tabs[self.active_tab];
         let cursors_before = tab.cursors.cursors().to_vec();
@@ -294,16 +362,19 @@ impl Editor {
             let end = (cursor.max() as isize + delta_offset).max(0) as usize;
 
             if cursor.is_selection() {
-                if start < end && end <= tab.buffer.len_bytes() {
-                    let delta = tab.buffer.delete(start, end)?;
-                    deltas.push(delta);
-                    new_cursors.push(Cursor::new(start));
-                    delta_offset -= (end - start) as isize;
-                } else {
-                    new_cursors.push(Cursor::new(start));
-                }
-            } else if start > 0 && start <= tab.buffer.len_bytes() {
-                // Check for smart unindent condition
+                Self::delete_selection_or_rollback(
+                    &mut tab.buffer,
+                    &mut deltas,
+                    &mut new_cursors,
+                    &mut delta_offset,
+                    start,
+                    end,
+                )?;
+            } else if start > tab.buffer.len_bytes() {
+                let len = tab.buffer.len_bytes();
+                Self::rollback_deltas(&mut tab.buffer, deltas);
+                return Err(BufferError::OutOfBounds(start, len));
+            } else if start > 0 {
                 let line = tab.buffer.byte_to_line(start);
                 let line_start_char = tab.buffer.rope().line_to_char(line);
                 let line_start_byte = tab.buffer.char_to_byte(line_start_char);
@@ -316,8 +387,7 @@ impl Editor {
                     smart_unindent && is_all_spaces && (col > 0 && col.is_multiple_of(tab_size));
 
                 let delete_from_byte = if can_unindent {
-                    let target_char = cursor_char - tab_size;
-                    tab.buffer.char_to_byte(target_char)
+                    tab.buffer.char_to_byte(cursor_char - tab_size)
                 } else {
                     let prev_char = if cursor_char >= 2
                         && tab.buffer.rope().char(cursor_char - 1) == '\n'
@@ -330,23 +400,20 @@ impl Editor {
                     tab.buffer.char_to_byte(prev_char)
                 };
 
-                let delta = tab.buffer.delete(delete_from_byte, start)?;
-                deltas.push(delta);
+                let removed = Self::delete_range_or_rollback(
+                    &mut tab.buffer,
+                    &mut deltas,
+                    delete_from_byte,
+                    start,
+                )?;
                 new_cursors.push(Cursor::new(delete_from_byte));
-                delta_offset -= (start - delete_from_byte) as isize;
+                delta_offset -= removed as isize;
             } else {
                 new_cursors.push(Cursor::new(start));
             }
         }
 
-        if !deltas.is_empty() {
-            tab.cursors.set_cursors(new_cursors);
-            let cursors_after = tab.cursors.cursors().to_vec();
-            tab.history
-                .record_edits(deltas.clone(), cursors_before, cursors_after);
-            self.record_edit_internal(&deltas);
-        }
-
+        self.finish_delete_batch(deltas, new_cursors, cursors_before);
         Ok(())
     }
 
@@ -366,14 +433,18 @@ impl Editor {
             let end = (cursor.max() as isize + delta_offset).max(0) as usize;
 
             if cursor.is_selection() {
-                if start < end && end <= tab.buffer.len_bytes() {
-                    let delta = tab.buffer.delete(start, end)?;
-                    deltas.push(delta);
-                    new_cursors.push(Cursor::new(start));
-                    delta_offset -= (end - start) as isize;
-                } else {
-                    new_cursors.push(Cursor::new(start));
-                }
+                Self::delete_selection_or_rollback(
+                    &mut tab.buffer,
+                    &mut deltas,
+                    &mut new_cursors,
+                    &mut delta_offset,
+                    start,
+                    end,
+                )?;
+            } else if start > tab.buffer.len_bytes() {
+                let len = tab.buffer.len_bytes();
+                Self::rollback_deltas(&mut tab.buffer, deltas);
+                return Err(BufferError::OutOfBounds(start, len));
             } else if start < tab.buffer.len_bytes() {
                 let char_idx = tab.buffer.byte_to_char(start);
                 let total_chars = tab.buffer.len_chars();
@@ -386,23 +457,16 @@ impl Editor {
                     char_idx + 1
                 };
                 let next_byte = tab.buffer.char_to_byte(next_char);
-                let delta = tab.buffer.delete(start, next_byte)?;
-                deltas.push(delta);
+                let removed =
+                    Self::delete_range_or_rollback(&mut tab.buffer, &mut deltas, start, next_byte)?;
                 new_cursors.push(Cursor::new(start));
-                delta_offset -= (next_byte - start) as isize;
+                delta_offset -= removed as isize;
             } else {
                 new_cursors.push(Cursor::new(start));
             }
         }
 
-        if !deltas.is_empty() {
-            tab.cursors.set_cursors(new_cursors);
-            let cursors_after = tab.cursors.cursors().to_vec();
-            tab.history
-                .record_edits(deltas.clone(), cursors_before, cursors_after);
-            self.record_edit_internal(&deltas);
-        }
-
+        self.finish_delete_batch(deltas, new_cursors, cursors_before);
         Ok(())
     }
 }

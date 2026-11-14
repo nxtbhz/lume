@@ -26,9 +26,16 @@ impl Editor {
                 .char(tab.buffer.len_chars().saturating_sub(1));
             if last_char != '\n' {
                 let prev_line_end = tab.buffer.line_to_byte(line);
-                let prev_newline_byte = tab
-                    .buffer
-                    .char_to_byte(tab.buffer.byte_to_char(prev_line_end).saturating_sub(1));
+                let prev_nl_char = tab.buffer.byte_to_char(prev_line_end).saturating_sub(1);
+                let start_char = if prev_nl_char > 0
+                    && tab.buffer.rope().char(prev_nl_char) == '\n'
+                    && tab.buffer.rope().char(prev_nl_char - 1) == '\r'
+                {
+                    prev_nl_char - 1
+                } else {
+                    prev_nl_char
+                };
+                let prev_newline_byte = tab.buffer.char_to_byte(start_char);
                 (prev_newline_byte, total_bytes)
             } else {
                 (line_start_byte, total_bytes)
@@ -43,17 +50,17 @@ impl Editor {
         };
 
         let cursors_before = tab.cursors.cursors().to_vec();
-        let mut deleted_slice = tab
-            .buffer
-            .slice_to_cow(delete_start, delete_end)
-            .into_owned();
-
-        if deleted_slice.starts_with('\n') {
-            deleted_slice = deleted_slice[1..].to_string();
-        }
-        if !deleted_slice.ends_with('\n') {
-            deleted_slice.push('\n');
-        }
+        let raw_slice = tab.buffer.slice_to_cow(delete_start, delete_end);
+        let stripped_head = raw_slice
+            .strip_prefix("\r\n")
+            .or_else(|| raw_slice.strip_prefix('\n'))
+            .unwrap_or(&raw_slice);
+        let stripped_tail = stripped_head
+            .strip_suffix("\r\n")
+            .or_else(|| stripped_head.strip_suffix('\n'))
+            .unwrap_or(stripped_head)
+            .trim_end_matches('\r');
+        let deleted_slice = format!("{stripped_tail}\n");
 
         let delta = tab.buffer.delete(delete_start, delete_end)?;
         let deltas = vec![delta];

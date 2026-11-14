@@ -48,6 +48,22 @@ fn test_editor_replace_current_preview_when_unselected() {
 }
 
 #[test]
+fn test_editor_replace_current_does_not_reselect_inserted_match() {
+    let mut ed = Editor::from_str("foo");
+    ed.find_next("foo", true);
+    assert!(ed.replace_current("foo", "foobar", true));
+    assert_eq!(
+        ed.buffer().slice_to_cow(0, ed.buffer().len_bytes()),
+        "foobar"
+    );
+    assert!(
+        !ed.cursors().primary().is_selection(),
+        "replace_current must not wrap around and re-select inside newly inserted replacement"
+    );
+    assert_eq!(ed.cursors().primary().head, "foobar".len());
+}
+
+#[test]
 fn test_editor_replace_all_50_plus_atomic_and_multibyte_asymmetric() {
     let mut initial = String::new();
     for i in 0..60 {

@@ -70,17 +70,27 @@ fn normalize_lexical(path: &Path) -> PathBuf {
 }
 
 fn find_git_root_and_dir(start_path: &Path) -> Option<(PathBuf, PathBuf)> {
-    let mut current = if start_path.is_file() {
-        start_path.parent()?
+    if start_path.as_os_str().is_empty() {
+        return None;
+    }
+
+    let anchored = if start_path.is_relative() {
+        normalize_lexical(&std::env::current_dir().ok()?.join(start_path))
     } else {
-        start_path
+        start_path.to_path_buf()
+    };
+
+    let mut current = if anchored.is_file() {
+        anchored.parent()?.to_path_buf()
+    } else {
+        anchored
     };
 
     let mut depth = 0;
     while depth < 32 {
         let candidate = current.join(".git");
         if candidate.is_dir() {
-            return Some((current.to_path_buf(), candidate));
+            return Some((current, candidate));
         } else if candidate.is_file() {
             // Worktree or submodule: `.git` file contains `gitdir: <path>`
             if let Ok(content) = fs::read_to_string(&candidate) {
@@ -93,7 +103,7 @@ fn find_git_root_and_dir(start_path: &Path) -> Option<(PathBuf, PathBuf)> {
                         current.join(target_path)
                     };
                     if resolved.exists() {
-                        return Some((current.to_path_buf(), resolved));
+                        return Some((current, resolved));
                     }
                 }
             }
@@ -101,7 +111,7 @@ fn find_git_root_and_dir(start_path: &Path) -> Option<(PathBuf, PathBuf)> {
 
         match current.parent() {
             Some(parent) if parent != current => {
-                current = parent;
+                current = parent.to_path_buf();
                 depth += 1;
             }
             _ => break,
@@ -321,5 +331,16 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&root_dir);
+    }
+
+    #[test]
+    fn test_find_git_dir_single_component_relative_path() {
+        // Cargo executes lume-core unit tests with cwd = crates/lume-core, where "Cargo.toml"
+        // is a single-component relative path whose parent() is "".
+        let found = find_git_dir(Path::new("Cargo.toml"));
+        assert!(
+            found.is_some(),
+            "find_git_dir(Path::new(\"Cargo.toml\")) should find ancestor .git directory"
+        );
     }
 }

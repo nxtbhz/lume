@@ -361,3 +361,18 @@ fn test_utf8_char_boundary_safety_in_lexers_and_worker() {
         });
     }
 }
+
+#[test]
+fn test_lex_json_trailing_backslash_no_oob() {
+    let text = r#"{"k":"\"#;
+    let mut tokens = Vec::new();
+    crate::lexer::lex_json(text, 0, text.len(), &mut tokens);
+    for t in &tokens {
+        assert!(
+            t.start_byte <= t.end_byte && t.end_byte <= text.len(),
+            "token {:?} out of bounds for len {}",
+            t,
+            text.len()
+        );
+    }
+}

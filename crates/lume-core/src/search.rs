@@ -7,11 +7,14 @@ pub fn find_matches_in_str(
     needle: &str,
     case_sensitive: bool,
 ) -> Vec<(usize, usize)> {
-    if needle.is_empty() || haystack.is_empty() || needle.len() > haystack.len() {
+    if needle.is_empty() || haystack.is_empty() {
         return Vec::new();
     }
 
     if case_sensitive {
+        if needle.len() > haystack.len() {
+            return Vec::new();
+        }
         let mut matches = Vec::new();
         let needle_len = needle.len();
         let mut start = 0;
@@ -24,8 +27,11 @@ pub fn find_matches_in_str(
         return matches;
     }
 
-    // Case-insensitive matching
+    // ASCII fast path
     if haystack.is_ascii() && needle.is_ascii() {
+        if needle.len() > haystack.len() {
+            return Vec::new();
+        }
         let lower_haystack = haystack.to_ascii_lowercase();
         let lower_needle = needle.to_ascii_lowercase();
         let needle_len = lower_needle.len();
@@ -40,39 +46,43 @@ pub fn find_matches_in_str(
         return matches;
     }
 
-    // General Unicode case-insensitive matching
-    let mut matches = Vec::new();
-    let needle_chars: Vec<char> = needle.chars().collect();
-    let needle_char_count = needle_chars.len();
+    // General Unicode case-insensitive matching preserving multi-char lowercase expansions (e.g. 'İ' -> "i\u{0307}")
+    let needle_folded: Vec<char> = needle.chars().flat_map(|c| c.to_lowercase()).collect();
+    if needle_folded.is_empty() {
+        return Vec::new();
+    }
 
-    let char_indices: Vec<(usize, char)> = haystack.char_indices().collect();
-    let total_chars = char_indices.len();
-    let mut i = 0;
-
-    while i + needle_char_count <= total_chars {
-        let mut matched = true;
-        for (offset, &nc) in needle_chars.iter().enumerate() {
-            let hc = char_indices[i + offset].1;
-            let mut h_lower = hc.to_lowercase();
-            let mut n_lower = nc.to_lowercase();
-            if h_lower.next() != n_lower.next()
-                || h_lower.next().is_some()
-                || n_lower.next().is_some()
-            {
-                matched = false;
-                break;
-            }
+    let mut h_folded: Vec<char> = Vec::with_capacity(haystack.len());
+    let mut h_spans: Vec<(usize, usize)> = Vec::with_capacity(haystack.len());
+    for (orig_start, ch) in haystack.char_indices() {
+        let orig_end = orig_start + ch.len_utf8();
+        for lc in ch.to_lowercase() {
+            h_folded.push(lc);
+            h_spans.push((orig_start, orig_end));
         }
+    }
 
-        if matched {
-            let start_byte = char_indices[i].0;
-            let end_byte = if i + needle_char_count < total_chars {
-                char_indices[i + needle_char_count].0
-            } else {
-                haystack.len()
-            };
-            matches.push((start_byte, end_byte));
-            i += needle_char_count;
+    let n_len = needle_folded.len();
+    if n_len > h_folded.len() {
+        return Vec::new();
+    }
+
+    let mut matches = Vec::new();
+    let mut i = 0;
+    while i + n_len <= h_folded.len() {
+        // Align start and end strictly on whole codepoint boundaries in `haystack`
+        if i > 0 && h_spans[i].0 == h_spans[i - 1].0 {
+            i += 1;
+            continue;
+        }
+        let end_idx = i + n_len;
+        if end_idx < h_spans.len() && h_spans[end_idx - 1].1 == h_spans[end_idx].1 {
+            i += 1;
+            continue;
+        }
+        if h_folded[i..end_idx] == needle_folded[..] {
+            matches.push((h_spans[i].0, h_spans[end_idx - 1].1));
+            i = end_idx;
         } else {
             i += 1;
         }
@@ -89,14 +99,17 @@ pub fn find_matches_in_range(
     end_byte: usize,
     case_sensitive: bool,
 ) -> Vec<(usize, usize)> {
-    if needle.is_empty() || start_byte >= end_byte {
+    let len = buffer.len_bytes();
+    let clamped_start = start_byte.min(len);
+    let clamped_end = end_byte.min(len);
+    if needle.is_empty() || clamped_start >= clamped_end {
         return Vec::new();
     }
-    let slice = buffer.slice_to_cow(start_byte, end_byte);
-    let slice_matches = find_matches_in_str(&slice, needle, case_sensitive);
-    slice_matches
+    let actual_start = buffer.char_to_byte(buffer.byte_to_char(clamped_start));
+    let slice = buffer.slice_to_cow(actual_start, clamped_end);
+    find_matches_in_str(&slice, needle, case_sensitive)
         .into_iter()
-        .map(|(s, e)| (start_byte + s, start_byte + e))
+        .map(|(s, e)| (actual_start + s, actual_start + e))
         .collect()
 }
 
@@ -364,5 +377,28 @@ mod tests {
         assert_eq!(count_matches_in_str("Foo foo FOO foo", "foo", false), 4);
         assert_eq!(count_matches_in_str("", "foo", true), 0);
         assert_eq!(count_matches_in_str("foo", "toolongneedle", true), 0);
+    }
+
+    #[test]
+    fn test_search_unicode_case_insensitive_multichar_expansion() {
+        // '\u{0130}' ('İ') folds to "i\u{0307}" (2 chars, 3 UTF-8 bytes)
+        assert_eq!(
+            find_matches_in_str("A\u{0130}B", "\u{0130}", false),
+            vec![(1, 3)]
+        );
+        assert_eq!(
+            find_matches_in_str("A\u{0130}B", "i\u{0307}", false),
+            vec![(1, 3)]
+        );
+        assert_eq!(
+            find_matches_in_str("Ai\u{0307}B", "\u{0130}", false),
+            vec![(1, 4)]
+        );
+
+        let buf = RopeBuffer::from_str("\u{0130}b");
+        assert_eq!(
+            find_matches_in_range(&buf, "b", 1, buf.len_bytes(), false),
+            vec![(2, 3)]
+        );
     }
 }

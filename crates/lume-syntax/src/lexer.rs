@@ -115,14 +115,12 @@ pub(crate) fn lex_json(
             let str_start = i;
             i += 1;
             while i < bytes.len() && bytes[i] != b'"' {
-                if bytes[i] == b'\\' {
-                    i += 1;
-                }
-                i += 1;
+                i += if bytes[i] == b'\\' { 2 } else { 1 };
             }
             if i < bytes.len() {
                 i += 1; // closing quote
             }
+            i = i.min(bytes.len());
             let str_end = i;
 
             if str_end > start_byte {

@@ -351,3 +351,48 @@ fn test_smart_indent_scope_resolution_operator_does_not_extra_indent() {
     );
     assert_eq!(ed.cursor_line_col(), (1, 0));
 }
+
+#[test]
+fn test_delete_backwards_forwards_crlf_atomic_multicursor() {
+    // 1. Two cursors after CRLF delete atomically via delete_backwards
+    let mut ed = Editor::from_str("a\r\nb\r\nc");
+    ed.cursors_mut()
+        .set_cursors(vec![Cursor::new(3), Cursor::new(6)]);
+    ed.delete_backwards().unwrap();
+    assert_eq!(ed.buffer().rope().to_string(), "abc");
+
+    // 2. Two cursors before CRLF delete atomically via delete_forwards
+    let mut ed2 = Editor::from_str("a\r\nb\r\nc");
+    ed2.cursors_mut()
+        .set_cursors(vec![Cursor::new(1), Cursor::new(4)]);
+    ed2.delete_forwards().unwrap();
+    assert_eq!(ed2.buffer().rope().to_string(), "abc");
+
+    // 3. Failure on second cursor (mid-UTF-8 byte inside 4-byte '🚀') must roll back cursor 1's delete
+    let mut ed_fail = Editor::from_str("a\r\n🚀");
+    assert!(!ed_fail.is_dirty());
+    ed_fail
+        .cursors_mut()
+        .set_cursors(vec![Cursor::new(3), Cursor::new(5)]);
+    assert!(ed_fail.delete_backwards().is_err());
+    assert_eq!(
+        ed_fail.buffer().rope().to_string(),
+        "a\r\n🚀",
+        "failed multi-cursor delete_backwards must roll back earlier deltas"
+    );
+    assert!(!ed_fail.is_dirty());
+
+    // 4. Same rollback guarantee for delete_forwards
+    let mut ed_fwd_fail = Editor::from_str("a\r\n🚀b");
+    assert!(!ed_fwd_fail.is_dirty());
+    ed_fwd_fail
+        .cursors_mut()
+        .set_cursors(vec![Cursor::new(1), Cursor::new(5)]);
+    assert!(ed_fwd_fail.delete_forwards().is_err());
+    assert_eq!(
+        ed_fwd_fail.buffer().rope().to_string(),
+        "a\r\n🚀b",
+        "failed multi-cursor delete_forwards must roll back earlier deltas"
+    );
+    assert!(!ed_fwd_fail.is_dirty());
+}
