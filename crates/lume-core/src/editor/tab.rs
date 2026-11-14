@@ -1,6 +1,7 @@
 use crate::buffer::{RopeBuffer, TextBuffer};
 use crate::cursor::CursorSet;
 use crate::diff::LineDiffStatus;
+use crate::editor::line_ending::LineEnding;
 use crate::history::History;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -31,71 +32,53 @@ pub struct Tab {
     pub history: History,
     pub file_path: Option<PathBuf>,
     pub language_override: Option<String>,
+    pub line_ending: LineEnding,
     pub is_dirty: bool,
     pub recovered_from_journal: bool,
     pub pending_recovery: Option<String>,
     pub clean_snapshot: Option<ropey::Rope>,
+    pub(crate) git_baseline: Option<ropey::Rope>,
     pub journal_path: Option<PathBuf>,
     pub(crate) cached_diffs: Option<(u64, Arc<Vec<LineDiffStatus>>)>,
     pub(crate) sync_state: Option<Arc<TabSyncState>>,
 }
 
 impl Tab {
-    pub fn new(id: usize) -> Self {
+    fn from_buffer(id: usize, buffer: RopeBuffer, line_ending: LineEnding) -> Self {
         Self {
             id,
             revision: 0,
-            buffer: RopeBuffer::new(),
+            buffer,
             cursors: CursorSet::new(),
             history: History::new(),
             file_path: None,
             journal_path: None,
             language_override: None,
+            line_ending,
             is_dirty: false,
             recovered_from_journal: false,
             pending_recovery: None,
             clean_snapshot: None,
+            git_baseline: None,
             cached_diffs: None,
             sync_state: None,
         }
+    }
+
+    pub fn new(id: usize) -> Self {
+        Self::from_buffer(id, RopeBuffer::new(), LineEnding::Lf)
     }
 
     pub fn from_str(id: usize, text: &str) -> Self {
-        Self {
-            id,
-            revision: 0,
-            buffer: RopeBuffer::from_str(text),
-            cursors: CursorSet::new(),
-            history: History::new(),
-            file_path: None,
-            journal_path: None,
-            language_override: None,
-            is_dirty: false,
-            recovered_from_journal: false,
-            pending_recovery: None,
-            clean_snapshot: None,
-            cached_diffs: None,
-            sync_state: None,
-        }
+        let buffer = RopeBuffer::from_str(text);
+        let line_ending = LineEnding::detect(buffer.rope());
+        Self::from_buffer(id, buffer, line_ending)
     }
 
     pub fn from_rope(id: usize, rope: ropey::Rope) -> Self {
-        Self {
-            id,
-            revision: 0,
-            buffer: RopeBuffer::from_rope(rope),
-            cursors: CursorSet::new(),
-            history: History::new(),
-            file_path: None,
-            journal_path: None,
-            language_override: None,
-            is_dirty: false,
-            recovered_from_journal: false,
-            pending_recovery: None,
-            clean_snapshot: None,
-            cached_diffs: None,
-            sync_state: None,
-        }
+        let buffer = RopeBuffer::from_rope(rope);
+        let line_ending = LineEnding::detect(buffer.rope());
+        Self::from_buffer(id, buffer, line_ending)
     }
 
     pub fn update_clean_snapshot(&mut self) {
@@ -104,10 +87,13 @@ impl Tab {
     }
 
     pub fn diff_markers(&mut self) -> Option<Arc<Vec<LineDiffStatus>>> {
-        if !self.is_dirty {
+        let base = if let Some(ref git_base) = self.git_baseline {
+            git_base
+        } else if self.is_dirty {
+            self.clean_snapshot.as_ref()?
+        } else {
             return None;
-        }
-        let snapshot = self.clean_snapshot.as_ref()?;
+        };
 
         let cached_valid = self
             .cached_diffs
@@ -116,7 +102,7 @@ impl Tab {
             .unwrap_or(false);
 
         if !cached_valid {
-            let diffs = crate::diff::compute_rope_diffs(snapshot, self.buffer.rope());
+            let diffs = crate::diff::compute_rope_diffs(base, self.buffer.rope());
             self.cached_diffs = Some((self.revision, Arc::new(diffs)));
         }
 

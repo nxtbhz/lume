@@ -11,7 +11,6 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Nicolas Dias <nicolasbhgamer@gmail.com>"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/lume-ide/lume"
 
 [workspace.dependencies]
 ropey = "1.6"

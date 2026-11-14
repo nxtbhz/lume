@@ -808,7 +808,7 @@ mod m3_boundary_tests {
 
     #[test]
     fn test_t2_m3_orphan_lf_in_crlf_file() {
-        let mut ed = Editor::from_str("line1\r\nline2\nline3\r\n");
+        let ed = Editor::from_str("line1\r\nline2\nline3\r\n");
         assert_eq!(ed.active_tab().line_ending, lume_core::LineEnding::CrLf);
     }
 

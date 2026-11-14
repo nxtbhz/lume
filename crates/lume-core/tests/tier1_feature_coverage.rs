@@ -1071,18 +1071,56 @@ mod m4_tests {
 mod m5_tests {
     use super::*;
 
+    fn workspace_root() -> PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf()
+    }
+
+    fn init_temp_git_repo(
+        prefix: &str,
+        filename: &str,
+        initial_content: &str,
+    ) -> (PathBuf, PathBuf) {
+        let repo_dir = unique_temp_path(prefix, "git_repo");
+        let _ = fs::remove_dir_all(&repo_dir);
+        fs::create_dir_all(&repo_dir).unwrap();
+        let run_git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&repo_dir)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {:?} failed: {}",
+                args,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        run_git(&["init"]);
+        run_git(&["config", "user.email", "test@lume.local"]);
+        run_git(&["config", "user.name", "Lume Test"]);
+        let file_path = repo_dir.join(filename);
+        fs::write(&file_path, initial_content).unwrap();
+        run_git(&["add", filename]);
+        run_git(&["commit", "-m", "initial"]);
+        (repo_dir, file_path)
+    }
+
     #[test]
     fn test_f20_read_git_head_blob() {
-        let current_dir = std::env::current_dir().unwrap();
-        let cargo_toml = current_dir.join("Cargo.toml");
+        let cargo_toml = workspace_root().join("Cargo.toml");
         let blob = lume_core::git::read_git_head_blob(&cargo_toml);
         assert!(blob.is_some(), "Cargo.toml in git HEAD should be readable");
     }
 
     #[test]
     fn test_f20_read_git_head_blob_subfolder_file() {
-        let current_dir = std::env::current_dir().unwrap();
-        let src_lib = current_dir.join("crates/lume-core/src/lib.rs");
+        let src_lib = workspace_root().join("crates/lume-core/src/lib.rs");
         let blob = lume_core::git::read_git_head_blob(&src_lib);
         assert!(blob.is_some());
     }
@@ -1095,21 +1133,20 @@ mod m5_tests {
 
     #[test]
     fn test_f20_read_git_head_blob_returns_utf8() {
-        let current_dir = std::env::current_dir().unwrap();
-        let readme = current_dir.join("README.md");
-        if readme.exists() {
-            let blob = lume_core::git::read_git_head_blob(&readme);
-            assert!(blob.is_some());
-        }
+        let readme = workspace_root().join("README.md");
+        assert!(readme.exists(), "Workspace README.md must exist");
+        let blob = lume_core::git::read_git_head_blob(&readme);
+        assert!(blob.is_some());
     }
 
     #[test]
     fn test_f20_read_git_head_blob_uncommitted_modifications_ignored() {
-        let current_dir = std::env::current_dir().unwrap();
-        let cargo_toml = current_dir.join("Cargo.toml");
-        let blob = lume_core::git::read_git_head_blob(&cargo_toml).unwrap();
-        // HEAD blob should contain workspace declaration
-        assert!(blob.contains("[workspace]"));
+        let (repo_dir, file_path) =
+            init_temp_git_repo("test_f20_uncommitted", "Cargo.toml", "[workspace]\n");
+        fs::write(&file_path, "uncommitted override\n").unwrap();
+        let blob = lume_core::git::read_git_head_blob(&file_path).unwrap();
+        assert_eq!(blob, "[workspace]\n");
+        let _ = fs::remove_dir_all(&repo_dir);
     }
 
     #[test]
@@ -1125,8 +1162,8 @@ mod m5_tests {
 
     #[test]
     fn test_f21_diff_markers_against_git_baseline_unaffected_by_dirty() {
-        let path = unique_temp_path("test_f21_persist_dirty", "txt");
-        fs::write(&path, "committed\n").unwrap();
+        let (repo_dir, path) =
+            init_temp_git_repo("test_f21_persist_dirty", "tracked.txt", "committed\n");
         let mut ed = Editor::open(&path).unwrap();
         ed.insert_str("uncommitted\n").unwrap();
         ed.save().unwrap();
@@ -1134,7 +1171,7 @@ mod m5_tests {
         // Markers must still be computed against git_baseline
         let markers = ed.active_tab_mut().diff_markers();
         assert!(markers.is_some());
-        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir_all(&repo_dir);
     }
 
     #[test]
@@ -1155,15 +1192,15 @@ mod m5_tests {
 
     #[test]
     fn test_f21_diff_markers_reflect_multiple_line_edits() {
-        let path = unique_temp_path("test_f21_multi_diff", "txt");
-        fs::write(&path, "line1\nline2\nline3\n").unwrap();
+        let (repo_dir, path) =
+            init_temp_git_repo("test_f21_multi_diff", "multi.txt", "line1\nline2\nline3\n");
         let mut ed = Editor::open(&path).unwrap();
         ed.cursors_mut().set_single(6);
         ed.insert_str("modified_").unwrap();
         ed.save().unwrap();
         let markers = ed.active_tab_mut().diff_markers().unwrap();
-        assert!(markers.iter().any(|m| *m == LineDiffStatus::Modified));
-        let _ = fs::remove_file(&path);
+        assert!(markers.contains(&LineDiffStatus::Modified));
+        let _ = fs::remove_dir_all(&repo_dir);
     }
 
     #[test]

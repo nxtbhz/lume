@@ -33,13 +33,13 @@ jobs:
         run: cargo fmt --check
 
       - name: Run Clippy lints
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Validate documentation
-        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --locked
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --all-features --locked
 
       - name: Check benchmarks compilation
-        run: cargo check --workspace --benches --locked
+        run: cargo check --workspace --benches --all-features --locked
 
   security-audit:
     name: Security Audit
@@ -74,4 +74,4 @@ jobs:
           key: ${{ matrix.os }}
 
       - name: Run test suite
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked && cargo test --workspace --all-features --locked

@@ -124,9 +124,13 @@ impl Editor {
         let path = path.as_ref();
         Self::save_buffer_atomically(path, &self.tabs[self.active_tab].buffer)?;
 
+        let git_baseline =
+            crate::git::read_git_head_blob(path).map(|content| ropey::Rope::from_str(&content));
+
         let tab = &mut self.tabs[self.active_tab];
         tab.file_path = Some(path.to_path_buf());
         tab.journal_path = Some(Journal::journal_path(path));
+        tab.git_baseline = git_baseline;
         tab.is_dirty = false;
         tab.recovered_from_journal = false;
         tab.update_clean_snapshot();

@@ -17,7 +17,7 @@ pub use clipboard::{
 };
 pub use cursor::{Cursor, CursorAffinity, CursorSet};
 pub use diff::{compute_line_diffs, compute_rope_diffs, LineDiffStatus};
-pub use editor::{AsyncSaveEvent, Editor, EditorConfig, Tab};
+pub use editor::{AsyncSaveEvent, Editor, EditorConfig, LineEnding, Tab};
 pub use fuzzy::{fuzzy_match, fuzzy_score, FuzzyMatch};
 pub use git::{find_git_dir, get_git_head_for_path, GitHead};
 pub use history::History;

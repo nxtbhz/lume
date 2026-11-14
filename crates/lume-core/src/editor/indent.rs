@@ -178,10 +178,12 @@ impl Editor {
 
     pub fn insert_newline(&mut self) -> Result<(), BufferError> {
         if !self.config.smart_indent {
-            return self.insert_str("\n");
+            let nl = self.tabs[self.active_tab].line_ending.as_str();
+            return self.insert_str(nl);
         }
 
         let tab = &mut self.tabs[self.active_tab];
+        let nl = tab.line_ending.as_str();
         let cursors_before = tab.cursors.cursors().to_vec();
 
         let mut sorted_cursors = cursors_before.clone();
@@ -212,7 +214,7 @@ impl Editor {
                 String::new()
             };
 
-            insert_strings.push(format!("\n{}{}", leading, extra_indent));
+            insert_strings.push(format!("{}{}{}", nl, leading, extra_indent));
         }
 
         let mut deltas: Vec<TextDelta> = Vec::new();
@@ -294,7 +296,14 @@ impl Editor {
                     let target_char = cursor_char - tab_size;
                     tab.buffer.char_to_byte(target_char)
                 } else {
-                    let prev_char = tab.buffer.byte_to_char(start) - 1;
+                    let prev_char = if cursor_char >= 2
+                        && tab.buffer.rope().char(cursor_char - 1) == '\n'
+                        && tab.buffer.rope().char(cursor_char - 2) == '\r'
+                    {
+                        cursor_char - 2
+                    } else {
+                        cursor_char - 1
+                    };
                     tab.buffer.char_to_byte(prev_char)
                 };
 
@@ -344,7 +353,16 @@ impl Editor {
                 }
             } else if start < tab.buffer.len_bytes() {
                 let char_idx = tab.buffer.byte_to_char(start);
-                let next_byte = tab.buffer.char_to_byte(char_idx + 1);
+                let total_chars = tab.buffer.len_chars();
+                let next_char = if char_idx + 1 < total_chars
+                    && tab.buffer.rope().char(char_idx) == '\r'
+                    && tab.buffer.rope().char(char_idx + 1) == '\n'
+                {
+                    char_idx + 2
+                } else {
+                    char_idx + 1
+                };
+                let next_byte = tab.buffer.char_to_byte(next_char);
                 let delta = tab.buffer.delete(start, next_byte)?;
                 deltas.push(delta);
                 new_cursors.push(Cursor::new(start));

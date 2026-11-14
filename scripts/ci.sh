@@ -26,22 +26,23 @@ if [ "$AUTO_FIX" = true ]; then
     echo "=== Formatting with cargo fmt ==="
     cargo fmt
     echo "=== Applying clippy fixes ==="
-    cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
+    cargo clippy --workspace --all-targets --all-features --fix --allow-dirty --allow-staged
 fi
 
 echo "=== [1/5] Checking code formatting (cargo fmt) ==="
 cargo fmt --check
 
 echo "=== [2/5] Running Clippy lints ==="
-cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
 echo "=== [3/5] Checking benchmarks compilation ==="
-cargo check --workspace --benches --locked
+cargo check --workspace --benches --all-features --locked
 
 echo "=== [4/5] Checking documentation ==="
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --locked
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --all-features --locked
 
 echo "=== [5/5] Running test suite ==="
 cargo test --workspace --locked
+cargo test --workspace --all-features --locked
 
 echo "=== All CI checks passed! ==="

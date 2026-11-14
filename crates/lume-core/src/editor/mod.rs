@@ -2,6 +2,7 @@ pub mod bracket;
 pub mod clipboard;
 pub mod config;
 pub mod indent;
+pub mod line_ending;
 pub mod lines;
 pub mod motions;
 pub mod save;
@@ -9,6 +10,7 @@ pub mod search;
 pub mod tab;
 
 pub use config::EditorConfig;
+pub use line_ending::LineEnding;
 pub use tab::{AsyncSaveEvent, Tab, TabSyncState};
 
 use std::io::{Read, Seek, SeekFrom};
@@ -117,8 +119,14 @@ impl Editor {
         }
 
         // 4. All checks passed — safe to mutate active tab state
+        let line_ending = LineEnding::detect(buffer.rope());
+        let git_baseline =
+            crate::git::read_git_head_blob(path).map(|content| ropey::Rope::from_str(&content));
+
         let tab = &mut self.tabs[self.active_tab];
         tab.buffer = buffer;
+        tab.line_ending = line_ending;
+        tab.git_baseline = git_baseline;
         tab.cursors.set_single(0);
         tab.history.clear();
         tab.file_path = Some(path.to_path_buf());
