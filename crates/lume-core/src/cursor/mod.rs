@@ -122,40 +122,61 @@ impl CursorSet {
         self.normalize();
     }
 
-    /// Sort cursors by position and merge overlapping selections
+    /// Sort cursors by position and merge overlapping selections (preserving adjacent ones)
     pub fn normalize(&mut self) {
-        if self.cursors.len() <= 1 {
+        if self.cursors.is_empty() {
+            self.primary_idx = 0;
+            return;
+        }
+        if self.cursors.len() == 1 {
+            self.primary_idx = 0;
             return;
         }
 
-        // Sort by min position
-        self.cursors.sort_by_key(|c| (c.min(), c.max()));
+        let orig_primary = self.primary_idx.min(self.cursors.len() - 1);
+        let mut tagged: Vec<(usize, Cursor)> = self.cursors.drain(..).enumerate().collect();
+        tagged.sort_by_key(|(orig_idx, c)| (c.min(), c.max(), *orig_idx));
 
-        let mut merged: Vec<Cursor> = Vec::with_capacity(self.cursors.len());
-        for cursor in self.cursors.drain(..) {
+        let mut merged: Vec<Cursor> = Vec::with_capacity(tagged.len());
+        let mut new_primary_idx = 0usize;
+
+        for (orig_idx, cursor) in tagged {
+            let is_primary = orig_idx == orig_primary;
             if let Some(last) = merged.last_mut() {
-                // If touching or overlapping
-                if cursor.min() <= last.max() {
+                let overlaps_strictly = cursor.min() < last.max();
+                let same_point_caret = last.min() == cursor.min()
+                    && (last.anchor == last.head || cursor.anchor == cursor.head);
+                if overlaps_strictly || same_point_caret {
                     let new_min = last.min().min(cursor.min());
                     let new_max = last.max().max(cursor.max());
-                    // Preserve direction of the last active cursor
-                    if last.head >= last.anchor {
+                    let forward = if last.anchor == last.head && cursor.is_selection() {
+                        cursor.head >= cursor.anchor
+                    } else {
+                        last.head >= last.anchor
+                    };
+                    if forward {
                         last.anchor = new_min;
                         last.head = new_max;
                     } else {
                         last.anchor = new_max;
                         last.head = new_min;
                     }
+                    if is_primary {
+                        last.affinity = cursor.affinity;
+                        new_primary_idx = merged.len() - 1;
+                    }
                     continue;
                 }
+            }
+
+            if is_primary {
+                new_primary_idx = merged.len();
             }
             merged.push(cursor);
         }
 
         self.cursors = merged;
-        if self.primary_idx >= self.cursors.len() {
-            self.primary_idx = self.cursors.len() - 1;
-        }
+        self.primary_idx = new_primary_idx.min(self.cursors.len().saturating_sub(1));
     }
 }
 
@@ -207,5 +228,26 @@ mod tests {
 
         let c = Cursor::with_anchor(10, 20);
         assert_eq!(c.range(), 10..20);
+    }
+
+    #[test]
+    fn test_cursor_normalize_preserves_adjacent_selections_and_primary() {
+        // Adjacent non-empty selections [3, 6) (primary) and [0, 3) (secondary) must remain distinct,
+        // and primary() must keep pointing to [3, 6) after sorting moves it to index 1.
+        let mut set = CursorSet {
+            cursors: vec![Cursor::with_anchor(3, 6)],
+            primary_idx: 0,
+        };
+        set.add_cursor(Cursor::with_anchor(0, 3));
+        assert_eq!(set.cursors().len(), 2);
+        assert_eq!(set.cursors()[0].range(), 0..3);
+        assert_eq!(set.cursors()[1].range(), 3..6);
+        assert_eq!(set.primary().range(), 3..6);
+
+        // Also check carets: adding a caret before the primary preserves primary().head == 5
+        let mut caret_set = CursorSet::single(5);
+        caret_set.add_cursor(Cursor::new(0));
+        assert_eq!(caret_set.cursors().len(), 2);
+        assert_eq!(caret_set.primary().head, 5);
     }
 }

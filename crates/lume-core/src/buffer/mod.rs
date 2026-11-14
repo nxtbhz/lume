@@ -110,12 +110,30 @@ impl RopeBuffer {
         self.rope.len_chars()
     }
 
+    pub fn try_char_to_byte(&self, char_idx: usize) -> Result<usize, BufferError> {
+        let len_chars = self.rope.len_chars();
+        if char_idx > len_chars {
+            return Err(BufferError::OutOfBounds(char_idx, len_chars));
+        }
+        Ok(self.rope.char_to_byte(char_idx))
+    }
+
+    pub fn try_byte_to_char(&self, byte_idx: usize) -> Result<usize, BufferError> {
+        let len_bytes = self.rope.len_bytes();
+        if byte_idx > len_bytes {
+            return Err(BufferError::OutOfBounds(byte_idx, len_bytes));
+        }
+        Ok(self.rope.byte_to_char(byte_idx))
+    }
+
     pub fn char_to_byte(&self, char_idx: usize) -> usize {
-        self.rope.char_to_byte(char_idx)
+        let clamped = char_idx.min(self.rope.len_chars());
+        self.rope.char_to_byte(clamped)
     }
 
     pub fn byte_to_char(&self, byte_idx: usize) -> usize {
-        self.rope.byte_to_char(byte_idx)
+        let clamped = byte_idx.min(self.rope.len_bytes());
+        self.rope.byte_to_char(clamped)
     }
 
     pub fn line(&self, line_idx: usize) -> Option<ropey::RopeSlice<'_>> {
@@ -338,5 +356,24 @@ mod tests {
 
         let parsed_buf: RopeBuffer = "parsed".parse().unwrap();
         assert_eq!(parsed_buf.len_bytes(), 6);
+    }
+
+    #[test]
+    fn test_buffer_oob_char_byte_conversions_do_not_panic() {
+        let buf = RopeBuffer::from_str("Olá"); // 3 chars, 4 bytes
+
+        assert_eq!(buf.byte_to_char(9999), buf.len_chars());
+        assert_eq!(buf.char_to_byte(9999), buf.len_bytes());
+
+        assert!(matches!(
+            buf.try_byte_to_char(9999),
+            Err(BufferError::OutOfBounds(9999, 4))
+        ));
+        assert!(matches!(
+            buf.try_char_to_byte(9999),
+            Err(BufferError::OutOfBounds(9999, 3))
+        ));
+        assert_eq!(buf.try_byte_to_char(4).unwrap(), 3);
+        assert_eq!(buf.try_char_to_byte(3).unwrap(), 4);
     }
 }

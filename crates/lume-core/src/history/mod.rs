@@ -179,6 +179,54 @@ impl History {
     }
 }
 
+enum RollbackOp<'a> {
+    Reinsert { start: usize, text: &'a str },
+    Redelete { start: usize, len: usize },
+}
+
+fn rollback_buffer_ops(buf: &mut dyn TextBuffer, ops: Vec<RollbackOp<'_>>) {
+    for op in ops.into_iter().rev() {
+        match op {
+            RollbackOp::Reinsert { start, text } => {
+                let _ = buf.insert(start, text);
+            }
+            RollbackOp::Redelete { start, len } => {
+                let _ = buf.delete(start, start + len);
+            }
+        }
+    }
+}
+
+fn apply_delta_sequence<'a>(
+    buf: &mut dyn TextBuffer,
+    steps: impl Iterator<Item = (usize, &'a str, &'a str)>,
+) -> bool {
+    let mut undo_log = Vec::new();
+    for (start, to_delete, to_insert) in steps {
+        if !to_delete.is_empty() {
+            if buf.delete(start, start + to_delete.len()).is_err() {
+                rollback_buffer_ops(buf, undo_log);
+                return false;
+            }
+            undo_log.push(RollbackOp::Reinsert {
+                start,
+                text: to_delete,
+            });
+        }
+        if !to_insert.is_empty() {
+            if buf.insert(start, to_insert).is_err() {
+                rollback_buffer_ops(buf, undo_log);
+                return false;
+            }
+            undo_log.push(RollbackOp::Redelete {
+                start,
+                len: to_insert.len(),
+            });
+        }
+    }
+    true
+}
+
 impl HistoryManager for History {
     fn record_edits(
         &mut self,
@@ -199,17 +247,21 @@ impl HistoryManager for History {
     fn undo(&mut self, current_buffer: &mut dyn TextBuffer) -> Option<Vec<Cursor>> {
         self.undo_group_open = false;
         let entry = self.undo_stack.pop_back()?;
-        self.current_bytes = self.current_bytes.saturating_sub(entry_bytes(&entry));
+        let bytes = entry_bytes(&entry);
+        self.current_bytes = self.current_bytes.saturating_sub(bytes);
 
-        // Revert edits in reverse order
-        for delta in entry.deltas.iter().rev() {
-            if !delta.new_text.is_empty() {
-                let _ = current_buffer
-                    .delete(delta.start_byte, delta.start_byte + delta.new_text.len());
-            }
-            if !delta.old_text.is_empty() {
-                let _ = current_buffer.insert(delta.start_byte, &delta.old_text);
-            }
+        let applied = apply_delta_sequence(
+            current_buffer,
+            entry
+                .deltas
+                .iter()
+                .rev()
+                .map(|d| (d.start_byte, d.new_text.as_str(), d.old_text.as_str())),
+        );
+        if !applied {
+            self.current_bytes += bytes;
+            self.undo_stack.push_back(entry);
+            return None;
         }
 
         let cursors = entry.cursors_before.clone();
@@ -221,15 +273,16 @@ impl HistoryManager for History {
         self.undo_group_open = false;
         let entry = self.redo_stack.pop()?;
 
-        // Re-apply edits in forward order
-        for delta in &entry.deltas {
-            if !delta.old_text.is_empty() {
-                let _ = current_buffer
-                    .delete(delta.start_byte, delta.start_byte + delta.old_text.len());
-            }
-            if !delta.new_text.is_empty() {
-                let _ = current_buffer.insert(delta.start_byte, &delta.new_text);
-            }
+        let applied = apply_delta_sequence(
+            current_buffer,
+            entry
+                .deltas
+                .iter()
+                .map(|d| (d.start_byte, d.old_text.as_str(), d.new_text.as_str())),
+        );
+        if !applied {
+            self.redo_stack.push(entry);
+            return None;
         }
 
         let cursors = entry.cursors_after.clone();
@@ -241,7 +294,7 @@ impl HistoryManager for History {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::buffer::RopeBuffer;
+    use crate::buffer::{BufferError, RopeBuffer};
     use proptest::prelude::*;
 
     #[test]
@@ -324,6 +377,117 @@ mod tests {
         assert!(history.undo(&mut buf).is_some());
         assert_eq!(buf.slice_to_cow(0, buf.len_bytes()), "ab");
         assert!(history.is_at_saved_state());
+    }
+
+    #[test]
+    fn test_history_undo_failure_does_not_drop_entry_silently() {
+        struct FailAfterOpsBuffer {
+            inner: RopeBuffer,
+            ops_until_fail: Option<usize>,
+        }
+
+        impl TextBuffer for FailAfterOpsBuffer {
+            fn len_bytes(&self) -> usize {
+                self.inner.len_bytes()
+            }
+            fn len_lines(&self) -> usize {
+                self.inner.len_lines()
+            }
+            fn byte_to_line(&self, byte_idx: usize) -> usize {
+                self.inner.byte_to_line(byte_idx)
+            }
+            fn line_to_byte(&self, line_idx: usize) -> usize {
+                self.inner.line_to_byte(line_idx)
+            }
+            fn slice_to_cow(&self, start: usize, end: usize) -> std::borrow::Cow<'_, str> {
+                self.inner.slice_to_cow(start, end)
+            }
+            fn insert(&mut self, byte_idx: usize, text: &str) -> Result<TextDelta, BufferError> {
+                if let Some(ref mut left) = self.ops_until_fail {
+                    if *left == 0 {
+                        self.ops_until_fail = None;
+                        return Err(BufferError::OutOfBounds(byte_idx, self.inner.len_bytes()));
+                    }
+                    *left -= 1;
+                }
+                self.inner.insert(byte_idx, text)
+            }
+            fn delete(
+                &mut self,
+                start_byte: usize,
+                end_byte: usize,
+            ) -> Result<TextDelta, BufferError> {
+                if let Some(ref mut left) = self.ops_until_fail {
+                    if *left == 0 {
+                        self.ops_until_fail = None;
+                        return Err(BufferError::InvalidRange(
+                            start_byte,
+                            end_byte,
+                            self.inner.len_bytes(),
+                        ));
+                    }
+                    *left -= 1;
+                }
+                self.inner.delete(start_byte, end_byte)
+            }
+        }
+
+        let mut buf = FailAfterOpsBuffer {
+            inner: RopeBuffer::from_str("hello world"),
+            ops_until_fail: None,
+        };
+        let mut history = History::new();
+
+        // Single history entry containing 2 deltas: replace "hello" with "HELLO", and "world" with "WORLD"
+        let d1_del = buf.delete(0, 5).unwrap();
+        let d1_ins = buf.insert(0, "HELLO").unwrap();
+        let d2_del = buf.delete(6, 11).unwrap();
+        let d2_ins = buf.insert(6, "WORLD").unwrap();
+        history.record_edits(
+            vec![
+                TextDelta::new(0, d1_del.old_text, d1_ins.new_text),
+                TextDelta::new(6, d2_del.old_text, d2_ins.new_text),
+            ],
+            vec![Cursor::new(0)],
+            vec![Cursor::new(11)],
+        );
+        assert_eq!(buf.slice_to_cow(0, buf.len_bytes()), "HELLO WORLD");
+
+        // Fail on the 3rd buffer op during undo (after reverting d2 completely, when deleting "HELLO")
+        buf.ops_until_fail = Some(2);
+        let undo_res = history.undo(&mut buf);
+        assert!(undo_res.is_none(), "undo failure must return None");
+        assert!(
+            history.can_undo(),
+            "failed undo must restore entry to undo_stack"
+        );
+        assert!(
+            !history.can_redo(),
+            "failed undo must not push entry to redo_stack"
+        );
+        buf.ops_until_fail = None;
+        assert_eq!(
+            buf.slice_to_cow(0, buf.len_bytes()),
+            "HELLO WORLD",
+            "partial undo must roll back completely"
+        );
+
+        // Now allow undo to succeed, then verify redo failure rolls back symmetrically
+        assert!(history.undo(&mut buf).is_some());
+        assert_eq!(buf.slice_to_cow(0, buf.len_bytes()), "hello world");
+
+        buf.ops_until_fail = Some(2);
+        let redo_res = history.redo(&mut buf);
+        assert!(redo_res.is_none(), "redo failure must return None");
+        assert!(
+            history.can_redo(),
+            "failed redo must restore entry to redo_stack"
+        );
+        assert_eq!(
+            buf.slice_to_cow(0, buf.len_bytes()),
+            "hello world",
+            "partial redo must roll back completely"
+        );
     }
 
     proptest! {
