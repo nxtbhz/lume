@@ -52,10 +52,11 @@ impl Editor {
     }
 
     pub fn insert_char(&mut self, c: char) -> Result<(), BufferError> {
+        let can_coalesce = !c.is_whitespace();
         if !self.config.auto_pairs {
             let mut text = [0u8; 4];
             let s = c.encode_utf8(&mut text);
-            return self.insert_str(s);
+            return self.insert_str_with_coalescing(s, can_coalesce);
         }
 
         let tab = &self.tabs[self.active_tab];
@@ -78,6 +79,7 @@ impl Editor {
                 new_cursors.push(Cursor::new(next_byte));
             }
             tab_mut.cursors.set_cursors(new_cursors);
+            tab_mut.history.break_group();
             return Ok(());
         }
 
@@ -131,10 +133,18 @@ impl Editor {
         // Standard character insertion fallback
         let mut text = [0u8; 4];
         let s = c.encode_utf8(&mut text);
-        self.insert_str(s)
+        self.insert_str_with_coalescing(s, can_coalesce)
     }
 
     pub fn insert_str(&mut self, s: &str) -> Result<(), BufferError> {
+        self.insert_str_with_coalescing(s, false)
+    }
+
+    fn insert_str_with_coalescing(
+        &mut self,
+        s: &str,
+        can_coalesce: bool,
+    ) -> Result<(), BufferError> {
         let tab = &mut self.tabs[self.active_tab];
         let cursors_before = tab.cursors.cursors().to_vec();
 
@@ -170,8 +180,21 @@ impl Editor {
         tab.cursors.set_cursors(new_cursors);
         let cursors_after = tab.cursors.cursors().to_vec();
 
-        tab.history
-            .record_edits(deltas.clone(), cursors_before, cursors_after);
+        if deltas.len() == 1
+            && cursors_before.len() == 1
+            && cursors_after.len() == 1
+            && deltas[0].old_text.is_empty()
+        {
+            tab.history.record_coalesced_insert(
+                deltas[0].clone(),
+                cursors_before,
+                cursors_after,
+                can_coalesce,
+            );
+        } else {
+            tab.history
+                .record_edits(deltas.clone(), cursors_before, cursors_after);
+        }
         self.record_edit_internal(&deltas);
         Ok(())
     }

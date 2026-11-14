@@ -19,6 +19,7 @@ impl Editor {
             let tab = &mut self.tabs[tab_idx];
             tab.file_path = Some(path.clone());
             tab.journal_path = Some(Journal::journal_path(&path));
+            tab.history.mark_saved();
             tab.is_dirty = false;
             tab.recovered_from_journal = false;
             tab.update_clean_snapshot();
@@ -131,6 +132,7 @@ impl Editor {
         tab.file_path = Some(path.to_path_buf());
         tab.journal_path = Some(Journal::journal_path(path));
         tab.git_baseline = git_baseline;
+        tab.history.mark_saved();
         tab.is_dirty = false;
         tab.recovered_from_journal = false;
         tab.update_clean_snapshot();
@@ -225,6 +227,7 @@ impl Editor {
                 match ev.result {
                     Ok(()) => {
                         if tab.revision == ev.save_revision {
+                            tab.history.mark_saved();
                             tab.is_dirty = false;
                             tab.recovered_from_journal = false;
                             tab.update_clean_snapshot();

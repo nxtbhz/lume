@@ -547,3 +547,46 @@ fn test_tab_cursor_line_col() {
     tab.cursors.set_single(byte_idx);
     assert_eq!(tab.cursor_line_col(), (1, 6));
 }
+
+#[test]
+fn test_insert_char_save_breaks_coalescing_and_whitespace_breaks_group() {
+    let dir = std::env::temp_dir().join(format!("lume_save_coalesce_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("note.txt");
+    std::fs::write(&path, "").unwrap();
+
+    let mut ed = Editor::open(&path).unwrap();
+    for c in "ab".chars() {
+        ed.insert_char(c).unwrap();
+    }
+    ed.save().unwrap();
+    assert!(!ed.is_dirty());
+
+    // Typing after save without break_undo_group must NOT coalesce into "ab"
+    ed.insert_char('c').unwrap();
+    assert!(ed.is_dirty());
+    assert!(ed.undo());
+    assert_eq!(ed.buffer().slice_to_cow(0, ed.buffer().len_bytes()), "ab");
+    assert!(!ed.is_dirty());
+
+    // Whitespace via insert_char breaks coalescing
+    let mut ed2 = Editor::new();
+    for c in "hello world".chars() {
+        ed2.insert_char(c).unwrap();
+    }
+    assert!(ed2.undo());
+    assert_eq!(
+        ed2.buffer().slice_to_cow(0, ed2.buffer().len_bytes()),
+        "hello "
+    );
+    assert!(ed2.undo());
+    assert_eq!(
+        ed2.buffer().slice_to_cow(0, ed2.buffer().len_bytes()),
+        "hello"
+    );
+    assert!(ed2.undo());
+    assert_eq!(ed2.buffer().slice_to_cow(0, ed2.buffer().len_bytes()), "");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -358,26 +358,44 @@ impl Editor {
         self.tabs[self.active_tab].revision
     }
 
-    pub fn undo(&mut self) -> bool {
-        let tab = &mut self.tabs[self.active_tab];
-        if let Some(cursors) = tab.history.undo(&mut tab.buffer) {
-            tab.cursors.set_cursors(cursors);
+    pub fn break_undo_group(&mut self) {
+        self.tabs[self.active_tab].history.break_group();
+    }
+
+    fn apply_history_step(&mut self, is_undo: bool) -> bool {
+        let cursors = {
+            let tab = &mut self.tabs[self.active_tab];
+            if is_undo {
+                tab.history.undo(&mut tab.buffer)
+            } else {
+                tab.history.redo(&mut tab.buffer)
+            }
+        };
+
+        if let Some(cursors) = cursors {
+            let is_dirty = {
+                let tab = &mut self.tabs[self.active_tab];
+                tab.cursors.set_cursors(cursors);
+                !tab.history.is_at_saved_state()
+            };
             self.record_edit_internal(&[]);
+            let tab = &mut self.tabs[self.active_tab];
+            tab.is_dirty = is_dirty;
+            if let Some(ref sync) = tab.sync_state {
+                sync.is_dirty.store(is_dirty, Ordering::SeqCst);
+            }
             true
         } else {
             false
         }
     }
 
+    pub fn undo(&mut self) -> bool {
+        self.apply_history_step(true)
+    }
+
     pub fn redo(&mut self) -> bool {
-        let tab = &mut self.tabs[self.active_tab];
-        if let Some(cursors) = tab.history.redo(&mut tab.buffer) {
-            tab.cursors.set_cursors(cursors);
-            self.record_edit_internal(&[]);
-            true
-        } else {
-            false
-        }
+        self.apply_history_step(false)
     }
 
     /// Restores pending recovery text into the tab buffer, marks the buffer dirty,
@@ -391,6 +409,7 @@ impl Editor {
             tab.buffer = RopeBuffer::from_str(&text);
             tab.cursors.set_single(0);
             tab.history.clear();
+            tab.history.invalidate_saved_state();
             tab.revision += 1;
             tab.is_dirty = true;
             tab.recovered_from_journal = true;

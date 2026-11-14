@@ -46,6 +46,8 @@ pub struct History {
     max_entries: usize,
     max_bytes: usize,
     current_bytes: usize,
+    undo_group_open: bool,
+    saved_depth: Option<usize>,
 }
 
 impl Default for History {
@@ -66,6 +68,8 @@ impl History {
             max_entries: max_entries.max(1),
             max_bytes: max_bytes.max(1),
             current_bytes: 0,
+            undo_group_open: false,
+            saved_depth: Some(0),
         }
     }
 
@@ -77,10 +81,83 @@ impl History {
         !self.redo_stack.is_empty()
     }
 
+    pub fn break_group(&mut self) {
+        self.undo_group_open = false;
+    }
+
+    pub fn mark_saved(&mut self) {
+        self.saved_depth = Some(self.undo_stack.len());
+        self.undo_group_open = false;
+    }
+
+    pub fn invalidate_saved_state(&mut self) {
+        self.saved_depth = None;
+    }
+
+    pub fn is_at_saved_state(&self) -> bool {
+        self.saved_depth == Some(self.undo_stack.len())
+    }
+
     pub fn clear(&mut self) {
         self.undo_stack.clear();
         self.redo_stack.clear();
         self.current_bytes = 0;
+        self.undo_group_open = false;
+        self.saved_depth = Some(0);
+    }
+
+    fn invalidate_branch_saved_depth(&mut self) {
+        if !self.redo_stack.is_empty() {
+            if let Some(depth) = self.saved_depth {
+                if depth > self.undo_stack.len() {
+                    self.saved_depth = None;
+                }
+            }
+        }
+    }
+
+    pub fn record_coalesced_insert(
+        &mut self,
+        delta: TextDelta,
+        cursors_before: Vec<Cursor>,
+        cursors_after: Vec<Cursor>,
+        can_coalesce: bool,
+    ) {
+        let at_saved_depth = self.saved_depth == Some(self.undo_stack.len());
+        if can_coalesce
+            && self.undo_group_open
+            && !at_saved_depth
+            && self.redo_stack.is_empty()
+            && delta.old_text.is_empty()
+            && !delta.new_text.is_empty()
+            && cursors_before.len() == 1
+            && cursors_after.len() == 1
+            && self.current_bytes + delta.new_text.len() <= self.max_bytes
+        {
+            if let Some(last_entry) = self.undo_stack.back_mut() {
+                if last_entry.deltas.len() == 1 {
+                    let last_delta = &mut last_entry.deltas[0];
+                    if last_delta.old_text.is_empty()
+                        && last_delta.start_byte + last_delta.new_text.len() == delta.start_byte
+                    {
+                        last_delta.new_text.push_str(&delta.new_text);
+                        last_entry.cursors_after = cursors_after;
+                        self.current_bytes += delta.new_text.len();
+                        self.undo_group_open = true;
+                        return;
+                    }
+                }
+            }
+        }
+
+        self.invalidate_branch_saved_depth();
+        self.redo_stack.clear();
+        self.push_undo(HistoryEntry {
+            deltas: vec![delta],
+            cursors_before,
+            cursors_after,
+        });
+        self.undo_group_open = can_coalesce;
     }
 
     fn push_undo(&mut self, entry: HistoryEntry) {
@@ -93,6 +170,10 @@ impl History {
         {
             if let Some(oldest) = self.undo_stack.pop_front() {
                 self.current_bytes = self.current_bytes.saturating_sub(entry_bytes(&oldest));
+                self.saved_depth = match self.saved_depth {
+                    Some(d) if d > 0 => Some(d - 1),
+                    _ => None,
+                };
             }
         }
     }
@@ -105,15 +186,18 @@ impl HistoryManager for History {
         cursors_before: Vec<Cursor>,
         cursors_after: Vec<Cursor>,
     ) {
+        self.invalidate_branch_saved_depth();
         self.redo_stack.clear();
         self.push_undo(HistoryEntry {
             deltas,
             cursors_before,
             cursors_after,
         });
+        self.undo_group_open = false;
     }
 
     fn undo(&mut self, current_buffer: &mut dyn TextBuffer) -> Option<Vec<Cursor>> {
+        self.undo_group_open = false;
         let entry = self.undo_stack.pop_back()?;
         self.current_bytes = self.current_bytes.saturating_sub(entry_bytes(&entry));
 
@@ -134,6 +218,7 @@ impl HistoryManager for History {
     }
 
     fn redo(&mut self, current_buffer: &mut dyn TextBuffer) -> Option<Vec<Cursor>> {
+        self.undo_group_open = false;
         let entry = self.redo_stack.pop()?;
 
         // Re-apply edits in forward order
@@ -201,6 +286,44 @@ mod tests {
 
         // Stack size must not exceed 3
         assert_eq!(history.undo_stack.len(), 3);
+    }
+
+    #[test]
+    fn test_coalescing_and_saved_depth_eviction() {
+        let mut buf = RopeBuffer::from_str("");
+        let mut history = History::with_limits(2, 1024);
+        assert!(history.is_at_saved_state());
+
+        let d1 = buf.insert(0, "a").unwrap();
+        history.record_coalesced_insert(d1, vec![Cursor::new(0)], vec![Cursor::new(1)], true);
+        let d2 = buf.insert(1, "b").unwrap();
+        history.record_coalesced_insert(d2, vec![Cursor::new(1)], vec![Cursor::new(2)], true);
+        assert_eq!(history.undo_stack.len(), 1);
+        assert!(!history.is_at_saved_state());
+
+        // Mark saved at depth 1 ("ab")
+        history.mark_saved();
+        assert!(history.is_at_saved_state());
+
+        // Typing right after save must NOT mutate saved entry
+        let d3 = buf.insert(2, "c").unwrap();
+        history.record_coalesced_insert(d3, vec![Cursor::new(2)], vec![Cursor::new(3)], true);
+        assert_eq!(history.undo_stack.len(), 2);
+        assert!(!history.is_at_saved_state());
+
+        // Push a 3rd entry so oldest ("ab") is evicted; saved_depth shifts 1 -> 0
+        history.break_group();
+        let d4 = buf.insert(3, "d").unwrap();
+        history.record_coalesced_insert(d4, vec![Cursor::new(3)], vec![Cursor::new(4)], true);
+        assert_eq!(history.undo_stack.len(), 2);
+        assert!(!history.is_at_saved_state());
+
+        // Undo "d" and "c" -> back to depth 0 (which is the state after evicted "ab")
+        assert!(history.undo(&mut buf).is_some());
+        assert!(!history.is_at_saved_state());
+        assert!(history.undo(&mut buf).is_some());
+        assert_eq!(buf.slice_to_cow(0, buf.len_bytes()), "ab");
+        assert!(history.is_at_saved_state());
     }
 
     proptest! {

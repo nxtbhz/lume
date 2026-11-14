@@ -28,6 +28,7 @@ impl Editor {
 
     pub fn set_cursor_from_line_col(&mut self, line: usize, col: usize, select: bool) {
         let tab = &mut self.tabs[self.active_tab];
+        tab.history.break_group();
         let total_lines = tab.buffer.len_lines();
         let target_line = line.min(total_lines.saturating_sub(1));
         let line_start_char = tab.buffer.rope().line_to_char(target_line);
@@ -113,6 +114,7 @@ impl Editor {
 
     pub fn move_left(&mut self, select: bool) {
         let tab = &mut self.tabs[self.active_tab];
+        tab.history.break_group();
         let primary = tab.cursors.primary_mut();
         if !select && primary.is_selection() {
             let target = primary.min();
@@ -143,6 +145,7 @@ impl Editor {
 
     pub fn move_right(&mut self, select: bool) {
         let tab = &mut self.tabs[self.active_tab];
+        tab.history.break_group();
         let primary = tab.cursors.primary_mut();
         if !select && primary.is_selection() {
             let target = primary.max();
@@ -174,6 +177,7 @@ impl Editor {
 
     pub fn move_up(&mut self, select: bool) {
         let tab = &mut self.tabs[self.active_tab];
+        tab.history.break_group();
         let head = tab.cursors.primary().head;
         let line = tab.buffer.byte_to_line(head);
         if line == 0 {
@@ -206,6 +210,7 @@ impl Editor {
 
     pub fn move_down(&mut self, select: bool) {
         let tab = &mut self.tabs[self.active_tab];
+        tab.history.break_group();
         let head = tab.cursors.primary().head;
         let line = tab.buffer.byte_to_line(head);
         let total_lines = tab.buffer.len_lines();
@@ -240,6 +245,7 @@ impl Editor {
 
     pub fn move_home(&mut self, select: bool) {
         let tab = &mut self.tabs[self.active_tab];
+        tab.history.break_group();
         let head = tab.cursors.primary().head;
         let line = tab.buffer.byte_to_line(head);
         let start_byte = tab.buffer.line_to_byte(line);
@@ -254,6 +260,7 @@ impl Editor {
 
     pub fn move_end(&mut self, select: bool) {
         let tab = &mut self.tabs[self.active_tab];
+        tab.history.break_group();
         let head = tab.cursors.primary().head;
         let line = tab.buffer.byte_to_line(head);
         let line_start_char = tab.buffer.rope().line_to_char(line);
@@ -275,6 +282,7 @@ impl Editor {
             return;
         }
         let tab = &mut self.tabs[self.active_tab];
+        tab.history.break_group();
         let total_lines = tab.buffer.len_lines();
         if total_lines == 0 {
             return;
@@ -317,6 +325,7 @@ impl Editor {
 
     pub fn move_to_start(&mut self, select: bool) {
         let tab = &mut self.tabs[self.active_tab];
+        tab.history.break_group();
         let primary = tab.cursors.primary_mut();
         if select {
             primary.select_to(0);
@@ -327,6 +336,7 @@ impl Editor {
 
     pub fn move_to_end(&mut self, select: bool) {
         let tab = &mut self.tabs[self.active_tab];
+        tab.history.break_group();
         let end_byte = tab.buffer.len_bytes();
         let primary = tab.cursors.primary_mut();
         if select {
@@ -338,6 +348,7 @@ impl Editor {
 
     pub fn move_word_forward(&mut self, select: bool) {
         let tab = &mut self.tabs[self.active_tab];
+        tab.history.break_group();
         let total_chars = tab.buffer.len_chars();
         if total_chars == 0 {
             return;
@@ -386,6 +397,7 @@ impl Editor {
 
     pub fn move_word_backward(&mut self, select: bool) {
         let tab = &mut self.tabs[self.active_tab];
+        tab.history.break_group();
         let total_chars = tab.buffer.len_chars();
         if total_chars == 0 {
             return;
