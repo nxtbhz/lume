@@ -38,13 +38,58 @@ impl Editor {
         }
     }
 
+    fn resolve_write_target(path: &Path) -> Result<PathBuf, std::io::Error> {
+        let mut current = path.to_path_buf();
+        let mut followed_symlink = false;
+
+        for _ in 0..32 {
+            match std::fs::symlink_metadata(&current) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    followed_symlink = true;
+                    let link_target = std::fs::read_link(&current)?;
+                    current = if link_target.is_absolute() {
+                        link_target
+                    } else {
+                        let parent = current
+                            .parent()
+                            .filter(|p| !p.as_os_str().is_empty())
+                            .unwrap_or_else(|| Path::new("."));
+                        parent.join(link_target)
+                    };
+                }
+                Ok(_) => return current.canonicalize(),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    if !followed_symlink {
+                        return Ok(current);
+                    }
+                    // Dangling symlink: resolve its parent directory canonically so we never
+                    // overwrite the symlink itself and fail explicitly if parent does not exist.
+                    let parent = current
+                        .parent()
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .unwrap_or_else(|| Path::new("."));
+                    let file_name = current.file_name().ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "Symlink target has no file name",
+                        )
+                    })?;
+                    let canon_parent = parent.canonicalize()?;
+                    return Ok(canon_parent.join(file_name));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Too many levels of symbolic links",
+        ))
+    }
+
     pub fn write_buffer_atomically(path: &Path, buffer: &RopeBuffer) -> Result<(), std::io::Error> {
-        // If path is a symlink, resolve canonical real destination so the symlink itself is not replaced
-        let target_path = if path.is_symlink() {
-            path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-        } else {
-            path.to_path_buf()
-        };
+        // Resolve real destination (including dangling symlink targets) so symlinks are preserved
+        let target_path = Self::resolve_write_target(path)?;
 
         if let Some(parent) = target_path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -72,14 +117,21 @@ impl Editor {
         };
 
         let write_res = (|| -> Result<(), std::io::Error> {
-            let file = std::fs::File::create(&temp_path)?;
-            if let Some(ref perms) = existing_permissions {
-                let _ = std::fs::set_permissions(&temp_path, perms.clone());
+            let mut open_opts = std::fs::OpenOptions::new();
+            open_opts.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                open_opts.mode(0o600);
             }
+            let file = open_opts.open(&temp_path)?;
             let mut writer = std::io::BufWriter::new(file);
             buffer.write_to(&mut writer)?;
             let file = writer.into_inner().map_err(|e| e.into_error())?;
             file.sync_all()?;
+            if let Some(ref perms) = existing_permissions {
+                let _ = std::fs::set_permissions(&temp_path, perms.clone());
+            }
             Ok(())
         })();
 

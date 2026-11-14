@@ -1,4 +1,4 @@
-use crate::buffer::TextBuffer;
+use crate::buffer::{RopeBuffer, TextBuffer};
 use crate::editor::Editor;
 use crate::journal::Journal;
 
@@ -249,4 +249,78 @@ fn test_atomic_save_preserves_symlinks_and_posix_permissions() {
 
     let _ = std::fs::remove_file(&symlink_file);
     let _ = std::fs::remove_file(&real_file);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_write_atomically_dangling_symlink_does_not_overwrite_symlink() {
+    let base = std::env::temp_dir().join(format!(
+        "lume_dangling_symlink_test_{}_{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&base);
+    let target_dir = base.join("target_dir");
+    std::fs::create_dir_all(&target_dir).unwrap();
+
+    let missing_target = target_dir.join("missing.txt");
+    let link = base.join("link.txt");
+    std::os::unix::fs::symlink(&missing_target, &link).unwrap();
+
+    let buf = RopeBuffer::from_str("written through dangling symlink");
+    Editor::write_buffer_atomically(&link, &buf).unwrap();
+
+    let link_meta = std::fs::symlink_metadata(&link).unwrap();
+    assert!(
+        link_meta.file_type().is_symlink(),
+        "dangling symlink itself must NOT be replaced by a regular file"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&missing_target).unwrap(),
+        "written through dangling symlink"
+    );
+
+    // Dangling symlink pointing into nonexistent parent must return explicit error without clobbering link
+    let bad_link = base.join("bad_link.txt");
+    std::os::unix::fs::symlink(base.join("no_such_dir").join("missing.txt"), &bad_link).unwrap();
+    let res = Editor::write_buffer_atomically(&bad_link, &buf);
+    assert!(
+        res.is_err(),
+        "dangling symlink with missing parent must error cleanly"
+    );
+    assert!(std::fs::symlink_metadata(&bad_link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_write_atomically_creates_temp_with_restricted_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let base = std::env::temp_dir().join(format!(
+        "lume_restricted_mode_test_{}_{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+
+    let new_file = base.join("secret.txt");
+    let buf = RopeBuffer::from_str("private token");
+    Editor::write_buffer_atomically(&new_file, &buf).unwrap();
+
+    let mode = std::fs::metadata(&new_file).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        mode & 0o077,
+        0,
+        "newly written atomic file must not expose group/other bits (got {:o})",
+        mode
+    );
+    assert_eq!(mode, 0o600);
+
+    let _ = std::fs::remove_dir_all(&base);
 }
