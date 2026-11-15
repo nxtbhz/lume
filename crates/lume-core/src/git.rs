@@ -51,16 +51,15 @@ fn normalize_lexical(path: &Path) -> PathBuf {
     for comp in path.components() {
         match comp {
             Component::CurDir => {}
-            Component::ParentDir => {
-                if !matches!(
-                    normalized.components().next_back(),
-                    None | Some(Component::RootDir | Component::Prefix(_) | Component::ParentDir)
-                ) {
-                    normalized.pop();
-                } else if normalized.as_os_str().is_empty() {
+            Component::ParentDir => match normalized.components().next_back() {
+                None | Some(Component::ParentDir | Component::Prefix(_)) => {
                     normalized.push(comp);
                 }
-            }
+                Some(Component::Normal(_)) => {
+                    normalized.pop();
+                }
+                Some(Component::RootDir | Component::CurDir) => {}
+            },
             Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
                 normalized.push(comp);
             }
@@ -341,6 +340,22 @@ mod tests {
         assert!(
             found.is_some(),
             "find_git_dir(Path::new(\"Cargo.toml\")) should find ancestor .git directory"
+        );
+    }
+
+    #[test]
+    fn test_normalize_lexical_preserves_consecutive_leading_parent_dirs() {
+        assert_eq!(
+            normalize_lexical(Path::new("../../foo/../bar")),
+            Path::new("../../bar")
+        );
+        assert_eq!(
+            normalize_lexical(Path::new("a/../../bar")),
+            Path::new("../bar")
+        );
+        assert_eq!(
+            normalize_lexical(Path::new("/../../foo")),
+            Path::new("/foo")
         );
     }
 }
