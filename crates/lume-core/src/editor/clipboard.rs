@@ -1,7 +1,6 @@
 use crate::buffer::{TextBuffer, TextDelta};
 use crate::cursor::Cursor;
 use crate::editor::{Editor, Tab};
-use crate::history::HistoryManager;
 
 fn current_line_byte_range(tab: &Tab) -> Option<(usize, usize)> {
     let total_bytes = tab.buffer.len_bytes();
@@ -82,16 +81,20 @@ impl Editor {
         let has_selection = tab.cursors.cursors().iter().any(|c| c.is_selection());
         let tab = &mut self.tabs[self.active_tab];
         let cursors_before = tab.cursors.cursors().to_vec();
+        let primary_before = tab.cursors.primary_idx();
 
         if has_selection {
-            let mut sorted_cursors = cursors_before.clone();
-            sorted_cursors.sort_by_key(|c| (c.min(), c.max()));
+            let (sorted_cursors, sorted_primary) =
+                Self::sorted_cursors_with_primary(&cursors_before, primary_before);
+            if Self::validate_cursor_boundaries(&tab.buffer, &sorted_cursors).is_err() {
+                return None;
+            }
 
             let mut pieces = Vec::new();
             for c in &sorted_cursors {
                 if c.is_selection() {
-                    let min = c.min().min(total_bytes);
-                    let max = c.max().min(total_bytes);
+                    let min = c.min();
+                    let max = c.max();
                     if min < max {
                         pieces.push(tab.buffer.slice_to_cow(min, max).to_string());
                     }
@@ -103,33 +106,41 @@ impl Editor {
             let cut_text = pieces.join("\n");
 
             let mut deltas: Vec<TextDelta> = Vec::new();
-            let mut new_cursors: Vec<Cursor> = Vec::new();
+            let mut new_cursors: Vec<Cursor> = Vec::with_capacity(sorted_cursors.len());
             let mut delta_offset: isize = 0;
 
             for c in sorted_cursors {
+                let start = (c.min() as isize + delta_offset).max(0) as usize;
+                let end = (c.max() as isize + delta_offset).max(0) as usize;
                 if c.is_selection() {
-                    let start = (c.min() as isize + delta_offset).max(0) as usize;
-                    let end = (c.max() as isize + delta_offset).max(0) as usize;
-                    if start < end && end <= tab.buffer.len_bytes() {
-                        if let Ok(delta) = tab.buffer.delete(start, end) {
-                            deltas.push(delta);
-                            new_cursors.push(Cursor::new(start));
-                            delta_offset -= (end - start) as isize;
-                            continue;
-                        }
+                    if start >= end || end > tab.buffer.len_bytes() {
+                        Self::rollback_deltas(&mut tab.buffer, deltas);
+                        return None;
                     }
+                    let Ok(delta) = tab.buffer.delete(start, end) else {
+                        Self::rollback_deltas(&mut tab.buffer, deltas);
+                        return None;
+                    };
+                    deltas.push(delta);
                     new_cursors.push(Cursor::new(start));
+                    delta_offset -= (end - start) as isize;
                 } else {
-                    let pos = (c.head as isize + delta_offset).max(0) as usize;
-                    new_cursors.push(Cursor::new(pos));
+                    new_cursors.push(Cursor::new(start));
                 }
             }
 
             if !deltas.is_empty() {
-                tab.cursors.set_cursors(new_cursors);
+                tab.cursors
+                    .set_cursors_with_primary(new_cursors, sorted_primary);
                 let cursors_after = tab.cursors.cursors().to_vec();
-                tab.history
-                    .record_edits(deltas.clone(), cursors_before, cursors_after);
+                let primary_after = tab.cursors.primary_idx();
+                tab.history.record_edits_with_primary(
+                    deltas.clone(),
+                    cursors_before,
+                    primary_before,
+                    cursors_after,
+                    primary_after,
+                );
                 self.record_edit_internal(&deltas);
             }
 
@@ -142,15 +153,21 @@ impl Editor {
                 .slice_to_cow(line_start_byte, line_end_byte)
                 .to_string();
 
-            if let Ok(delta) = tab.buffer.delete(line_start_byte, line_end_byte) {
-                let new_pos = line_start_byte.min(tab.buffer.len_bytes());
-                tab.cursors.set_single(new_pos);
-                let cursors_after = tab.cursors.cursors().to_vec();
-                let deltas = vec![delta];
-                tab.history
-                    .record_edits(deltas.clone(), cursors_before, cursors_after);
-                self.record_edit_internal(&deltas);
-            }
+            let Ok(delta) = tab.buffer.delete(line_start_byte, line_end_byte) else {
+                return None;
+            };
+            let new_pos = line_start_byte.min(tab.buffer.len_bytes());
+            tab.cursors.set_single(new_pos);
+            let cursors_after = tab.cursors.cursors().to_vec();
+            let deltas = vec![delta];
+            tab.history.record_edits_with_primary(
+                deltas.clone(),
+                cursors_before,
+                primary_before,
+                cursors_after,
+                0,
+            );
+            self.record_edit_internal(&deltas);
 
             self.clipboard = Some(cut_text.clone());
             Some(cut_text)

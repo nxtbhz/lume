@@ -68,7 +68,8 @@ impl Editor {
                 selected_text == query
             } else {
                 selected_text.eq_ignore_ascii_case(query)
-                    || selected_text.to_lowercase() == query.to_lowercase()
+                    || ((!selected_text.is_ascii() || !query.is_ascii())
+                        && selected_text.to_lowercase() == query.to_lowercase())
             }
         } else {
             false
@@ -76,7 +77,8 @@ impl Editor {
 
         if !is_match_selected {
             // Preview: select next match if available, without modifying buffer
-            return self.find_next(query, case_sensitive).is_some() && false;
+            let _ = self.find_next(query, case_sensitive);
+            return false;
         }
 
         let target_start = sel_min;
@@ -84,6 +86,7 @@ impl Editor {
 
         let tab = &mut self.tabs[self.active_tab];
         let cursors_before = tab.cursors.cursors().to_vec();
+        let primary_before = tab.cursors.primary_idx();
 
         let old_text = match tab.buffer.delete(target_start, target_end) {
             Ok(delta) => delta.old_text,
@@ -103,30 +106,21 @@ impl Editor {
         let deltas = vec![delta];
         let cursors_after = tab.cursors.cursors().to_vec();
 
-        tab.history
-            .record_edits(deltas.clone(), cursors_before, cursors_after);
+        tab.history.record_edits_with_primary(
+            deltas.clone(),
+            cursors_before,
+            primary_before,
+            cursors_after,
+            0,
+        );
         self.record_edit_internal(&deltas);
 
-        // Advance to next match after this replacement without wrapping into the inserted span
+        // Advance to next match after this replacement without wrapping into the inserted span.
+        // Because `find_next` searches [new_pos..EOF) then [0..new_pos) in order, a returned span
+        // intersecting [target_start..new_pos) means no non-overlapping match exists anywhere else.
         if let Some((next_start, next_end)) = self.find_next(query, case_sensitive) {
             if next_start < new_pos && next_end > target_start {
-                let tab = &mut self.tabs[self.active_tab];
-                if let Some((earlier_start, earlier_end)) = crate::search::find_matches_in_range(
-                    &tab.buffer,
-                    query,
-                    0,
-                    target_start,
-                    case_sensitive,
-                )
-                .into_iter()
-                .next()
-                {
-                    let primary = tab.cursors.primary_mut();
-                    primary.anchor = earlier_start;
-                    primary.head = earlier_end;
-                } else {
-                    tab.cursors.set_single(new_pos);
-                }
+                self.tabs[self.active_tab].cursors.set_single(new_pos);
             }
         }
 

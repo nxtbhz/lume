@@ -105,4 +105,35 @@ mod unix_explorer_security_tests {
         assert_rejected(err_cf_sub);
         assert!(!outside_missing.exists());
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_explorer_rejects_symlink_loop_curdir_and_symlink_delete_folder() {
+        let base = std::env::temp_dir().join(format!("lume_exp_sec_reg_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "do not delete").unwrap();
+
+        // 1. Symlink loop `ws/loop -> ws` combined with `/.` must NOT bypass ancestor check
+        let loop_link = ws.join("loop");
+        std::os::unix::fs::symlink(&ws, &loop_link).unwrap();
+        let mut explorer = crate::explorer::FileExplorer::new(ws.clone());
+        let err_loop = explorer
+            .create_file(&loop_link.join("."), "pwn.txt")
+            .unwrap_err();
+        assert_eq!(err_loop.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(!ws.join("pwn.txt").exists());
+
+        // 2. `delete_folder` must reject symlinks pointing outside workspace without deleting target
+        let del_link = ws.join("del_link");
+        std::os::unix::fs::symlink(&outside, &del_link).unwrap();
+        let err_del = explorer.delete_folder(&del_link).unwrap_err();
+        assert_eq!(err_del.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(outside.join("secret.txt").exists());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

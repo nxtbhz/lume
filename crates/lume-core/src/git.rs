@@ -76,7 +76,7 @@ fn find_git_root_and_dir(start_path: &Path) -> Option<(PathBuf, PathBuf)> {
     let anchored = if start_path.is_relative() {
         normalize_lexical(&std::env::current_dir().ok()?.join(start_path))
     } else {
-        start_path.to_path_buf()
+        normalize_lexical(start_path)
     };
 
     let mut current = if anchored.is_file() {
@@ -96,11 +96,11 @@ fn find_git_root_and_dir(start_path: &Path) -> Option<(PathBuf, PathBuf)> {
                 if let Some(gitdir_str) = content.trim().strip_prefix("gitdir:") {
                     let target_raw = gitdir_str.trim();
                     let target_path = Path::new(target_raw);
-                    let resolved = if target_path.is_absolute() {
+                    let resolved = normalize_lexical(&if target_path.is_absolute() {
                         target_path.to_path_buf()
                     } else {
                         current.join(target_path)
-                    };
+                    });
                     if resolved.exists() {
                         return Some((current, resolved));
                     }
@@ -174,19 +174,40 @@ pub fn read_git_head_blob(path: &Path) -> Option<String> {
         return None;
     }
 
+    const MAX_GIT_HEAD_BLOB_BYTES: usize = 16 * 1024 * 1024;
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+
     let spec = format!("HEAD:{}", rel_posix);
-    let output = std::process::Command::new("git")
-        .arg("show")
+    let mut child = Command::new("git")
+        .arg("cat-file")
+        .arg("blob")
         .arg(spec)
         .current_dir(&worktree_root)
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
         .ok()?;
 
-    if !output.status.success() {
+    let stdout = child.stdout.take()?;
+    let mut buf = Vec::new();
+    let read_res = stdout
+        .take((MAX_GIT_HEAD_BLOB_BYTES + 1) as u64)
+        .read_to_end(&mut buf);
+
+    if read_res.is_err() || buf.len() > MAX_GIT_HEAD_BLOB_BYTES {
+        let _ = child.kill();
+        let _ = child.wait();
         return None;
     }
 
-    String::from_utf8(output.stdout).ok()
+    let status = child.wait().ok()?;
+    if !status.success() {
+        return None;
+    }
+
+    String::from_utf8(buf).ok()
 }
 
 #[cfg(test)]
@@ -357,5 +378,59 @@ mod tests {
             normalize_lexical(Path::new("/../../foo")),
             Path::new("/foo")
         );
+    }
+
+    #[test]
+    fn test_read_git_head_blob_rejects_tree_and_normalizes_dotdot_gitdir() {
+        let unique_id = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root_dir = std::env::temp_dir().join(format!(
+            "lume_git_tree_guard_{}_{}",
+            std::process::id(),
+            unique_id
+        ));
+        let _ = fs::remove_dir_all(&root_dir);
+        fs::create_dir_all(root_dir.join("sub")).unwrap();
+
+        let run_git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&root_dir)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {:?} failed", args);
+        };
+        run_git(&["init"]);
+        run_git(&["config", "user.email", "test@lume.local"]);
+        run_git(&["config", "user.name", "Lume Test"]);
+        fs::write(root_dir.join("sub/a.txt"), "hello\n").unwrap();
+        run_git(&["add", "sub/a.txt"]);
+        run_git(&["commit", "-m", "init"]);
+
+        // `sub` is a tree in HEAD; `read_git_head_blob` must return None rather than a tree listing.
+        assert_eq!(read_git_head_blob(&root_dir.join("sub")), None);
+        assert_eq!(
+            read_git_head_blob(&root_dir.join("sub/a.txt")).as_deref(),
+            Some("hello\n")
+        );
+
+        // `gitdir:` pointer with `..` segments must normalize lexically.
+        let wt_ptr_root = root_dir.join("wt_ptr");
+        fs::create_dir_all(wt_ptr_root.join("nested")).unwrap();
+        fs::write(wt_ptr_root.join(".git"), "gitdir: ../.git/objects/..\n").unwrap();
+        fs::write(wt_ptr_root.join("nested/f.txt"), "").unwrap();
+        let resolved = find_git_dir(&wt_ptr_root.join("nested/f.txt")).unwrap();
+        assert_eq!(resolved, root_dir.join(".git"));
+        assert!(
+            !resolved
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir)),
+            "resolved git dir should not contain '..': {:?}",
+            resolved
+        );
+
+        let _ = fs::remove_dir_all(&root_dir);
     }
 }

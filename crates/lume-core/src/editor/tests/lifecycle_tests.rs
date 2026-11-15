@@ -606,3 +606,92 @@ fn test_insert_char_save_breaks_coalescing_and_whitespace_breaks_group() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_clean_undo_clears_dirty_sync_and_removes_journal() {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir =
+        std::env::temp_dir().join(format!("lume_clean_undo_{}_{}", std::process::id(), nanos));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("clean.txt");
+    std::fs::write(&path, "base\n").unwrap();
+
+    let mut ed = Editor::open(&path).unwrap();
+    let sync = std::sync::Arc::new(crate::editor::TabSyncState {
+        revision: std::sync::atomic::AtomicU64::new(0),
+        is_dirty: std::sync::atomic::AtomicBool::new(false),
+        journal_lock: std::sync::Mutex::new(()),
+        save_lock: std::sync::Mutex::new(()),
+    });
+    ed.active_tab_mut().sync_state = Some(std::sync::Arc::clone(&sync));
+    assert!(!ed.is_dirty());
+    assert!(!sync.is_dirty.load(std::sync::atomic::Ordering::SeqCst));
+
+    ed.insert_char('x').unwrap();
+    crate::journal::Journal::flush();
+    assert!(ed.is_dirty());
+    assert!(sync.is_dirty.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(crate::journal::Journal::journal_path(&path).exists());
+
+    // Undoing back to the saved state must clear dirty flags and drop the recovery journal
+    assert!(ed.undo());
+    crate::journal::Journal::flush();
+    assert!(!ed.is_dirty());
+    assert!(!sync.is_dirty.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(!crate::journal::Journal::journal_path(&path).exists());
+
+    // Redoing re-marks dirty and restores a recovery entry; insert CRLF to verify journal EOL detection
+    assert!(ed.redo());
+    ed.insert_str("\r\n").unwrap();
+    crate::journal::Journal::flush();
+    assert!(ed.is_dirty());
+    assert!(sync.is_dirty.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(crate::journal::Journal::journal_path(&path).exists());
+
+    // Simulate reopening after crash: `recover_tab_journal` must re-detect CRLF from recovered text
+    drop(ed);
+    let mut recovered = Editor::open(&path).unwrap();
+    assert_eq!(
+        recovered.active_tab().line_ending,
+        crate::editor::LineEnding::Lf
+    );
+    assert!(recovered.recover_tab_journal(0));
+    assert_eq!(recovered.buffer().rope().to_string(), "x\r\nbase\n");
+    assert_eq!(
+        recovered.active_tab().line_ending,
+        crate::editor::LineEnding::CrLf
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_cut_selection_atomic_rollback_and_crlf_linewise_paste() {
+    // 1. Multi-cursor cut_selection fails atomically when any selection is non-UTF-8-aligned
+    let mut ed = Editor::from_str("ab🚀");
+    ed.set_clipboard("keep");
+    ed.cursors_mut().set_cursors_with_primary(
+        vec![Cursor::with_anchor(0, 2), Cursor::with_anchor(2, 4)],
+        0,
+    );
+    assert_eq!(ed.cut_selection(), None);
+    assert_eq!(ed.buffer().rope().to_string(), "ab🚀");
+    assert_eq!(ed.clipboard(), Some("keep"));
+
+    // 2. Linewise paste at EOF without trailing newline respects CRLF line ending
+    let mut ed_crlf = Editor::from_str("first\r\nsecond");
+    assert_eq!(
+        ed_crlf.active_tab().line_ending,
+        crate::editor::LineEnding::CrLf
+    );
+    ed_crlf.move_to_end(false);
+    ed_crlf.paste_yank("third\r\n", true).unwrap();
+    assert_eq!(
+        ed_crlf.buffer().rope().to_string(),
+        "first\r\nsecond\r\nthird\r\n"
+    );
+}

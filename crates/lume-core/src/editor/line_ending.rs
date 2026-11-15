@@ -1,3 +1,26 @@
+/// Scans for `b'\n'` 8 bytes at a time via SWAR bit-twiddling in safe Rust
+/// so LLVM does not degrade chunk search into a 1-byte-per-iteration scalar loop.
+#[inline]
+fn find_lf(bytes: &[u8]) -> Option<usize> {
+    const LO: u64 = 0x0101_0101_0101_0101;
+    const HI: u64 = 0x8080_8080_8080_8080;
+    const MASK: u64 = 0x0a0a_0a0a_0a0a_0a0a;
+
+    let (chunks, rem) = bytes.as_chunks::<8>();
+    for (i, chunk) in chunks.iter().enumerate() {
+        let word = u64::from_le_bytes(*chunk);
+        let x = word ^ MASK;
+        let has_lf = x.wrapping_sub(LO) & !x & HI;
+        if has_lf != 0 {
+            return Some(i * 8 + (has_lf.trailing_zeros() as usize >> 3));
+        }
+    }
+    let tail_offset = chunks.len() * 8;
+    rem.iter()
+        .position(|&b| b == b'\n')
+        .map(|j| tail_offset + j)
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LineEnding {
     #[default]
@@ -12,7 +35,7 @@ impl LineEnding {
         let mut prev_ended_with_cr = false;
         for chunk in rope.chunks() {
             let bytes = chunk.as_bytes();
-            if let Some(pos) = bytes.iter().position(|&b| b == b'\n') {
+            if let Some(pos) = find_lf(bytes) {
                 let preceded_by_cr = if pos > 0 {
                     bytes[pos - 1] == b'\r'
                 } else {

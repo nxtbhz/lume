@@ -1,6 +1,5 @@
 use crate::buffer::{BufferError, TextBuffer};
 use crate::editor::Editor;
-use crate::history::HistoryManager;
 
 impl Editor {
     pub fn delete_line(&mut self) -> Result<String, BufferError> {
@@ -50,6 +49,7 @@ impl Editor {
         };
 
         let cursors_before = tab.cursors.cursors().to_vec();
+        let primary_before = tab.cursors.primary_idx();
         let raw_slice = tab.buffer.slice_to_cow(delete_start, delete_end);
         let stripped_head = raw_slice
             .strip_prefix("\r\n")
@@ -69,8 +69,13 @@ impl Editor {
         tab.cursors.set_single(new_head);
         let cursors_after = tab.cursors.cursors().to_vec();
 
-        tab.history
-            .record_edits(deltas.clone(), cursors_before, cursors_after);
+        tab.history.record_edits_with_primary(
+            deltas.clone(),
+            cursors_before,
+            primary_before,
+            cursors_after,
+            0,
+        );
         self.record_edit_internal(&deltas);
 
         Ok(deleted_slice)
@@ -110,6 +115,7 @@ impl Editor {
 
         let tab = &mut self.tabs[self.active_tab];
         let cursors_before = tab.cursors.cursors().to_vec();
+        let primary_before = tab.cursors.primary_idx();
 
         let (insert_byte, new_cursor_pos) = if linewise {
             let total_lines = tab.buffer.len_lines();
@@ -136,7 +142,7 @@ impl Editor {
                 if head < total_bytes {
                     let char_idx = tab.buffer.byte_to_char(head);
                     let ch = tab.buffer.rope().char(char_idx);
-                    if ch == '\n' {
+                    if ch == '\n' || ch == '\r' {
                         (head, head)
                     } else {
                         let next_byte = tab.buffer.char_to_byte(char_idx + 1);
@@ -153,7 +159,7 @@ impl Editor {
         {
             let last_c = tab.buffer.rope().char(tab.buffer.len_chars() - 1);
             if last_c != '\n' {
-                let mut s = String::from("\n");
+                let mut s = String::from(tab.line_ending.as_str());
                 s.push_str(text);
                 s
             } else {
@@ -169,8 +175,13 @@ impl Editor {
         tab.cursors.set_single(new_cursor_pos);
         let cursors_after = tab.cursors.cursors().to_vec();
 
-        tab.history
-            .record_edits(deltas.clone(), cursors_before, cursors_after);
+        tab.history.record_edits_with_primary(
+            deltas.clone(),
+            cursors_before,
+            primary_before,
+            cursors_after,
+            0,
+        );
         self.record_edit_internal(&deltas);
 
         Ok(())

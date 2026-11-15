@@ -87,3 +87,29 @@ fn test_status_bar_narrow_width_modal_truncation() {
     render_status_bar(&app, &mut buf, 0).expect("narrow modal status bar render should succeed");
     assert!(!buf.is_empty());
 }
+
+#[test]
+fn test_status_bar_renders_line_ending_lf_and_crlf() {
+    let mut app = App::new(None).unwrap();
+    app.terminal_width = 160;
+    app.terminal_height = 24;
+
+    let mut lf_buf = Vec::new();
+    render_status_bar(&app, &mut lf_buf, 0).unwrap();
+    let lf_out = String::from_utf8_lossy(&lf_buf);
+    assert!(
+        lf_out.contains("│ LF"),
+        "expected LF indicator in status bar: {}",
+        lf_out
+    );
+
+    app.editor.active_tab_mut().line_ending = lume_core::editor::LineEnding::CrLf;
+    let mut crlf_buf = Vec::new();
+    render_status_bar(&app, &mut crlf_buf, 0).unwrap();
+    let crlf_out = String::from_utf8_lossy(&crlf_buf);
+    assert!(
+        crlf_out.contains("│ CRLF"),
+        "expected CRLF indicator in status bar: {}",
+        crlf_out
+    );
+}

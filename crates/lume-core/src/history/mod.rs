@@ -9,7 +9,9 @@ pub const DEFAULT_MAX_HISTORY_BYTES: usize = 50 * 1024 * 1024; // 50 MB
 pub struct HistoryEntry {
     pub deltas: Vec<TextDelta>,
     pub cursors_before: Vec<Cursor>,
+    pub primary_before: usize,
     pub cursors_after: Vec<Cursor>,
+    pub primary_after: usize,
 }
 
 fn entry_bytes(entry: &HistoryEntry) -> usize {
@@ -155,9 +157,83 @@ impl History {
         self.push_undo(HistoryEntry {
             deltas: vec![delta],
             cursors_before,
+            primary_before: 0,
             cursors_after,
+            primary_after: 0,
         });
         self.undo_group_open = can_coalesce;
+    }
+
+    pub fn record_edits_with_primary(
+        &mut self,
+        deltas: Vec<TextDelta>,
+        cursors_before: Vec<Cursor>,
+        primary_before: usize,
+        cursors_after: Vec<Cursor>,
+        primary_after: usize,
+    ) {
+        self.invalidate_branch_saved_depth();
+        self.redo_stack.clear();
+        self.push_undo(HistoryEntry {
+            deltas,
+            cursors_before,
+            primary_before,
+            cursors_after,
+            primary_after,
+        });
+        self.undo_group_open = false;
+    }
+
+    pub fn undo_with_primary(
+        &mut self,
+        current_buffer: &mut dyn TextBuffer,
+    ) -> Option<(Vec<Cursor>, usize)> {
+        self.undo_group_open = false;
+        let entry = self.undo_stack.pop_back()?;
+        let bytes = entry_bytes(&entry);
+        self.current_bytes = self.current_bytes.saturating_sub(bytes);
+
+        let applied = apply_delta_sequence(
+            current_buffer,
+            entry
+                .deltas
+                .iter()
+                .rev()
+                .map(|d| (d.start_byte, d.new_text.as_str(), d.old_text.as_str())),
+        );
+        if !applied {
+            self.current_bytes += bytes;
+            self.undo_stack.push_back(entry);
+            return None;
+        }
+
+        let cursors = (entry.cursors_before.clone(), entry.primary_before);
+        self.redo_stack.push(entry);
+        Some(cursors)
+    }
+
+    pub fn redo_with_primary(
+        &mut self,
+        current_buffer: &mut dyn TextBuffer,
+    ) -> Option<(Vec<Cursor>, usize)> {
+        self.undo_group_open = false;
+        let entry = self.redo_stack.pop()?;
+
+        let applied = apply_delta_sequence(
+            current_buffer,
+            entry
+                .deltas
+                .iter()
+                .map(|d| (d.start_byte, d.old_text.as_str(), d.new_text.as_str())),
+        );
+        if !applied {
+            self.redo_stack.push(entry);
+            return None;
+        }
+
+        let cursors = (entry.cursors_after.clone(), entry.primary_after);
+        self.push_undo(entry);
+        Some(cursors)
     }
 
     fn push_undo(&mut self, entry: HistoryEntry) {
@@ -234,60 +310,17 @@ impl HistoryManager for History {
         cursors_before: Vec<Cursor>,
         cursors_after: Vec<Cursor>,
     ) {
-        self.invalidate_branch_saved_depth();
-        self.redo_stack.clear();
-        self.push_undo(HistoryEntry {
-            deltas,
-            cursors_before,
-            cursors_after,
-        });
-        self.undo_group_open = false;
+        self.record_edits_with_primary(deltas, cursors_before, 0, cursors_after, 0);
     }
 
     fn undo(&mut self, current_buffer: &mut dyn TextBuffer) -> Option<Vec<Cursor>> {
-        self.undo_group_open = false;
-        let entry = self.undo_stack.pop_back()?;
-        let bytes = entry_bytes(&entry);
-        self.current_bytes = self.current_bytes.saturating_sub(bytes);
-
-        let applied = apply_delta_sequence(
-            current_buffer,
-            entry
-                .deltas
-                .iter()
-                .rev()
-                .map(|d| (d.start_byte, d.new_text.as_str(), d.old_text.as_str())),
-        );
-        if !applied {
-            self.current_bytes += bytes;
-            self.undo_stack.push_back(entry);
-            return None;
-        }
-
-        let cursors = entry.cursors_before.clone();
-        self.redo_stack.push(entry);
-        Some(cursors)
+        self.undo_with_primary(current_buffer)
+            .map(|(cursors, _)| cursors)
     }
 
     fn redo(&mut self, current_buffer: &mut dyn TextBuffer) -> Option<Vec<Cursor>> {
-        self.undo_group_open = false;
-        let entry = self.redo_stack.pop()?;
-
-        let applied = apply_delta_sequence(
-            current_buffer,
-            entry
-                .deltas
-                .iter()
-                .map(|d| (d.start_byte, d.old_text.as_str(), d.new_text.as_str())),
-        );
-        if !applied {
-            self.redo_stack.push(entry);
-            return None;
-        }
-
-        let cursors = entry.cursors_after.clone();
-        self.push_undo(entry);
-        Some(cursors)
+        self.redo_with_primary(current_buffer)
+            .map(|(cursors, _)| cursors)
     }
 }
 

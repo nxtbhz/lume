@@ -224,10 +224,28 @@ impl FileExplorer {
     }
 
     fn validate_existing_ancestor_chain(
+        root_raw: &Path,
         root_canon: &Path,
         existing_path: &Path,
     ) -> std::io::Result<PathBuf> {
-        let meta = fs::symlink_metadata(existing_path)?;
+        let mut clean = PathBuf::new();
+        for comp in existing_path.components() {
+            match comp {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "Path traversal in existing path is forbidden",
+                    ));
+                }
+                _ => clean.push(comp),
+            }
+        }
+        if clean.as_os_str().is_empty() {
+            clean.push(".");
+        }
+
+        let meta = fs::symlink_metadata(&clean)?;
         if meta.file_type().is_symlink() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
@@ -235,7 +253,7 @@ impl FileExplorer {
             ));
         }
 
-        let canon = existing_path.canonicalize()?;
+        let canon = clean.canonicalize()?;
         if !canon.starts_with(root_canon) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
@@ -243,9 +261,10 @@ impl FileExplorer {
             ));
         }
 
-        // Block intermediate symlinks anywhere between `root_canon` and `existing_path`
-        let mut cur = existing_path.to_path_buf();
-        while cur != *root_canon && cur.canonicalize().ok().as_deref() != Some(root_canon) {
+        // Walk lexically from `clean` upward without per-step `canonicalize()` so
+        // `ws/loop -> ws` loops are never skipped, while still stopping at uncanonical `root_raw`.
+        let mut cur = clean;
+        while cur != *root_canon && cur != *root_raw {
             let m = fs::symlink_metadata(&cur)?;
             if m.file_type().is_symlink() {
                 return Err(std::io::Error::new(
@@ -264,7 +283,12 @@ impl FileExplorer {
         Ok(canon)
     }
 
-    fn resolve_safe_target(&self, base_dir: &Path, rel_path: &Path) -> std::io::Result<PathBuf> {
+    fn resolve_safe_target(
+        &self,
+        root_canon: &Path,
+        base_dir: &Path,
+        rel_path: &Path,
+    ) -> std::io::Result<PathBuf> {
         let rel_str = rel_path.to_string_lossy();
         let trimmed = rel_str.trim();
         if trimmed.is_empty() {
@@ -292,8 +316,6 @@ impl FileExplorer {
             ));
         }
 
-        let root_canon = self.root.canonicalize()?;
-
         if base_dir
             .components()
             .any(|c| matches!(c, std::path::Component::ParentDir))
@@ -315,7 +337,9 @@ impl FileExplorer {
         let mut missing_base_tail = Vec::new();
         let existing_canon = loop {
             match fs::symlink_metadata(&cursor) {
-                Ok(_) => break Self::validate_existing_ancestor_chain(&root_canon, &cursor)?,
+                Ok(_) => {
+                    break Self::validate_existing_ancestor_chain(&self.root, root_canon, &cursor)?;
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     let Some(name) = cursor.file_name() else {
                         return Err(std::io::Error::new(
@@ -386,7 +410,7 @@ impl FileExplorer {
             ));
         }
 
-        if !target.starts_with(&root_canon) {
+        if !target.starts_with(root_canon) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
                 "Target path resolved outside workspace root",
@@ -457,8 +481,8 @@ impl FileExplorer {
         }
 
         let trimmed = trimmed_input.trim_end_matches(['/', '\\']);
-        let target = self.resolve_safe_target(base_dir, Path::new(trimmed))?;
         let root_canon = self.root.canonicalize()?;
+        let target = self.resolve_safe_target(&root_canon, base_dir, Path::new(trimmed))?;
 
         Self::ensure_dir_no_symlinks(&root_canon, &target)?;
         self.expand_ancestors_to_root(&root_canon, &target);
@@ -478,11 +502,14 @@ impl FileExplorer {
 
     pub fn delete_folder<P: AsRef<Path>>(&mut self, path: P) -> std::io::Result<PathBuf> {
         let target = path.as_ref();
-        let root_canon = self
-            .root
-            .canonicalize()
-            .unwrap_or_else(|_| self.root.clone());
-        let target_canon = target.canonicalize()?;
+        let root_canon = self.root.canonicalize()?;
+        let raw_target = if target.is_absolute() || target.starts_with(&self.root) {
+            target.to_path_buf()
+        } else {
+            self.root.join(target)
+        };
+        let target_canon =
+            Self::validate_existing_ancestor_chain(&self.root, &root_canon, &raw_target)?;
 
         if target_canon == root_canon {
             return Err(std::io::Error::new(
@@ -538,8 +565,8 @@ impl FileExplorer {
             ));
         }
 
-        let target = self.resolve_safe_target(base_dir, rel)?;
         let root_canon = self.root.canonicalize()?;
+        let target = self.resolve_safe_target(&root_canon, base_dir, rel)?;
 
         if let Some(parent) = target.parent() {
             Self::ensure_dir_no_symlinks(&root_canon, parent)?;
@@ -571,7 +598,8 @@ impl FileExplorer {
     ) -> std::io::Result<PathBuf> {
         let name_ref = new_name.as_ref();
         let root_canon = self.root.canonicalize()?;
-        let source_canon = Self::validate_existing_ancestor_chain(&root_canon, source_path)?;
+        let source_canon =
+            Self::validate_existing_ancestor_chain(&self.root, &root_canon, source_path)?;
 
         if source_canon == root_canon {
             return Err(std::io::Error::new(
@@ -581,11 +609,11 @@ impl FileExplorer {
         }
 
         let parent_dir = source_canon.parent().unwrap_or(&root_canon);
-        let target = self.resolve_safe_target(parent_dir, name_ref)?;
+        let target = self.resolve_safe_target(&root_canon, parent_dir, name_ref)?;
 
         if let Some(dest_parent) = target.parent() {
             if fs::symlink_metadata(dest_parent).is_ok() {
-                Self::validate_existing_ancestor_chain(&root_canon, dest_parent)?;
+                Self::validate_existing_ancestor_chain(&self.root, &root_canon, dest_parent)?;
             }
         }
 

@@ -396,3 +396,36 @@ fn test_delete_backwards_forwards_crlf_atomic_multicursor() {
     );
     assert!(!ed_fwd_fail.is_dirty());
 }
+
+#[test]
+fn test_delete_backwards_mid_utf8_and_multicursor_primary_undo_redo() {
+    // 1. Mid-UTF-8 cursor must return NotCharBoundary instead of panicking on cursor_char - 1 underflow
+    let mut ed_utf8 = Editor::from_str("é");
+    ed_utf8.cursors_mut().set_single(1);
+    assert!(matches!(
+        ed_utf8.delete_backwards(),
+        Err(crate::buffer::BufferError::NotCharBoundary(1))
+    ));
+    assert_eq!(ed_utf8.buffer().rope().to_string(), "é");
+
+    let mut ed_utf8_2 = Editor::from_str("aé");
+    ed_utf8_2.cursors_mut().set_single(2);
+    assert!(matches!(
+        ed_utf8_2.delete_backwards(),
+        Err(crate::buffer::BufferError::NotCharBoundary(2))
+    ));
+    assert_eq!(ed_utf8_2.buffer().rope().to_string(), "aé");
+
+    // 2. Auto-pairs + multi-cursor edit + undo/redo preserves non-zero primary cursor index
+    let mut ed = Editor::from_str("   \n   ");
+    ed.cursors_mut()
+        .set_cursors_with_primary(vec![Cursor::new(0), Cursor::new(4)], 1);
+    assert_eq!(ed.cursors().primary_idx(), 1);
+    ed.insert_char('(').unwrap();
+    assert_eq!(ed.buffer().rope().to_string(), "()   \n()   ");
+    assert_eq!(ed.cursors().primary_idx(), 1);
+    assert!(ed.undo());
+    assert_eq!(ed.cursors().primary_idx(), 1);
+    assert!(ed.redo());
+    assert_eq!(ed.cursors().primary_idx(), 1);
+}

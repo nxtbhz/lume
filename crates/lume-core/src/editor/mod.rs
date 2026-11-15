@@ -22,7 +22,6 @@ use crossbeam_channel::{Receiver, Sender};
 use crate::autosave::AutoSaveController;
 use crate::buffer::{RopeBuffer, TextBuffer};
 use crate::cursor::CursorSet;
-use crate::history::HistoryManager;
 use crate::journal::Journal;
 
 #[derive(Clone, Debug)]
@@ -363,26 +362,39 @@ impl Editor {
     }
 
     fn apply_history_step(&mut self, is_undo: bool) -> bool {
-        let cursors = {
+        let step = {
             let tab = &mut self.tabs[self.active_tab];
             if is_undo {
-                tab.history.undo(&mut tab.buffer)
+                tab.history.undo_with_primary(&mut tab.buffer)
             } else {
-                tab.history.redo(&mut tab.buffer)
+                tab.history.redo_with_primary(&mut tab.buffer)
             }
         };
 
-        if let Some(cursors) = cursors {
+        if let Some((cursors, primary_idx)) = step {
             let is_dirty = {
                 let tab = &mut self.tabs[self.active_tab];
-                tab.cursors.set_cursors(cursors);
+                tab.cursors.set_cursors_with_primary(cursors, primary_idx);
                 !tab.history.is_at_saved_state()
             };
-            self.record_edit_internal(&[]);
-            let tab = &mut self.tabs[self.active_tab];
-            tab.is_dirty = is_dirty;
-            if let Some(ref sync) = tab.sync_state {
-                sync.is_dirty.store(is_dirty, Ordering::SeqCst);
+            if is_dirty {
+                self.record_edit_internal(&[]);
+            } else {
+                let tab = &mut self.tabs[self.active_tab];
+                tab.revision += 1;
+                tab.is_dirty = false;
+                if let Some(ref sync) = tab.sync_state {
+                    sync.revision.store(tab.revision, Ordering::SeqCst);
+                    sync.is_dirty.store(false, Ordering::SeqCst);
+                }
+                if let Some(ref path) = tab.file_path {
+                    let jpath = tab
+                        .journal_path
+                        .clone()
+                        .unwrap_or_else(|| Journal::journal_path(path));
+                    Journal::enqueue_remove(jpath);
+                }
+                self.autosave.mark_saved();
             }
             true
         } else {
@@ -407,6 +419,7 @@ impl Editor {
         let tab = &mut self.tabs[tab_idx];
         if let Some(text) = tab.pending_recovery.take() {
             tab.buffer = RopeBuffer::from_str(&text);
+            tab.line_ending = LineEnding::detect(tab.buffer.rope());
             tab.cursors.set_single(0);
             tab.history.clear();
             tab.history.invalidate_saved_state();

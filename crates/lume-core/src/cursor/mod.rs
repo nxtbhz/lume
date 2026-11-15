@@ -101,6 +101,10 @@ impl CursorSet {
         &mut self.cursors[self.primary_idx]
     }
 
+    pub fn primary_idx(&self) -> usize {
+        self.primary_idx
+    }
+
     pub fn set_single(&mut self, head: usize) {
         self.cursors.clear();
         self.cursors.push(Cursor::new(head));
@@ -108,11 +112,15 @@ impl CursorSet {
     }
 
     pub fn set_cursors(&mut self, cursors: Vec<Cursor>) {
+        self.set_cursors_with_primary(cursors, 0);
+    }
+
+    pub fn set_cursors_with_primary(&mut self, cursors: Vec<Cursor>, primary_idx: usize) {
         if cursors.is_empty() {
             self.set_single(0);
         } else {
             self.cursors = cursors;
-            self.primary_idx = 0;
+            self.primary_idx = primary_idx.min(self.cursors.len() - 1);
             self.normalize();
         }
     }
@@ -144,16 +152,18 @@ impl CursorSet {
             let is_primary = orig_idx == orig_primary;
             if let Some(last) = merged.last_mut() {
                 let overlaps_strictly = cursor.min() < last.max();
-                let same_point_caret = last.min() == cursor.min()
-                    && (last.anchor == last.head || cursor.anchor == cursor.head);
-                if overlaps_strictly || same_point_caret {
+                let caret_on_boundary = (last.anchor == last.head && last.min() == cursor.min())
+                    || (cursor.anchor == cursor.head
+                        && (cursor.min() == last.min() || cursor.min() == last.max()));
+                if overlaps_strictly || caret_on_boundary {
                     let new_min = last.min().min(cursor.min());
                     let new_max = last.max().max(cursor.max());
-                    let forward = if last.anchor == last.head && cursor.is_selection() {
-                        cursor.head >= cursor.anchor
-                    } else {
-                        last.head >= last.anchor
-                    };
+                    let forward =
+                        if cursor.is_selection() && (is_primary || last.anchor == last.head) {
+                            cursor.head >= cursor.anchor
+                        } else {
+                            last.head >= last.anchor
+                        };
                     if forward {
                         last.anchor = new_min;
                         last.head = new_max;
@@ -249,5 +259,28 @@ mod tests {
         caret_set.add_cursor(Cursor::new(0));
         assert_eq!(caret_set.cursors().len(), 2);
         assert_eq!(caret_set.primary().head, 5);
+    }
+
+    #[test]
+    fn test_cursor_normalize_symmetric_caret_merge_and_direction_and_primary() {
+        // Caret positioned at selection end merges symmetrically, keeping backward selection direction
+        let mut set = CursorSet::single(0);
+        set.set_cursors_with_primary(vec![Cursor::new(6), Cursor::with_anchor(6, 3)], 1);
+        assert_eq!(set.cursors().len(), 1);
+        assert_eq!(set.primary().anchor, 6);
+        assert_eq!(set.primary().head, 3);
+
+        // Primary selection direction wins even when merged with an earlier caret
+        let mut set2 = CursorSet::single(0);
+        set2.set_cursors_with_primary(vec![Cursor::with_anchor(8, 4), Cursor::new(4)], 0);
+        assert_eq!(set2.cursors().len(), 1);
+        assert_eq!(set2.primary().anchor, 8);
+        assert_eq!(set2.primary().head, 4);
+
+        // `set_cursors_with_primary` tracks the primary index after reordering
+        let mut set3 = CursorSet::single(0);
+        set3.set_cursors_with_primary(vec![Cursor::new(10), Cursor::new(2)], 0);
+        assert_eq!(set3.primary_idx(), 1);
+        assert_eq!(set3.primary().head, 10);
     }
 }

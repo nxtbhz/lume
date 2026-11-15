@@ -33,6 +33,7 @@ pub fn render_status_bar<W: Write>(
             .current_language()
             .map(|l| l.name())
             .unwrap_or("Plain Text");
+        let eol_str = app.editor.active_tab().line_ending.label();
 
         let exp_indicator = if app.explorer.is_visible {
             "[Explorer ON] "
@@ -59,6 +60,24 @@ pub fn render_status_bar<W: Write>(
         } else {
             String::new()
         };
+        let core_info = format!(
+            "{}{}{} │ Tab {}/{} │ {}{} │ Ln {}, Col {} │ {} │ {}",
+            git_str,
+            exp_indicator,
+            if app.focus == ActiveFocus::Explorer {
+                "(Explorer Active)"
+            } else {
+                "(Editor)"
+            },
+            active_tab_idx + 1,
+            app.editor.tabs().len(),
+            file_name,
+            dirty_flag,
+            cursor_row + 1,
+            cursor_col + 1,
+            lang_str,
+            eol_str
+        );
 
         if app.modal_enabled {
             let (badge_fg, badge_bg) = match app.vim_state.mode {
@@ -90,23 +109,7 @@ pub fn render_status_bar<W: Write>(
             let badge_str = format!("[{}]", app.vim_state.mode.name());
             let prefix = " LUME │ ";
             let suffix_badge = " │";
-            let rest_left = format!(
-                " {}{}{} │ Tab {}/{} │ {}{} │ Ln {}, Col {} │ {}",
-                git_str,
-                exp_indicator,
-                if app.focus == ActiveFocus::Explorer {
-                    "(Explorer Active)"
-                } else {
-                    "(Editor)"
-                },
-                active_tab_idx + 1,
-                app.editor.tabs().len(),
-                file_name,
-                dirty_flag,
-                cursor_row + 1,
-                cursor_col + 1,
-                lang_str
-            );
+            let rest_left = format!(" {}", core_info);
             let badge_prefix_len =
                 prefix.chars().count() + badge_str.chars().count() + suffix_badge.chars().count();
             let left_len = badge_prefix_len + rest_left.chars().count();
@@ -140,23 +143,7 @@ pub fn render_status_bar<W: Write>(
                 )?;
             }
         } else {
-            let left_status = format!(
-                " LUME │ {}{}{} │ Tab {}/{} │ {}{} │ Ln {}, Col {} │ {}",
-                git_str,
-                exp_indicator,
-                if app.focus == ActiveFocus::Explorer {
-                    "(Explorer Active)"
-                } else {
-                    "(Editor)"
-                },
-                active_tab_idx + 1,
-                app.editor.tabs().len(),
-                file_name,
-                dirty_flag,
-                cursor_row + 1,
-                cursor_col + 1,
-                lang_str
-            );
+            let left_status = format!(" LUME │ {}", core_info);
 
             let spaces =
                 width.saturating_sub(left_status.chars().count() + right_status.chars().count());

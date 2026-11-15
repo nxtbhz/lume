@@ -111,19 +111,15 @@ impl RopeBuffer {
     }
 
     pub fn try_char_to_byte(&self, char_idx: usize) -> Result<usize, BufferError> {
-        let len_chars = self.rope.len_chars();
-        if char_idx > len_chars {
-            return Err(BufferError::OutOfBounds(char_idx, len_chars));
-        }
-        Ok(self.rope.char_to_byte(char_idx))
+        self.rope
+            .try_char_to_byte(char_idx)
+            .map_err(|_| BufferError::OutOfBounds(char_idx, self.rope.len_chars()))
     }
 
     pub fn try_byte_to_char(&self, byte_idx: usize) -> Result<usize, BufferError> {
-        let len_bytes = self.rope.len_bytes();
-        if byte_idx > len_bytes {
-            return Err(BufferError::OutOfBounds(byte_idx, len_bytes));
-        }
-        Ok(self.rope.byte_to_char(byte_idx))
+        self.rope
+            .try_byte_to_char(byte_idx)
+            .map_err(|_| BufferError::OutOfBounds(byte_idx, self.rope.len_bytes()))
     }
 
     pub fn char_to_byte(&self, char_idx: usize) -> usize {
