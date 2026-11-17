@@ -249,6 +249,9 @@ impl Editor {
                         let jpath = Journal::journal_path(&path);
                         Journal::enqueue_remove(jpath);
                         sync.is_dirty.store(false, Ordering::SeqCst);
+                    } else {
+                        let jpath = Journal::journal_path(&path);
+                        Journal::enqueue_refresh(jpath);
                     }
                     Ok(())
                 }

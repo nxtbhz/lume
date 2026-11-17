@@ -22,6 +22,9 @@ pub enum JournalOp {
     Remove {
         journal_path: PathBuf,
     },
+    Refresh {
+        journal_path: PathBuf,
+    },
     Flush {
         responder: Sender<()>,
     },
@@ -72,6 +75,7 @@ pub fn coalesce_ops(ops: Vec<JournalOp>) -> Vec<JournalOp> {
             JournalOp::Remove { journal_path } => {
                 pending_snapshot_paths.remove(journal_path);
             }
+            JournalOp::Refresh { .. } => {}
             JournalOp::AppendDeltas { journal_path, .. } => {
                 pending_snapshot_paths.remove(journal_path);
             }
@@ -120,6 +124,16 @@ fn journal_worker_loop(rx: Receiver<JournalOp>) {
                     if journal_path.exists() {
                         let _ = fs::remove_file(&journal_path);
                     }
+                }
+                JournalOp::Refresh { journal_path } => {
+                    let _ = OpenOptions::new()
+                        .write(true)
+                        .open(journal_path)
+                        .and_then(|file| {
+                            file.set_times(
+                                fs::FileTimes::new().set_modified(std::time::SystemTime::now()),
+                            )
+                        });
                 }
                 JournalOp::Flush { responder } => {
                     let _ = responder.send(());
@@ -199,6 +213,11 @@ impl Journal {
     /// Asynchronously enqueues removal of a journal file by the background JournalWorker.
     pub fn enqueue_remove(journal_path: PathBuf) {
         let _ = JournalWorker::sender().send(JournalOp::Remove { journal_path });
+    }
+
+    /// Refresh the journal timestamp after an older async save writes to disk.
+    pub fn enqueue_refresh(journal_path: PathBuf) {
+        let _ = JournalWorker::sender().send(JournalOp::Refresh { journal_path });
     }
 
     /// FIFO flush barrier: blocks until all previously enqueued journal operations
@@ -682,6 +701,39 @@ mod tests {
         Journal::enqueue_remove(journal_path.clone());
         Journal::flush();
         assert!(!journal_path.exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_async_worker_refreshes_journal_timestamp() {
+        let dir =
+            std::env::temp_dir().join(format!("lume_worker_refresh_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("worker_test.rs");
+        let journal_path = Journal::journal_path(&file_path);
+
+        Journal::enqueue_snapshot(
+            file_path,
+            journal_path.clone(),
+            ropey::Rope::from_str("newer edit\n"),
+        );
+        Journal::flush();
+        OpenOptions::new()
+            .write(true)
+            .open(&journal_path)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::UNIX_EPOCH))
+            .unwrap();
+
+        Journal::enqueue_refresh(journal_path.clone());
+        Journal::flush();
+
+        assert!(
+            fs::metadata(&journal_path).unwrap().modified().unwrap()
+                > std::time::SystemTime::UNIX_EPOCH
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
