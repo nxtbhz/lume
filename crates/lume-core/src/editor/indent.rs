@@ -227,7 +227,7 @@ impl Editor {
         Self::validate_start_boundaries(&tab.buffer, &sorted_cursors)?;
 
         // Pre-calculate newline and indentation string for each cursor before buffer mutations
-        let mut insert_strings: Vec<String> = Vec::with_capacity(sorted_cursors.len());
+        let mut insertions: Vec<(String, usize)> = Vec::with_capacity(sorted_cursors.len());
         for cursor in &sorted_cursors {
             let target_byte = cursor.min();
             let line = tab.buffer.byte_to_line(target_byte);
@@ -251,14 +251,32 @@ impl Editor {
                 String::new()
             };
 
-            insert_strings.push(format!("{}{}{}", nl, leading, extra_indent));
+            let paired_closer = !cursor.is_selection()
+                && trimmed
+                    .chars()
+                    .last()
+                    .filter(|c| matches!(c, '{' | '(' | '['))
+                    .and_then(matching_closing_pair)
+                    .is_some_and(|close| {
+                        target_byte < tab.buffer.len_bytes()
+                            && Self::ensure_char_boundary(&tab.buffer, target_byte)
+                                .is_ok_and(|char_idx| tab.buffer.rope().char(char_idx) == close)
+                    });
+
+            let mut insertion = format!("{}{}{}", nl, leading, extra_indent);
+            let cursor_offset = insertion.len();
+            if paired_closer {
+                insertion.push_str(nl);
+                insertion.push_str(&leading);
+            }
+            insertions.push((insertion, cursor_offset));
         }
 
         let mut deltas: Vec<TextDelta> = Vec::new();
         let mut new_cursors: Vec<Cursor> = Vec::with_capacity(sorted_cursors.len());
         let mut delta_offset: isize = 0;
 
-        for (cursor, s) in sorted_cursors.into_iter().zip(insert_strings) {
+        for (cursor, (s, cursor_offset)) in sorted_cursors.into_iter().zip(insertions) {
             let start = (cursor.min() as isize + delta_offset).max(0) as usize;
             let end = (cursor.max() as isize + delta_offset).max(0) as usize;
 
@@ -270,7 +288,7 @@ impl Editor {
                 cursor.is_selection(),
                 &s,
             )?;
-            new_cursors.push(Cursor::new(start + ins_len));
+            new_cursors.push(Cursor::new(start + cursor_offset));
             delta_offset += ins_len as isize - del_len as isize;
         }
 

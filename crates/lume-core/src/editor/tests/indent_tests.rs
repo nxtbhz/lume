@@ -42,6 +42,63 @@ fn test_smart_indent_with_trailing_spaces_after_delimiter() {
 }
 
 #[test]
+fn test_smart_indent_between_pairs_keeps_closer_at_opening_indent() {
+    for (open, expected) in [
+        ('{', "{\n    \n}"),
+        ('(', "(\n    \n)"),
+        ('[', "[\n    \n]"),
+    ] {
+        let mut ed = Editor::new();
+        ed.insert_char(open).unwrap();
+        ed.insert_newline().unwrap();
+
+        assert_eq!(ed.buffer().rope().to_string(), expected);
+        assert_eq!(ed.cursor_line_col(), (1, 4));
+    }
+}
+
+#[test]
+fn test_smart_indent_between_nested_crlf_pair_is_atomic() {
+    let mut ed = Editor::from_str("seed\r\n    {}");
+    ed.cursors_mut().set_single(11);
+
+    ed.insert_newline().unwrap();
+    assert_eq!(
+        ed.buffer().rope().to_string(),
+        "seed\r\n    {\r\n        \r\n    }"
+    );
+    assert_eq!(ed.cursor_line_col(), (2, 8));
+
+    assert!(ed.undo());
+    assert_eq!(ed.buffer().rope().to_string(), "seed\r\n    {}");
+    assert_eq!(ed.cursor_line_col(), (1, 5));
+
+    assert!(ed.redo());
+    assert_eq!(
+        ed.buffer().rope().to_string(),
+        "seed\r\n    {\r\n        \r\n    }"
+    );
+    assert_eq!(ed.cursor_line_col(), (2, 8));
+}
+
+#[test]
+fn test_smart_indent_between_pairs_multicursor_preserves_primary() {
+    let mut ed = Editor::from_str("{}\n    []");
+    ed.cursors_mut()
+        .set_cursors_with_primary(vec![Cursor::new(1), Cursor::new(8)], 1);
+
+    ed.insert_newline().unwrap();
+
+    assert_eq!(
+        ed.buffer().rope().to_string(),
+        "{\n    \n}\n    [\n        \n    ]"
+    );
+    assert_eq!(ed.cursors().cursors()[0].head, 6);
+    assert_eq!(ed.cursors().cursors()[1].head, 23);
+    assert_eq!(ed.cursors().primary_idx(), 1);
+}
+
+#[test]
 fn test_smart_indent_middle_of_line_split() {
     let mut ed = Editor::new();
     ed.insert_str("    let a = foo(); let b = 2;").unwrap();
