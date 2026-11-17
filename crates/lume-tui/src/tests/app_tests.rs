@@ -459,6 +459,31 @@ fn test_app_key_navigation_and_tab_shortcuts() {
 }
 
 #[test]
+fn test_modeless_ctrl_arrow_moves_to_repeated_word_boundaries_and_selects() {
+    let mut app = App::new(None).unwrap();
+    app.editor.insert_str("one two").unwrap();
+    app.editor.cursors_mut().set_single(0);
+
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.editor.cursors().primary().head, 3);
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.editor.cursors().primary().head, 7);
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.editor.cursors().primary().head, 4);
+
+    app.handle_key(KeyEvent::new(
+        KeyCode::Left,
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ))
+    .unwrap();
+    assert_eq!(app.editor.cursors().primary().anchor, 4);
+    assert_eq!(app.editor.cursors().primary().head, 0);
+}
+
+#[test]
 fn test_app_explorer_keyboard_navigation() {
     let mut app = App::new(None).unwrap();
     app.focus = ActiveFocus::Explorer;

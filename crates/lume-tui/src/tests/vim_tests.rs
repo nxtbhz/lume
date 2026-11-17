@@ -279,6 +279,28 @@ fn test_app_vim_motions() {
 }
 
 #[test]
+fn test_vim_insert_ctrl_arrow_uses_text_field_word_boundaries() {
+    let mut app = App::new(None).unwrap();
+    app.execute_command(":set modal");
+    app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(app.vim_state.mode, VimMode::Insert);
+
+    app.editor.insert_str("one two").unwrap();
+    app.editor.cursors_mut().set_single(0);
+
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.editor.cursors().primary().head, 3);
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.editor.cursors().primary().head, 7);
+    app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.editor.cursors().primary().head, 4);
+}
+
+#[test]
 fn test_app_vim_status_bar_rendering() {
     let mut app = App::new(None).unwrap();
     app.terminal_width = 120;

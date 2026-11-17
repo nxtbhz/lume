@@ -395,6 +395,53 @@ impl Editor {
         }
     }
 
+    pub fn move_word_end_forward(&mut self, select: bool) {
+        let tab = &mut self.tabs[self.active_tab];
+        tab.history.break_group();
+        let total_chars = tab.buffer.len_chars();
+        if total_chars == 0 {
+            return;
+        }
+
+        let head = tab.cursors.primary().head;
+        let mut char_idx = tab.buffer.byte_to_char(head);
+        if char_idx >= total_chars {
+            return;
+        }
+
+        let rope = tab.buffer.rope();
+
+        fn is_word_char(c: char) -> bool {
+            c.is_alphanumeric() || c == '_'
+        }
+
+        while char_idx < total_chars && rope.char(char_idx).is_whitespace() {
+            char_idx += 1;
+        }
+
+        if char_idx < total_chars && is_word_char(rope.char(char_idx)) {
+            while char_idx < total_chars && is_word_char(rope.char(char_idx)) {
+                char_idx += 1;
+            }
+        } else {
+            while char_idx < total_chars {
+                let c = rope.char(char_idx);
+                if is_word_char(c) || c.is_whitespace() {
+                    break;
+                }
+                char_idx += 1;
+            }
+        }
+
+        let target_byte = tab.buffer.char_to_byte(char_idx);
+        let primary = tab.cursors.primary_mut();
+        if select {
+            primary.select_to(target_byte);
+        } else {
+            primary.move_to(target_byte);
+        }
+    }
+
     pub fn move_word_backward(&mut self, select: bool) {
         let tab = &mut self.tabs[self.active_tab];
         tab.history.break_group();

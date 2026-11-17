@@ -237,6 +237,8 @@ impl App {
             let tab_id = self.editor.active_tab().id;
             let cursor = *self.editor.cursors().primary();
             match (key.code, ctrl, alt) {
+                (KeyCode::Left, true, false) => self.editor.move_word_backward(shift),
+                (KeyCode::Right, true, false) => self.editor.move_word_end_forward(shift),
                 (KeyCode::Left, false, false) => self.editor.move_left(shift),
                 (KeyCode::Right, false, false) => self.editor.move_right(shift),
                 (KeyCode::Up, false, false) => self.editor.move_up(shift),

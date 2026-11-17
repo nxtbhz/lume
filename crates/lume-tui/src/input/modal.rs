@@ -19,6 +19,8 @@ impl App {
                         let head = self.editor.cursors().primary().head;
                         self.editor.cursors_mut().set_single(head);
                     }
+                    (KeyCode::Left, true, false) => self.editor.move_word_backward(shift),
+                    (KeyCode::Right, true, false) => self.editor.move_word_end_forward(shift),
                     (KeyCode::Left, false, false) => self.editor.move_left(shift),
                     (KeyCode::Right, false, false) => self.editor.move_right(shift),
                     (KeyCode::Up, false, false) => self.editor.move_up(shift),
