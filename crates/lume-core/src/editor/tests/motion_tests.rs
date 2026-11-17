@@ -46,3 +46,17 @@ fn test_ctrl_word_motion_clamps_empty_start_and_end() {
     editor.move_word_end_forward(false);
     assert_eq!(editor.cursors().primary().head, 4);
 }
+
+#[test]
+fn test_ctrl_right_without_shift_collapses_selection_at_end() {
+    let mut editor = Editor::from_str("word");
+    editor.move_word_end_forward(true);
+    assert_eq!(editor.cursors().primary().range(), 0..4);
+
+    editor.move_word_end_forward(false);
+    assert!(!editor.cursors().primary().is_selection());
+    assert_eq!(editor.cursors().primary().head, 4);
+
+    editor.insert_char('x').unwrap();
+    assert_eq!(editor.buffer().rope().to_string(), "wordx");
+}

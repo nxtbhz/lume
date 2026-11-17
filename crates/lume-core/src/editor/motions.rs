@@ -406,6 +406,9 @@ impl Editor {
         let head = tab.cursors.primary().head;
         let mut char_idx = tab.buffer.byte_to_char(head);
         if char_idx >= total_chars {
+            if !select {
+                tab.cursors.primary_mut().move_to(tab.buffer.len_bytes());
+            }
             return;
         }
 
