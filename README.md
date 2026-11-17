@@ -1,257 +1,88 @@
-# Lume IDE
+# Lume
 
-<div align="center">
+Lume is a terminal text editor written in Rust 2021 across three workspace crates: `lume-core` for rope buffers and crash journaling, `lume-syntax` for background highlighting, and `lume-tui` for the `crossterm` terminal frontend. The editor pairs modeless GUI shortcuts with an optional modal Vim mode, a workspace-confined file explorer, and two-pane splits inside one stripped binary with embedded grammars.
 
-[![Rust](https://img.shields.io/badge/Rust-2021_Edition-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![License: MIT / Apache-2.0](https://img.shields.io/badge/License-MIT%20%2F%20Apache--2.0-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-250%2B%20passing-brightgreen.svg)]()
-[![Startup](https://img.shields.io/badge/Cold%20Start-1.7%20ms-success.svg)]()
-[![Memory RSS](https://img.shields.io/badge/Peak%20RSS-3.1%20MB-purple.svg)]()
-[![Binary Size](https://img.shields.io/badge/Binary%20Size-7.4%20MB-informational.svg)]()
-
-**An ultra-fast, lightweight terminal IDE (TUI) built in Rust for systems engineers and monorepos.**  
-Combines the instant startup of classic terminal editors with the out-of-the-box ergonomics of modern GUI editors.
-
-[Key Features](#key-features) •
-[Benchmark](#benchmark-comparison) •
-[Architecture](#architecture) •
-[Quickstart](#quickstart) •
-[Keybindings & Mouse](#keybindings--mouse-navigation) •
-[Roadmap](#roadmap)
-
-</div>
-
----
-
-## Overview
-
-**Lume** is a high-performance terminal IDE designed from scratch in Rust. It delivers the speed and low resource usage expected in server environments and massive monorepos (C, C++, CUDA, Rust, Assembly, Java), while eliminating the steep learning curves, plugin maintenance fatigue, and single-threaded lockups of legacy editors.
-
-Everything in Lume is built for responsiveness: UI rendering runs at a rock-solid 60 FPS (< 16 ms frame budget) and never blocks on file I/O, syntax parsing, or disk flushes.
-
----
-
-## Key Features
-
-- **Sub-2ms Cold Startup:** Starts in ~1.7 ms (empty buffer) and loads 1,500+ lines of real-world code in ~2.3 ms.
-- **Sub-microsecond B-Tree Buffer:** Powered by `ropey`, text insertions and deletions execute in $O(\log N)$ in ~1.5 – 2.1 µs on 100k+ line files, with sub-microsecond line/byte conversions.
-- **First-Class Mouse & Trackpad Support:** SGR 1006 mouse protocol out-of-the-box:
-  - Single click to place cursor
-  - Double click to select word
-  - Triple click to select entire line
-  - Click-and-drag text selection
-  - Smooth vertical & horizontal trackpad / wheel scrolling (`ScrollLeft`, `ScrollRight`)
-  - Interactive tabs with click-to-switch and `[x]` close buttons
-- **Zero-Flicker TUI:** Full frame synchronization using ANSI Synchronized Updates (`\x1b[?2026h` / `\x1b[?2026l`) and a 128 KB buffered output stream. No screen tearing, no cursor teleporting.
-- **Asynchronous Background Syntax Highlighting:** `tree-sitter` incremental AST parsing (C, C++, Rust, Python, Java, JavaScript, TypeScript) and native fast tokenizers (Assembly, Go, JSON, TOML, Markdown, YAML) run on a dedicated worker thread via lock-free `crossbeam-channel` rings.
-- **Built-in Tree File Explorer:** Collapsible lateral tree view (`F2` or `Ctrl+B`) with Unicode file icons, directory folding, and hybrid keyboard/mouse navigation.
-- **Non-blocking Atomic Autosave & Crash Recovery Journal:**
-  - Debounced background autosave (`save_async`) using $O(1)$ buffer snapshots (`Arc<Rope>`), temporary files, `fsync`, and atomic renames.
-  - Append-only binary crash recovery journal (`LUMJ\x01`) in `$XDG_CACHE_HOME/lume/journal` guaranteeing recovery even after `kill -9`.
-- **Modeless Ergonomics by Default:** Familiar VS Code / standard shortcuts (`Ctrl+S`, `Ctrl+O`, `Ctrl+T`, `Ctrl+W`, `Ctrl+Z`, `Ctrl+Shift+P`) with modal modes planned, plus Which-Key overlay (`F1`).
-- **Zero External Runtimes:** Single self-contained binary (~7.4 MB stripped). No Node.js, V8, Python, or Electron runtime dependencies.
-
----
-
-## Benchmark Comparison
-
-Conducted on Ubuntu 26.04.1 LTS (AMD Ryzen 7 5825U, 16 vCPUs, 14 GiB RAM) using `hyperfine` (warmup iterations + statistical averages), `/usr/bin/time -v`, and Rust `criterion`:
-
-### Startup Latency
-
-| Benchmark Scenario | Lume | Vim 9.1 | Neovim 0.11 | Helix 25.07 | Relative Latency |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Cold Start (Empty Buffer)** | **1.9 ms** | 14.4 ms | 18.8 ms | 35.3 ms | Lume 18.1x faster than Helix (7.4x Vim / 9.6x Neovim) |
-| **Real Code (Rust, 1,580 lines)** | **2.6 ms** | 22.2 ms | 33.8 ms | 339.9 ms | Lume 129.1x faster than Helix (8.4x Vim / 12.9x Neovim) |
-| **Large File (C, 100k lines / 5.1 MB)** | **27.4 ms** | 46.9 ms | 56.1 ms | 607.2 ms | Lume 22.2x faster than Helix (1.7x Vim / 2.0x Neovim) |
-| **Massive File (C, 500k lines / 27 MB)** | **131.3 ms** | 153.8 ms | 152.4 ms | 660.3 ms | Lume 5.0x faster than Helix (1.2x Vim / 1.2x Neovim) |
-
-> *Internal engine latency:* Initializing Lume's core data structures (`Editor::new()`) takes just **216 nanoseconds** in memory.
-
-### Memory Footprint (Peak Resident Set Size)
-
-| Scenario | Lume | Vim 9.1 | Neovim 0.11 | Helix 25.07 | Notes |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Empty Buffer** | **3.19 MB** | 11.03 MB | 10.69 MB | 16.63 MB | **~5.2x lower RAM than Helix** (~3.5x lower than Vim/Neovim) |
-| **Real Code (1,580 lines)** | **3.96 MB** | 11.76 MB | 11.69 MB | 26.94 MB | **~6.8x lower RAM than Helix** (~3.0x lower than Vim/Neovim) |
-| **100k Lines (5.1 MB)** | **14.53 MB** | 17.64 MB | 17.56 MB | 100.20 MB | Highly efficient B-Tree node packing in Lume |
-| **500k Lines (27 MB)** | **59.87 MB** | 41.03 MB | 41.75 MB | 126.94 MB | Lume and Helix use Ropey B-Tree; Lume 2.1x more memory-efficient |
-
-### Installation & Dependencies
-
-| Metric | Lume | Vim 9.1 | Neovim 0.11 | Helix 25.07 |
-| :--- | :---: | :---: | :---: | :---: |
-| **Executable Size** | **7.5 MB** *(stripped)* | 4.4 MB | 6.1 MB | 18.1 MB |
-| **Runtime Assets Directory** | **0 MB** *(fully embedded)* | 45.0 MB (`/usr/share/vim`) | 26.0 MB (`/usr/share/nvim`) | 189.0 MB (`runtime/`) |
-| **Total Disk Footprint** | **7.5 MB** | **49.4 MB** | **32.1 MB** | **207.1 MB** |
-| **Dynamic Libraries (`ldd`)** | **4** (`libc`, `libm`, `libgcc`, `ld-linux`) | 13 | 12 (`libuv`, `libmsgpack`, `libluajit`...) | 5 |
-
-### Internal Engine Microbenchmarks (Criterion)
-
-Measurements on 100,000 active lines loaded in memory:
-- **Character insertion (middle of buffer):** `2.11 µs` (0.002 ms)
-- **Character insertion (end of buffer):** `1.53 µs`
-- **Character insertion (beginning of buffer):** `1.88 µs`
-- **Character deletion (middle of buffer):** `1.74 µs`
-- **Line-to-byte conversion (`line_to_byte` at line 50,000):** `99.7 ns`
-- **Byte-to-line conversion (`byte_to_line` at line 50,000):** `64.7 ns`
-
----
-
-## Architecture
-
-Lume is organized as a modular Cargo workspace following strict domain decoupling:
-
-```
-lume/
-├── Cargo.toml                 # Workspace root configuration
-├── benchmark.sh               # Automated benchmarking suite (Lume vs Vim vs Neovim vs Helix)
-├── docs/
-│   ├── plan.md                # Architectural roadmap and implementation specs (M0–M4)
-│   └── Benchmark.md           # Full performance metrics report
-└── crates/
-    ├── lume-core/             # Headless core editing engine
-    │   ├── src/buffer/        # B-Tree RopeBuffer (ropey), UTF-8 boundaries, metrics
-    │   ├── src/cursor/        # Multi-cursor engine, automatic merge & normalization
-    │   ├── src/editor/        # Multi-tab editor, motions, lines, indent, bracket, save, search
-    │   ├── src/history/       # Linear undo/redo stack with property-based test proofs
-    │   ├── src/autosave.rs    # Debounced background atomic autosave controller
-    │   └── src/journal.rs     # Append-only binary crash recovery journal (LUMJ\x02)
-    │
-    ├── lume-syntax/           # Syntax highlighting engine
-    │   ├── src/lib.rs         # Tree-sitter AST queries + fast native lexers
-    │   └── src/worker.rs      # Dedicated background thread with crossbeam channels
-    │
-    └── lume-tui/              # Terminal frontend
-        ├── src/main.rs        # Terminal loop, synchronized frame updates, event router
-        ├── src/input/         # Modular keyboard, modal, mouse, and overlay event handlers
-        ├── src/render/        # Modular editor, explorer, gutter, palette, and bar renderers
-        ├── src/explorer.rs    # Collapsible directory tree file explorer (F2 / Ctrl+B)
-        └── src/prompt.rs      # Interactive modal overlays (Open, Save As, Language)
-```
-
----
+Build measurements, shared library linkage, test suite totals, Criterion microbenchmark intervals, and startup caveats at commit `a8df968` live in [docs/benchmarks.md](docs/benchmarks.md).
 
 ## Quickstart
 
 ### Prerequisites
 
-- [Rust & Cargo](https://rustup.rs/) (1.70+ recommended)
-- A modern terminal supporting 24-bit TrueColor and SGR mouse reporting (Alacritty, WezTerm, Kitty, Ghostty, iTerm2, Windows Terminal, GNOME Terminal)
+Compiling the workspace requires Rust `1.88.0` or newer because `lume-core` calls `slice::as_chunks` (`crates/lume-core/src/search.rs:13`) and `usize::is_multiple_of` (`crates/lume-core/src/editor/indent.rs:557`). Root `Cargo.toml` does not set `rust-version`, so Cargo accepts older toolchains until compilation fails.
 
-### Build & Run
+Interactive sessions require a terminal emulator supporting ANSI 24-bit color, the alternate screen, and SGR mouse reporting. Terminals that do not answer Kitty keyboard enhancement queries (`\x1b[?u\x1b[c`) block startup in `crossterm::terminal::supports_keyboard_enhancement` until its 2-second timeout expires (`crates/lume-tui/src/terminal.rs:112`).
+
+### Build and run
+
+Clone the repository, compile the release binary with locked dependencies, and launch the editor on a file, directory, or wildcard glob:
 
 ```bash
-# Clone the repository
 git clone https://github.com/nxtbhz/lume.git
 cd lume
-
-# Build optimized release binary
-cargo build --release
-
-# Run Lume
-./target/release/lume [optional_file_path]
+cargo build --release --locked --bin lume
+./target/release/lume [PATH...]
 ```
 
-### Running Tests
+Running `lume .` opens the working directory in the sidebar tree alongside an untitled tab. Passing multiple files opens one tab per file, and paths containing `*` or `?` expand internally (`crates/lume-tui/src/args.rs:60`).
 
-Lume features an extensive automated test suite covering unit tests, crash recovery simulations, and property-based invariance tests:
+### Verification and benchmarks
+
+The repository includes a local verification script for formatting, Clippy (`-D warnings`), benchmark compilation, rustdoc warnings, and both feature matrices (`default` and `--all-features`):
 
 ```bash
-cargo test
+./scripts/ci.sh
+cargo bench -p lume-core --bench latency
 ```
 
-### Running Benchmarks
+Read [docs/benchmarks.md](docs/benchmarks.md) before quoting results from `cargo bench` or running `benchmark.sh`. That report documents the test host environment, Criterion sampling conditions, and why `benchmark.sh` mixes headless and PTY measurements across editors.
 
-```bash
-# Run Criterion microbenchmarks for lume-core
-cargo bench -p lume-core
+## Workspace layout
 
-# Run automated end-to-end comparison against Vim, Neovim, and Helix
-./benchmark.sh
+The root workspace (`Cargo.toml`) separates core text structures, syntax tokenization, and terminal rendering across three crates:
+
+```text
+lume/
+├── Cargo.toml                  # Workspace manifest and release profile (opt-level=3, thin LTO, strip)
+├── benchmark.sh                # Automated comparison script (see caveats in docs/benchmarks.md)
+├── scripts/
+│   ├── ci.sh                   # Local CI script (fmt, clippy, benches check, doc, tests)
+│   ├── bench.c                 # PTY wrapper source (identical to hx-bench.c)
+│   └── hx-bench.c              # PTY harness used by benchmark.sh for Helix
+├── docs/
+│   ├── architecture.md         # Crate internals, concurrency, persistence, security, and known limits
+│   ├── reference.md            # Exhaustive CLI, shortcuts, commands, mouse, and language reference
+│   └── benchmarks.md           # Footprint, test totals, Criterion intervals, and startup caveats
+└── crates/
+    ├── lume-core/              # Headless editor: rope buffer, cursors, history, autosave, journal, diff, git
+    ├── lume-syntax/            # 6 Tree-sitter grammars + 8 custom lexers + background worker thread
+    └── lume-tui/               # Crossterm TUI binary: event loop, explorer, quick open, splits, modal mode
 ```
 
----
+Integration tests sit alongside unit tests inside each crate: `crates/lume-core/tests/` exercises boundary, cross-feature, and crash-recovery scenarios; `crates/lume-syntax/tests/` covers grammar and worker behavior; and `crates/lume-tui/src/tests/` covers key routing, mouse hit-testing, splits, and explorer symlink guards.
 
-## Keybindings & Mouse Navigation
+## Implemented capabilities and boundaries
 
-### File & Tab Management
-| Shortcut | Action |
-| :--- | :--- |
-| `Ctrl+T` | Open a new tab |
-| `Ctrl+W` | Close the active tab |
-| `Ctrl+S` | Save current file |
-| `Ctrl+Shift+S` | Save file as... (modal prompt) |
-| `Ctrl+O` | Open file (modal prompt with path completion) |
-| `Ctrl+B` or `F2` | Toggle File Explorer lateral tree |
-| `Ctrl+Tab` | Cycle to next tab |
-| `Ctrl+Shift+Tab` | Cycle to previous tab |
-| `Ctrl+Q` | Quit editor |
+`lume-core` implements a `ropey`-backed `RopeBuffer` and transactional multi-cursor edits with rollback on boundary errors. It includes a `5,000`-entry / `50 MiB` `History` stack with save-depth tracking, atomic temp-file saves (`0o600` on Unix), an async background save path (`save_async`), and an append-only crash journal (`Journal`). It also ships SWAR ASCII and Unicode search, fuzzy path matching, and Git `HEAD` line diffs.
 
-### Navigation & Editing
-| Shortcut | Action |
-| :--- | :--- |
-| `Arrow Keys` | Move cursor up, down, left, right |
-| `Shift + Arrows` | Extend text selection |
-| `Home` / `End` | Jump to start / end of line (`Shift` extends selection) |
-| `PageUp` / `PageDown` | Jump page up / down (`Shift` extends selection) |
-| `Ctrl+A` | Select all text in buffer |
-| `Ctrl+Z` | Undo last transaction |
-| `Ctrl+Y` | Redo last transaction |
-| `Ctrl+K M` | Change / override syntax language |
-| `Ctrl+P` | Quick Open (fuzzy file finder) |
-| `Ctrl+Shift+P` / `Alt+P` | Open Command Palette (`Alt+P` legacy fallback) |
-| `F1` | Open Which-Key shortcuts overlay |
+`lume-syntax` runs incremental `Tree::edit` parsing on a dedicated worker thread for six compiled Tree-sitter grammars and routes eight additional formats through custom lexers. `lume-tui` builds on both crates with multi-tab editing, a collapsible 26-column workspace explorer, and a `50,000`-file Quick Open overlay. The frontend also supplies a 37-item Command Palette, a Which-Key sheet, two-pane splits, find-and-replace, OSC 52 clipboard output, and optional Vim modal bindings.
 
-> **Terminal Modifier Compatibility:** `Ctrl+P` opens Quick Open across all terminals. For the Command Palette, Lume negotiates enhanced keyboard reporting (Kitty keyboard protocol) where supported to distinguish `Ctrl+Shift+P`. In legacy terminals that collapse `Ctrl+Shift+P` and `Ctrl+P` into the same control byte, use `Alt+P` as the portable fallback to open the Command Palette.
+Several subsystems implemented in `lume-core` or sketched in earlier plans remain incomplete or unwired in `lume-tui` at commit `a8df968`:
 
-### Mouse & Trackpad Gestures
-| Mouse Action | Effect |
-| :--- | :--- |
-| **Left Click** | Place cursor at mouse position |
-| **Double Click** | Select word under cursor |
-| **Triple Click** | Select entire line |
-| **Click & Drag** | Fluid range selection |
-| **Scroll Wheel / Trackpad** | Smooth vertical and horizontal scrolling |
-| **Click Tab Header** | Switch active tab |
-| **Click `[x]` on Tab** | Close specific tab |
-| **Click File in Explorer** | Open file or expand/collapse directory |
+- Pressing `Ctrl+S` invokes synchronous `Editor::save()` on the UI thread (`crates/lume-tui/src/commands.rs:231`), while `AutoSaveController` (`enabled: false` by default) and `FocusLost` call `save_async()`.
+- Runtime settings such as `tab_size` (`4`), theme colors, and `autosave.enabled` have no config file, CLI flag, or Command Palette toggle.
+- Multi-cursor batches work in `lume-core`, yet `lume-tui` provides no binding to add secondary cursors and renders only the primary selection (`crates/lume-tui/src/render/editor.rs:44`).
+- `Language::TypeScript` reuses `tree_sitter_javascript::LANGUAGE` (`crates/lume-syntax/src/language.rs:132`), and `Language::Css` routes to `lex_html_css` (`crates/lume-syntax/src/highlighter.rs:167`), which only highlights `<...>` tags.
+- `Journal` snapshots and V1-to-V2 upgrades open the live journal file with `.truncate(true)` instead of staging a temp rename, records lack CRC checksums, and unrecognized headers fall back to `String::from_utf8_lossy` (`crates/lume-core/src/journal.rs:362`, `398`, `476`).
+- Lume has no LSP client, debugger (DAP), embedded terminal, workspace-wide text search, plugin runtime, or `-` standard input pipe reader.
 
----
+## Documentation
 
-## Roadmap
+Each guide covers one topic without duplicating raw reference tables:
 
-- [x] **M0: Core Engine & Latency Validation**
-  - High-speed B-Tree buffer based on `ropey`
-  - Multi-cursor engine with automatic cursor merging
-  - Symmetrical undo/redo transactions verified with `proptest`
-  - Criterion microbenchmark suite
-- [x] **M1: Functional TUI MVP**
-  - Modeless text editing with full mouse SGR 1006 support
-  - Non-blocking atomic autosave & append-only crash recovery journal
-  - Asynchronous background syntax highlighting with Tree-sitter
-  - Collapsible file explorer with Unicode icons
-  - Screen flicker and cursor teleporting elimination via ANSI Synchronized Updates (`?2026h`)
-  - Trackpad smooth scrolling & PageUp/PageDown navigation
-- [ ] **M2: IDE Intelligence (Next Phase)**
-  - Native LSP client hub with auto-discovery (`clangd`, `rust-analyzer`, `jdtls`)
-  - In-memory trigram indexer for sub-200ms searches across massive monorepos
-  - DAP (Debug Adapter Protocol) engine with gutter breakpoints
-  - Git gutter diffs and inline blame
-- [ ] **M3: Systems Engineering & Monorepos**
-  - Synchronized Assembly / Disassembly split view mapped via DWARF line tables
-  - Inline C/C++ macro expansion and `#ifdef` block visualization
-  - Headless remote agent (`lumed`) with SSH bridge
-- [ ] **M4: WASM Extensibility**
-  - Sandboxed plugin engine powered by `wasmtime` (WASI)
-  - Safe extension API for custom commands, syntax grammars, and themes
-
----
+- [docs/architecture.md](docs/architecture.md) covers crate boundaries, threading, persistence protocols, symlink security checks, and implementation trade-offs.
+- [docs/reference.md](docs/reference.md) lists all CLI options, modeless and modal shortcuts, key chords, explorer keys, mouse gestures, Command Palette entries, and language rules.
+- [docs/benchmarks.md](docs/benchmarks.md) reports measured binary footprint, test totals, `lume-core` Criterion intervals, exploratory startup and RSS observations, and benchmark caveats.
 
 ## License
 
-Dual-licensed under either:
-- **MIT License** ([LICENSE-MIT](LICENSE-MIT) or [http://opensource.org/licenses/MIT](http://opensource.org/licenses/MIT))
-- **Apache License, Version 2.0** ([LICENSE-APACHE](LICENSE-APACHE) or [http://www.apache.org/licenses/LICENSE-2.0](http://www.apache.org/licenses/LICENSE-2.0))
-
-at your option.
+Dual-licensed under either the [MIT License](LICENSE-MIT) or the [Apache License, Version 2.0](LICENSE-APACHE), at your option; see [LICENSE](LICENSE).

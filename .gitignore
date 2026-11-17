@@ -1,7 +1,9 @@
 /target/
 **/*.rs.bk
 *.lume_tmp
-/docs/
+/docs/superpowers/
+/docs/Benchmark.md
+/docs/benchmark.md
 benchmark.sh
 rust_out
 .agents/
