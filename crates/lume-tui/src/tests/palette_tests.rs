@@ -245,13 +245,12 @@ fn test_app_events_tick_and_overlay_edge_cases() {
     // AppEvent::FocusLost triggers async save when dirty and file_path is set
     app.editor.autosave_controller_mut().config.enabled = true;
     app.handle_event(AppEvent::FocusLost, &mut sink).unwrap();
-    for _ in 0..20 {
+    let autosave_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while app.editor.is_dirty() && std::time::Instant::now() < autosave_deadline {
         app.handle_tick(&mut sink).unwrap();
-        if !app.editor.is_dirty() {
-            break;
-        }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
+    assert!(!app.editor.is_dirty(), "focus-lost autosave timed out");
 
     // Selection-seeded edit.find and edit.replace
     app.editor.cursors_mut().set_single(0);
