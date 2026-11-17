@@ -31,18 +31,11 @@ impl App {
                                 if let Some(item) = state.selected_item() {
                                     let full_path = item.full_path.clone();
                                     self.quick_open = None;
-                                    match self.editor.open_or_load(&full_path) {
-                                        Ok(idx) => {
-                                            self.focus = ActiveFocus::Editor;
-                                            self.adjust_viewport();
-                                            self.set_status(format!(
-                                                "Opened {}",
-                                                full_path.display()
-                                            ));
-                                            self.prompt_recover_if_needed(idx);
-                                        }
-                                        Err(e) => self.set_status(format!("Open error: {}", e)),
-                                    }
+                                    self.open_file_into_editor(
+                                        &full_path,
+                                        "Opened ",
+                                        "Open error: ",
+                                    );
                                     return Ok(true);
                                 }
                             }
@@ -110,15 +103,7 @@ impl App {
                         self.focus = ActiveFocus::Explorer;
                         let rel_row = row - text_top;
                         if let Some(path) = self.explorer.click_at(rel_row) {
-                            match self.editor.open_or_load(&path) {
-                                Ok(idx) => {
-                                    self.focus = ActiveFocus::Editor;
-                                    self.adjust_viewport();
-                                    self.set_status(format!("Opened {}", path.display()));
-                                    self.prompt_recover_if_needed(idx);
-                                }
-                                Err(e) => self.set_status(format!("Open error: {}", e)),
-                            }
+                            self.open_file_into_editor(&path, "Opened ", "Open error: ");
                         }
                         return Ok(true);
                     }

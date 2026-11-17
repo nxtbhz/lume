@@ -484,3 +484,147 @@ fn test_app_search_key_routing_and_syntax_viewport_render() {
     assert!(app.render(&mut out).is_ok());
     assert!(!out.is_empty());
 }
+
+#[test]
+fn test_app_c_incremental_typing_and_delete_highlighting() {
+    use lume_syntax::SyntaxHighlighter;
+
+    let mut app = App::new(None).unwrap();
+    app.editor.set_language_override(Some("C".to_string()));
+
+    let mut sink = std::io::sink();
+    let script = "#include <stdio.h>\nint is_delim(const char *c) {\n    static *str_ptr = NULL;\n    return 0;\n}\n";
+    for ch in script.chars() {
+        let key = if ch == '\n' {
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+        } else {
+            KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)
+        };
+        app.handle_key(key).unwrap();
+        app.render(&mut sink).unwrap();
+    }
+
+    // Delete the `#include <stdio.h>\n` prefix from the top using Backspace
+    app.editor.cursors_mut().set_single(19);
+    for _ in 0..19 {
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))
+            .unwrap();
+        app.render(&mut sink).unwrap();
+    }
+
+    let expected_rev = app.editor.active_tab().revision;
+    let tab_id = app.editor.active_tab().id;
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while std::time::Instant::now() < deadline {
+        let _ = app.has_pending_syntax_response();
+        if app
+            .syntax_cache
+            .get(&tab_id)
+            .is_some_and(|(rev, _)| *rev == expected_rev)
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    let tokens = app.update_syntax_highlights();
+    let text = app
+        .editor
+        .buffer()
+        .slice_to_cow(0, app.editor.buffer().len_bytes())
+        .into_owned();
+    let mut fresh = SyntaxHighlighter::new(Language::C).unwrap();
+    fresh.update(&text);
+    let expected = fresh.highlight_range(0, text.len(), &text);
+    assert_eq!(*tokens, expected);
+}
+
+#[test]
+fn test_app_open_file_and_save_as_invalidate_stale_syntax_cache() {
+    let test_dir = TestDir::new("lume_syntax_invalidate");
+    let c_file = test_dir.path().join("sample.c");
+    std::fs::write(&c_file, "int main(void) {\n    return 0;\n}\n").unwrap();
+
+    // Case 1: Untitled empty tab had a cached rev=0 entry before opening a file into it
+    let mut app = App::new(None).unwrap();
+    app.editor.set_language_override(Some("C".to_string()));
+    let mut sink = std::io::sink();
+    app.render(&mut sink).unwrap();
+    for _ in 0..50 {
+        if app.has_pending_syntax_response() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(app.update_syntax_highlights().is_empty());
+
+    // Open sample.c via OpenFile prompt (reuses empty untitled tab, revision stays 0)
+    app.prompt = Some(InputPrompt::open_file());
+    for ch in c_file.to_string_lossy().chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE))
+            .unwrap();
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+
+    app.render(&mut sink).unwrap();
+    for _ in 0..50 {
+        if app.has_pending_syntax_response() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let tokens = app.update_syntax_highlights();
+    assert!(
+        tokens.iter().any(|t| t.token_type == TokenType::Function),
+        "Reused tab must invalidate stale rev=0 cache and highlight opened C file"
+    );
+
+    // Case 2: Save an existing cached Rust file as a `.c` file via SaveAs prompt
+    let rs_file = test_dir.path().join("orig.rs");
+    std::fs::write(&rs_file, "fn not_c() { int x = 0; }\n").unwrap();
+    let mut app2 = App::new(Some(rs_file)).unwrap();
+    app2.render(&mut sink).unwrap();
+    for _ in 0..50 {
+        if app2.has_pending_syntax_response() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // In Rust, `fn` is Keyword
+    assert!(app2
+        .update_syntax_highlights()
+        .iter()
+        .any(|t| t.token_type == TokenType::Keyword));
+
+    let saved_c = test_dir.path().join("renamed.c");
+    app2.prompt = Some(InputPrompt::save_as(None));
+    for ch in saved_c.to_string_lossy().chars() {
+        app2.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE))
+            .unwrap();
+    }
+    app2.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+
+    app2.render(&mut sink).unwrap();
+    for _ in 0..50 {
+        if app2.has_pending_syntax_response() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let tokens_after_save_as = app2.update_syntax_highlights();
+    // In C, `int` is Type and `0` is Number, whereas `fn` is NOT a C keyword
+    assert!(
+        tokens_after_save_as
+            .iter()
+            .any(|t| t.token_type == TokenType::Type),
+        "SaveAs to .c must invalidate stale Rust cache and re-highlight as C"
+    );
+    assert!(
+        !tokens_after_save_as
+            .iter()
+            .any(|t| t.token_type == TokenType::Keyword),
+        "Stale Rust keyword token for 'fn' must not remain after SaveAs to .c"
+    );
+}

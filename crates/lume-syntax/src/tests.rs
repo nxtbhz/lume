@@ -376,3 +376,110 @@ fn test_lex_json_trailing_backslash_no_oob() {
         );
     }
 }
+
+fn fresh_tokens(language: Language, code: &str) -> Vec<crate::token::HighlightToken> {
+    let mut fresh = SyntaxHighlighter::new(language).unwrap();
+    fresh.update(code);
+    fresh.highlight_range(0, code.len(), code)
+}
+
+#[test]
+fn test_c_incremental_typing_and_deletion_matches_fresh_parse() {
+    let final_code = "int is_delim(const char *c, char *delim)\n{\n    return 0;\n}\n\nstruct token_t tok(const char *src, const char *delim)\n{\n    static *str_ptr = NULL;\n    struct token_t token;\n}\n\nint main(int argc, char **argv)\n{\n    if(argc < 2)\n    {\n        die(\"Missing parameter\");\n    }\n    for(int i=0;i<argc;i++) printf(\"%s\\n\", argv[i]);\n    return 0;\n}\n";
+
+    // 1. Typing character-by-character from empty must produce the exact same tokens as a fresh parse.
+    let mut hl = SyntaxHighlighter::new(Language::C).unwrap();
+    for end in 1..=final_code.len() {
+        if final_code.is_char_boundary(end) {
+            let prefix = &final_code[..end];
+            hl.update(prefix);
+        }
+    }
+    let inc_tokens = hl.highlight_range(0, final_code.len(), final_code);
+    assert_eq!(inc_tokens, fresh_tokens(Language::C, final_code));
+
+    // 2. Deleting lines at the top of an existing parsed C file must not leave stale byte offsets.
+    let with_includes = format!("#include <stdio.h>\n#include <stdlib.h>\n\n{}", final_code);
+    let mut hl_del = SyntaxHighlighter::new(Language::C).unwrap();
+    hl_del.update(&with_includes);
+    hl_del.update(final_code);
+    let after_del_tokens = hl_del.highlight_range(0, final_code.len(), final_code);
+    assert_eq!(after_del_tokens, fresh_tokens(Language::C, final_code));
+}
+
+#[test]
+fn test_incremental_utf8_and_crlf_edits_match_fresh_parse() {
+    // Multi-byte UTF-8 emojis sharing prefix/suffix bytes (🦀 U+1F980 vs 🚀 U+1F680) and accented text
+    let mut hl_rust = SyntaxHighlighter::new(Language::Rust).unwrap();
+    let r1 = "fn greet() {\n    let msg = \"Olá 🦀 mundo\";\n    let n = 10;\n}\n";
+    let r2 = "fn greet() {\n    let msg = \"Olá 🚀 mundo!\";\n    let n = 42;\n}\n";
+    hl_rust.update(r1);
+    hl_rust.update(r2);
+    assert_eq!(
+        hl_rust.highlight_range(0, r2.len(), r2),
+        fresh_tokens(Language::Rust, r2)
+    );
+
+    // Full replacement & identical resend
+    let r3 = "struct Point { x: i32, y: i32 }\n";
+    hl_rust.update(r3);
+    assert_eq!(
+        hl_rust.highlight_range(0, r3.len(), r3),
+        fresh_tokens(Language::Rust, r3)
+    );
+    hl_rust.update(r3);
+    assert_eq!(
+        hl_rust.highlight_range(0, r3.len(), r3),
+        fresh_tokens(Language::Rust, r3)
+    );
+
+    // Windows CRLF line endings
+    let mut hl_c = SyntaxHighlighter::new(Language::C).unwrap();
+    let c1 = "int main(void) {\r\n    int x = 1;\r\n    return 0;\r\n}\r\n";
+    let c2 = "int main(void) {\r\n    const char *s = \"ok\";\r\n    int x = 1;\r\n    return 0;\r\n}\r\n";
+    hl_c.update(c1);
+    hl_c.update(c2);
+    assert_eq!(
+        hl_c.highlight_range(0, c2.len(), c2),
+        fresh_tokens(Language::C, c2)
+    );
+}
+
+#[test]
+fn test_syntax_worker_incremental_updates_match_fresh_parse() {
+    let worker = SyntaxWorker::spawn();
+    let v1 = "#include <stdio.h>\nint main() {\n    return 0;\n}\n";
+    let v2 = "int is_delim(const char *c) {\n    return 0;\n}\n";
+
+    let wait_rev = |target_rev: u64| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            if let Some(res) = worker.try_recv_response() {
+                if res.buffer_id == 7 && res.revision == target_rev {
+                    return res.tokens;
+                }
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        }
+        panic!("timed out waiting for SyntaxWorker revision {target_rev}");
+    };
+
+    worker.send_request(SyntaxRequest {
+        buffer_id: 7,
+        revision: 1,
+        language: Language::C,
+        text: v1.to_string(),
+        visible_range: 0..v1.len(),
+    });
+    assert_eq!(wait_rev(1), fresh_tokens(Language::C, v1));
+
+    worker.send_request(SyntaxRequest {
+        buffer_id: 7,
+        revision: 2,
+        language: Language::C,
+        text: v2.to_string(),
+        visible_range: 0..v2.len(),
+    });
+    assert_eq!(wait_rev(2), fresh_tokens(Language::C, v2));
+}

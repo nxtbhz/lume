@@ -503,9 +503,7 @@ impl App {
     pub fn close_tab_and_sync_splits(&mut self, tab_idx: usize) {
         if let Some(tab) = self.editor.tabs().get(tab_idx) {
             let tab_id = tab.id;
-            self.syntax_cache.remove(&tab_id);
-            self.syntax_in_flight.remove(&tab_id);
-            self.syntax_worker.drop_buffer(tab_id);
+            self.invalidate_syntax_for_tab(tab_id);
         }
         self.editor.close_tab(tab_idx);
         let max_tab = self.editor.tabs().len().saturating_sub(1);
@@ -693,6 +691,35 @@ impl App {
         updated
     }
 
+    /// Clears cached and in-flight syntax highlights for `tab_id` and drops its worker tree.
+    pub fn invalidate_syntax_for_tab(&mut self, tab_id: usize) {
+        self.syntax_cache.remove(&tab_id);
+        self.syntax_in_flight.remove(&tab_id);
+        self.syntax_worker.drop_buffer(tab_id);
+    }
+
+    pub(crate) fn open_file_into_editor(
+        &mut self,
+        path: &std::path::Path,
+        status_prefix: &str,
+        err_prefix: &str,
+    ) {
+        let prev_tab_id = self.editor.active_tab().id;
+        match self.editor.open_or_load(path) {
+            Ok(idx) => {
+                let new_tab_id = self.editor.tabs()[idx].id;
+                if new_tab_id == prev_tab_id {
+                    self.invalidate_syntax_for_tab(new_tab_id);
+                }
+                self.focus = ActiveFocus::Editor;
+                self.adjust_viewport();
+                self.set_status(format!("{status_prefix}{}", path.display()));
+                self.prompt_recover_if_needed(idx);
+            }
+            Err(e) => self.set_status(format!("{err_prefix}{e}")),
+        }
+    }
+
     pub fn request_syntax_highlighting(&mut self, tab_idx: usize) {
         let Some(tab) = self.editor.tabs().get(tab_idx) else {
             return;
@@ -819,6 +846,7 @@ impl App {
         });
         let old_parent_canon = old_path.parent().and_then(|p| p.canonicalize().ok());
 
+        let mut renamed_tab_ids = Vec::new();
         for tab in self.editor.tabs_mut() {
             if let Some(ref p) = tab.file_path {
                 let p_abs = if p.is_absolute() {
@@ -842,9 +870,7 @@ impl App {
                     let _ = lume_core::Journal::remove(&p_abs);
                     tab.file_path = Some(new_canon.clone());
                     tab.journal_path = Some(lume_core::Journal::journal_path(&new_canon));
-                    self.syntax_cache.remove(&tab.id);
-                    self.syntax_in_flight.remove(&tab.id);
-                    self.syntax_worker.drop_buffer(tab.id);
+                    renamed_tab_ids.push(tab.id);
                 } else if p_canon.starts_with(&old_canon)
                     || p_abs.starts_with(&old_canon)
                     || p_abs.starts_with(old_path)
@@ -860,12 +886,13 @@ impl App {
                         let _ = lume_core::Journal::remove(&p_abs);
                         tab.file_path = Some(updated.clone());
                         tab.journal_path = Some(lume_core::Journal::journal_path(&updated));
-                        self.syntax_cache.remove(&tab.id);
-                        self.syntax_in_flight.remove(&tab.id);
-                        self.syntax_worker.drop_buffer(tab.id);
+                        renamed_tab_ids.push(tab.id);
                     }
                 }
             }
+        }
+        for tab_id in renamed_tab_ids {
+            self.invalidate_syntax_for_tab(tab_id);
         }
     }
 }

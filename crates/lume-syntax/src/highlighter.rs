@@ -1,4 +1,4 @@
-use tree_sitter::{Node, Parser, Tree};
+use tree_sitter::{InputEdit, Node, Parser, Point, Tree};
 
 use crate::language::Language;
 use crate::lexer::{
@@ -10,6 +10,7 @@ pub struct SyntaxHighlighter {
     language: Language,
     parser: Option<Parser>,
     tree: Option<Tree>,
+    prev_text: Option<String>,
 }
 
 impl SyntaxHighlighter {
@@ -23,6 +24,7 @@ impl SyntaxHighlighter {
                 language,
                 parser: Some(parser),
                 tree: None,
+                prev_text: None,
             })
         } else {
             Ok(Self::plain(language))
@@ -35,12 +37,41 @@ impl SyntaxHighlighter {
             language,
             parser: None,
             tree: None,
+            prev_text: None,
         }
     }
 
+    /// Updates the syntax tree for `text`, applying an incremental `Tree::edit`
+    /// when a previous tree and text snapshot exist so Tree-sitter never reuses
+    /// subtrees with stale byte offsets.
     pub fn update(&mut self, text: &str) {
-        if let Some(ref mut parser) = self.parser {
-            self.tree = parser.parse(text, self.tree.as_ref());
+        let Some(ref mut parser) = self.parser else {
+            return;
+        };
+
+        let next_tree = match (self.tree.as_mut(), self.prev_text.as_deref()) {
+            (Some(_), Some(prev)) if prev == text => return,
+            (Some(old_tree), Some(prev)) => match compute_input_edit(prev, text) {
+                Some(edit)
+                    if edit.start_byte > 0
+                        || edit.old_end_byte < prev.len()
+                        || edit.new_end_byte < text.len() =>
+                {
+                    old_tree.edit(&edit);
+                    parser.parse(text, Some(old_tree))
+                }
+                _ => parser.parse(text, None),
+            },
+            _ => parser.parse(text, None),
+        };
+
+        self.tree = next_tree;
+        if self.tree.is_some() {
+            let buf = self.prev_text.get_or_insert_with(String::new);
+            buf.clear();
+            buf.push_str(text);
+        } else {
+            self.prev_text = None;
         }
     }
 
@@ -137,6 +168,91 @@ impl SyntaxHighlighter {
             _ => {}
         }
     }
+}
+
+#[inline]
+fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
+    const BLOCK: usize = 4096;
+    let n = a.len().min(b.len());
+    let mut i = 0;
+    while i + BLOCK <= n {
+        if a[i..i + BLOCK] != b[i..i + BLOCK] {
+            break;
+        }
+        i += BLOCK;
+    }
+    while i < n && a[i] == b[i] {
+        i += 1;
+    }
+    i
+}
+
+#[inline]
+fn common_suffix_len(a: &[u8], b: &[u8]) -> usize {
+    const BLOCK: usize = 4096;
+    let n = a.len().min(b.len());
+    let mut i = 0;
+    while i + BLOCK <= n {
+        let a_start = a.len() - i - BLOCK;
+        let b_start = b.len() - i - BLOCK;
+        if a[a_start..a_start + BLOCK] != b[b_start..b_start + BLOCK] {
+            break;
+        }
+        i += BLOCK;
+    }
+    while i < n && a[a.len() - 1 - i] == b[b.len() - 1 - i] {
+        i += 1;
+    }
+    i
+}
+
+#[inline]
+fn advance_point(start: Point, segment: &str) -> Point {
+    let bytes = segment.as_bytes();
+    if let Some(last_nl) = bytes.iter().rposition(|&b| b == b'\n') {
+        let newlines = bytes[..=last_nl].iter().filter(|&&b| b == b'\n').count();
+        Point::new(start.row + newlines, bytes.len() - (last_nl + 1))
+    } else {
+        Point::new(start.row, start.column + bytes.len())
+    }
+}
+
+/// Computes the minimal single-span `InputEdit` transforming `old` into `new`,
+/// aligned to UTF-8 character boundaries in both strings.
+fn compute_input_edit(old: &str, new: &str) -> Option<InputEdit> {
+    if old == new {
+        return None;
+    }
+
+    let old_bytes = old.as_bytes();
+    let new_bytes = new.as_bytes();
+
+    let mut prefix = common_prefix_len(old_bytes, new_bytes);
+    while prefix > 0 && (!old.is_char_boundary(prefix) || !new.is_char_boundary(prefix)) {
+        prefix -= 1;
+    }
+
+    let mut suffix = common_suffix_len(&old_bytes[prefix..], &new_bytes[prefix..]);
+    let mut old_end = old_bytes.len() - suffix;
+    let mut new_end = new_bytes.len() - suffix;
+    while suffix > 0 && (!old.is_char_boundary(old_end) || !new.is_char_boundary(new_end)) {
+        suffix -= 1;
+        old_end += 1;
+        new_end += 1;
+    }
+
+    let start_position = advance_point(Point::new(0, 0), &old[..prefix]);
+    let old_end_position = advance_point(start_position, &old[prefix..old_end]);
+    let new_end_position = advance_point(start_position, &new[prefix..new_end]);
+
+    Some(InputEdit {
+        start_byte: prefix,
+        old_end_byte: old_end,
+        new_end_byte: new_end,
+        start_position,
+        old_end_position,
+        new_end_position,
+    })
 }
 
 #[inline]

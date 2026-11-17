@@ -130,6 +130,7 @@ impl Editor {
         tab.history.clear();
         tab.file_path = Some(path.to_path_buf());
         tab.journal_path = Some(journal_path);
+        tab.language_override = None;
         tab.is_dirty = false;
         tab.recovered_from_journal = false;
         tab.pending_recovery = pending_recovery;

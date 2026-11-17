@@ -143,15 +143,7 @@ impl App {
                                 raw_p
                             };
                             if path.exists() {
-                                match self.editor.open_or_load(&path) {
-                                    Ok(idx) => {
-                                        self.focus = ActiveFocus::Editor;
-                                        self.adjust_viewport();
-                                        self.set_status(format!("Opened {}", path.display()));
-                                        self.prompt_recover_if_needed(idx);
-                                    }
-                                    Err(e) => self.set_status(format!("Open error: {}", e)),
-                                }
+                                self.open_file_into_editor(&path, "Opened ", "Open error: ");
                             } else {
                                 self.set_status(format!("File not found: {}", path.display()));
                             }
@@ -167,6 +159,8 @@ impl App {
                             };
                             match self.editor.save_as(&path) {
                                 Ok(()) => {
+                                    let tab_id = self.editor.active_tab().id;
+                                    self.invalidate_syntax_for_tab(tab_id);
                                     self.explorer.refresh();
                                     self.set_status(format!("Saved to {}", path.display()));
                                 }
@@ -187,16 +181,15 @@ impl App {
                             val.clone()
                         };
 
+                        let tab_id = self.editor.active_tab().id;
                         if let Some(lang) = Language::from_id(&chosen) {
                             self.editor
                                 .set_language_override(Some(lang.name().to_string()));
-                            self.syntax_cache.remove(&self.editor.active_tab().id);
-                            self.syntax_in_flight.remove(&self.editor.active_tab().id);
+                            self.invalidate_syntax_for_tab(tab_id);
                             self.set_status(format!("Language mode: {}", lang.name()));
                         } else if chosen.to_lowercase() == "plain text" {
                             self.editor.set_language_override(None);
-                            self.syntax_cache.remove(&self.editor.active_tab().id);
-                            self.syntax_in_flight.remove(&self.editor.active_tab().id);
+                            self.invalidate_syntax_for_tab(tab_id);
                             self.set_status("Language mode: Plain Text");
                         } else {
                             self.set_status(format!("Unknown language: {}", chosen));
@@ -237,23 +230,11 @@ impl App {
                     PromptAction::CreateFile { parent_dir } => {
                         if !val.is_empty() {
                             match self.explorer.create_file(&parent_dir, &val) {
-                                Ok(created) => match self.editor.open_or_load(&created) {
-                                    Ok(idx) => {
-                                        self.focus = ActiveFocus::Editor;
-                                        self.adjust_viewport();
-                                        self.set_status(format!(
-                                            "Created and opened file: {}",
-                                            created.display()
-                                        ));
-                                        self.prompt_recover_if_needed(idx);
-                                    }
-                                    Err(e) => {
-                                        self.set_status(format!(
-                                            "Created file but failed to open: {}",
-                                            e
-                                        ));
-                                    }
-                                },
+                                Ok(created) => self.open_file_into_editor(
+                                    &created,
+                                    "Created and opened file: ",
+                                    "Created file but failed to open: ",
+                                ),
                                 Err(e) => self.set_status(format!("Create file error: {}", e)),
                             }
                         }
@@ -691,15 +672,7 @@ impl App {
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 if let Some(path) = self.explorer.activate_selected() {
-                    match self.editor.open_or_load(&path) {
-                        Ok(idx) => {
-                            self.focus = ActiveFocus::Editor;
-                            self.adjust_viewport();
-                            self.set_status(format!("Opened {}", path.display()));
-                            self.prompt_recover_if_needed(idx);
-                        }
-                        Err(e) => self.set_status(format!("Open error: {}", e)),
-                    }
+                    self.open_file_into_editor(&path, "Opened ", "Open error: ");
                 }
             }
             KeyCode::Tab | KeyCode::Esc => {
@@ -771,15 +744,7 @@ impl App {
                 if let Some(item) = state.selected_item() {
                     let full_path = item.full_path.clone();
                     self.quick_open = None;
-                    match self.editor.open_or_load(&full_path) {
-                        Ok(idx) => {
-                            self.focus = ActiveFocus::Editor;
-                            self.adjust_viewport();
-                            self.set_status(format!("Opened {}", full_path.display()));
-                            self.prompt_recover_if_needed(idx);
-                        }
-                        Err(e) => self.set_status(format!("Open error: {}", e)),
-                    }
+                    self.open_file_into_editor(&full_path, "Opened ", "Open error: ");
                 } else {
                     self.quick_open = None;
                 }
