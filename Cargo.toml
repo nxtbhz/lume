@@ -19,6 +19,7 @@ crossterm = "0.29"
 thiserror = "2.0"
 criterion = "0.5"
 unicode-width = "0.2"
+unicode-segmentation = "1.13"
 
 [profile.release]
 opt-level = 3

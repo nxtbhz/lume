@@ -21,6 +21,14 @@ impl App {
             }
         }
 
+        if ctrl && !alt && matches!(key.code, KeyCode::Char('v' | 'V')) && self.has_paste_overlay()
+        {
+            if let Some(text) = self.editor.clipboard().map(str::to_owned) {
+                self.paste_into_overlay(&text);
+            }
+            return Ok(());
+        }
+
         // 2. If an Input Prompt is open (Open File, Save As, Language Mode)
         if let Some(prompt) = self.prompt.take() {
             return self.handle_prompt_key(prompt, key);
@@ -151,15 +159,15 @@ impl App {
                     self.execute_command("edit.redo");
                     return Ok(());
                 }
-                KeyCode::Char('c') => {
+                KeyCode::Char('c' | 'C') => {
                     self.execute_command("edit.copy");
                     return Ok(());
                 }
-                KeyCode::Char('x') => {
+                KeyCode::Char('x' | 'X') => {
                     self.execute_command("edit.cut");
                     return Ok(());
                 }
-                KeyCode::Char('v') => {
+                KeyCode::Char('v' | 'V') => {
                     self.execute_command("edit.paste");
                     return Ok(());
                 }

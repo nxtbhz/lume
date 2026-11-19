@@ -8,6 +8,9 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use crate::render::text::fit_text;
+use lume_core::buffer::visual;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PromptAction {
     OpenFile,
@@ -339,12 +342,15 @@ impl InputPrompt {
         term_width: u16,
         term_height: u16,
     ) -> std::io::Result<()> {
-        let box_w = (term_width as usize).clamp(40, 72);
-        let max_sugg = 5;
-        let sugg_count = self.suggestions.len().min(max_sugg);
-        let box_h = 4 + sugg_count;
+        let box_w = (term_width as usize).min(72);
+        let box_h = (4 + self.suggestions.len().min(5)).min(term_height as usize);
+        if box_w == 0 || box_h == 0 {
+            return Ok(());
+        }
         let start_x = (term_width as usize).saturating_sub(box_w) / 2;
         let start_y = (term_height as usize).saturating_sub(box_h) / 3;
+        let prompt_prefix = " > ";
+        let input = format!("{prompt_prefix}{}", self.value);
 
         // Header / Box
         for y in 0..box_h {
@@ -360,24 +366,17 @@ impl InputPrompt {
             )?;
 
             if y == 0 {
-                let title_fit: String = self.title.chars().take(box_w).collect();
-                let fill = box_w.saturating_sub(title_fit.chars().count());
                 queue!(
                     writer,
                     SetForegroundColor(Color::Cyan),
-                    Print(format!("{}{:fill$}", title_fit, "", fill = fill))
+                    Print(fit_text(&self.title, box_w))
                 )?;
             } else if y == 1 {
-                let prompt_prefix = " > ";
-                let input_disp: String = format!("{}{}", prompt_prefix, self.value)
-                    .chars()
-                    .take(box_w.saturating_sub(1))
-                    .collect();
-                let fill = box_w.saturating_sub(input_disp.chars().count() + 1);
                 queue!(
                     writer,
                     SetForegroundColor(Color::White),
-                    Print(format!("{}{:fill$} ", input_disp, "", fill = fill))
+                    Print(fit_text(&input, box_w - 1)),
+                    Print(" ")
                 )?;
             } else if y == 2 {
                 queue!(
@@ -410,13 +409,7 @@ impl InputPrompt {
                         )?;
                     }
 
-                    let line_content: String =
-                        format!("{}{}", prefix, sugg).chars().take(box_w).collect();
-                    let fill = box_w.saturating_sub(line_content.chars().count());
-                    queue!(
-                        writer,
-                        Print(format!("{}{:fill$}", line_content, "", fill = fill))
-                    )?;
+                    queue!(writer, Print(fit_text(&format!("{prefix}{sugg}"), box_w)))?;
                 } else {
                     queue!(writer, Print(" ".repeat(box_w)))?;
                 }
@@ -424,16 +417,16 @@ impl InputPrompt {
         }
 
         // Render input cursor
-        let cursor_col = self.value[..self.cursor_pos].chars().count();
-        let clamped_col = (3 + cursor_col).min(box_w.saturating_sub(1));
-        let cursor_x = (start_x + clamped_col) as u16;
-        let cursor_y = (start_y + 1) as u16;
-        queue!(
-            writer,
-            MoveTo(cursor_x, cursor_y),
-            crossterm::cursor::Show,
-            ResetColor
-        )?;
+        if box_h > 1 {
+            let cursor_col = visual::column_at_byte(&input, prompt_prefix.len() + self.cursor_pos);
+            let cursor_x = (start_x + cursor_col.min(box_w - 1)) as u16;
+            queue!(
+                writer,
+                MoveTo(cursor_x, (start_y + 1) as u16),
+                crossterm::cursor::Show
+            )?;
+        }
+        queue!(writer, ResetColor)?;
 
         Ok(())
     }

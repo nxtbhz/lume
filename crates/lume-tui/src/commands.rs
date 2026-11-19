@@ -344,21 +344,41 @@ impl App {
                     self.set_status("Redo");
                 }
             }
-            "edit.copy" => {
-                if let Some(text) = self.editor.copy_selection() {
+            "edit.copy" | "edit.cut" => {
+                let cut = id == "edit.cut";
+                let linewise = !self
+                    .editor
+                    .cursors()
+                    .cursors()
+                    .iter()
+                    .any(|c| c.is_selection());
+                let text = if cut {
+                    self.editor.cut_selection()
+                } else {
+                    self.editor.copy_selection()
+                };
+                if let Some(text) = text {
                     self.pending_osc52 = Some(lume_core::clipboard::osc52_sequence_auto(&text));
-                    self.set_status("Copied to clipboard");
-                }
-            }
-            "edit.cut" => {
-                if let Some(text) = self.editor.cut_selection() {
-                    self.pending_osc52 = Some(lume_core::clipboard::osc52_sequence_auto(&text));
-                    self.set_status("Cut to clipboard");
+                    if self.modal_enabled {
+                        self.vim_state.yank(text, linewise);
+                        if cut && self.vim_state.mode == crate::vim::VimMode::Visual {
+                            self.vim_state.set_mode(crate::vim::VimMode::Normal);
+                        }
+                    }
+                    if cut {
+                        self.syntax_cache.remove(&self.editor.active_tab().id);
+                        self.adjust_viewport();
+                        self.set_status("Cut to Lume clipboard");
+                    } else {
+                        self.set_status("Copied to Lume clipboard");
+                    }
                 }
             }
             "edit.paste" => {
-                if self.editor.paste() {
-                    self.set_status("Pasted from clipboard");
+                if let Some(text) = self.editor.clipboard().map(str::to_owned) {
+                    if self.paste_into_editor(&text) {
+                        self.set_status("Pasted from Lume clipboard");
+                    }
                 }
             }
             "edit.select_all" => {

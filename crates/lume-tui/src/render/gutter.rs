@@ -6,6 +6,8 @@ use crossterm::{
 };
 use lume_core::diff::LineDiffStatus;
 
+use crate::render::text::fit_text;
+
 pub fn render_gutter<W: Write>(
     writer: &mut W,
     buffer_line: usize,
@@ -13,12 +15,21 @@ pub fn render_gutter<W: Write>(
     gutter_w: usize,
     diff_status: Option<LineDiffStatus>,
 ) -> std::io::Result<()> {
+    let number = (buffer_line + 1).to_string();
+    if number.len() + 3 > gutter_w && buffer_line < total_lines {
+        return queue!(
+            writer,
+            SetForegroundColor(Color::DarkGrey),
+            Print(fit_text(&number, gutter_w)),
+            ResetColor
+        );
+    }
     let num_width = gutter_w.saturating_sub(3);
     if buffer_line < total_lines {
         queue!(
             writer,
             SetForegroundColor(Color::DarkGrey),
-            Print(format!("{:>width$}", buffer_line + 1, width = num_width)),
+            Print(format!("{number:>num_width$}")),
             ResetColor
         )?;
 
@@ -62,7 +73,7 @@ pub fn render_gutter<W: Write>(
         queue!(
             writer,
             SetForegroundColor(Color::DarkGrey),
-            Print(format!("{:>width$} ~ ", "~", width = num_width)),
+            Print(fit_text(&format!("{:>num_width$} ~ ", "~"), gutter_w)),
             ResetColor
         )?;
     }

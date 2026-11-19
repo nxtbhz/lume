@@ -23,7 +23,7 @@ fn test_app_clipboard_copy_ctrl_c_emits_osc52() {
     app.render(&mut buf).unwrap();
     assert!(app.pending_osc52.is_none());
     let output_str = String::from_utf8_lossy(&buf);
-    assert!(output_str.contains("]52;c;"));
+    assert!(output_str.find("]52;c;").unwrap() < output_str.find("\x1b[?2026h").unwrap());
 }
 
 #[test]
@@ -315,4 +315,303 @@ fn test_app_paste_multiline_sanitized_in_overlays() {
         .unwrap()
         .replacement
         .contains('\n'));
+}
+
+#[test]
+fn test_bracketed_paste_renders_tabs_and_controls_as_text() {
+    use crate::input::AppEvent;
+
+    let mut app = App::new(None).unwrap();
+    app.explorer.is_visible = false;
+    app.show_line_numbers = false;
+    app.terminal_width = 12;
+    let text = "a\t界\x08\x1b[2J";
+    let mut out = Vec::new();
+    app.handle_event(AppEvent::Paste(text.to_string()), &mut out)
+        .unwrap();
+
+    let frame = String::from_utf8(out).unwrap();
+    assert!(frame.contains("a   界��[2J"), "{frame:?}");
+    assert!(!frame.contains('\x08'));
+    assert!(!frame.contains("\x1b[2J"));
+    assert_eq!(app.editor.clipboard(), Some(text));
+    assert_eq!(app.editor.buffer().slice_to_cow(0, text.len()), text);
+}
+
+#[test]
+fn test_internal_paste_scrolls_in_terminal_columns() {
+    let mut app = App::new(None).unwrap();
+    app.explorer.is_visible = false;
+    app.show_line_numbers = false;
+    app.terminal_width = 5;
+    app.editor.set_clipboard("a\t界界");
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL))
+        .unwrap();
+
+    // Column 4 is the left edge. Both wide characters fit before the cursor.
+    assert_eq!(app.scroll_col, 4);
+    let mut out = Vec::new();
+    app.render(&mut out).unwrap();
+    let frame = String::from_utf8(out).unwrap();
+    assert!(frame.contains("界界"), "{frame:?}");
+    assert!(frame.contains("\x1b[2;5H\x1b[?25h"), "{frame:?}");
+}
+
+#[test]
+fn test_copy_shortcut_updates_vim_put_register() {
+    let mut app = App::new(None).unwrap();
+    app.modal_enabled = true;
+    app.editor.insert_str("é界").unwrap();
+    app.editor.cursors_mut().primary_mut().anchor = 0;
+    app.editor.cursors_mut().primary_mut().head = "é".len();
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+        .unwrap();
+    app.editor.cursors_mut().set_single("é界".len());
+    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE))
+        .unwrap();
+
+    assert_eq!(app.editor.clipboard(), Some("é"));
+    assert_eq!(
+        app.editor
+            .buffer()
+            .slice_to_cow(0, app.editor.buffer().len_bytes()),
+        "é界é"
+    );
+}
+
+#[test]
+fn test_mouse_copy_uses_visible_columns_after_a_tab() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+    let mut app = App::new(None).unwrap();
+    app.explorer.is_visible = false;
+    app.show_line_numbers = false;
+    app.handle_paste_text("a\t界xyz");
+
+    for (kind, column) in [
+        (MouseEventKind::Down(MouseButton::Left), 4),
+        (MouseEventKind::Drag(MouseButton::Left), 6),
+        (MouseEventKind::Up(MouseButton::Left), 6),
+    ] {
+        app.handle_mouse(MouseEvent {
+            kind,
+            column,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        })
+        .unwrap();
+    }
+    app.handle_key(KeyEvent::new(
+        KeyCode::Char('C'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ))
+    .unwrap();
+    assert_eq!(app.editor.clipboard(), Some("界"));
+
+    app.editor.cursors_mut().set_single("a\t界xyz".len());
+    app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(
+        app.editor
+            .buffer()
+            .slice_to_cow(0, app.editor.buffer().len_bytes()),
+        "a\t界xyz界"
+    );
+}
+
+#[test]
+fn test_overlay_paste_handles_terminal_controls_from_both_clipboards() {
+    let mut app = App::new(None).unwrap();
+    app.palette_open = true;
+
+    app.handle_paste_text("save\tas\x07\rignore");
+    assert_eq!(app.palette_query, "save\tas\x07");
+
+    app.palette_query.clear();
+    app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.palette_query, "save\tas\x07");
+
+    let mut frame = Vec::new();
+    app.render(&mut frame).unwrap();
+    assert!(!frame.contains(&b'\x07'));
+}
+
+#[test]
+fn test_mouse_copy_uses_grapheme_width_after_emoji() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+    let mut app = App::new(None).unwrap();
+    app.explorer.is_visible = false;
+    app.show_line_numbers = false;
+    app.handle_paste_text("👩‍💻ab");
+    assert_eq!(app.editor.cursor_visual_line_col(), (0, 4));
+
+    for (kind, column) in [
+        (MouseEventKind::Down(MouseButton::Left), 2),
+        (MouseEventKind::Drag(MouseButton::Left), 3),
+    ] {
+        app.handle_mouse(MouseEvent {
+            kind,
+            column,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        })
+        .unwrap();
+    }
+    app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.editor.clipboard(), Some("a"));
+}
+
+#[test]
+fn test_keyboard_copies_and_puts_whole_graphemes() {
+    let mut app = App::new(None).unwrap();
+    app.modal_enabled = true;
+    app.editor.insert_str("👩‍💻a👩‍💻b").unwrap();
+    app.editor.cursors_mut().set_single(0);
+    app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.editor.clipboard(), Some("👩‍💻"));
+
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .unwrap();
+    app.editor.cursors_mut().set_single("👩‍💻a".len());
+    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(
+        app.editor
+            .buffer()
+            .slice_to_cow(0, app.editor.buffer().len_bytes()),
+        "👩‍💻a👩‍💻👩‍💻b"
+    );
+}
+
+#[test]
+fn test_vim_put_preserves_line_boundary_after_copying_unterminated_line() {
+    let mut app = App::new(None).unwrap();
+    app.modal_enabled = true;
+    app.editor.insert_str("first\nsecond\nlast").unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.editor.clipboard(), Some("last"));
+
+    app.editor.cursors_mut().set_single(0);
+    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(
+        app.editor
+            .buffer()
+            .slice_to_cow(0, app.editor.buffer().len_bytes()),
+        "first\nlast\nsecond\nlast"
+    );
+}
+
+#[test]
+fn test_vim_put_preserves_empty_lines_with_mixed_endings() {
+    for (original, source, target, expected) in [
+        ("a\rb\n\nc", 4, 0, "a\r\r\nb\n\nc"),
+        ("a\n\nb\rc", 3, 0, "a\nb\r\n\nb\rc"),
+    ] {
+        let mut app = App::new(None).unwrap();
+        app.modal_enabled = true;
+        app.editor.insert_str(original).unwrap();
+        app.editor.cursors_mut().set_single(source);
+        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+            .unwrap();
+        app.editor.cursors_mut().set_single(target);
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(
+            app.editor
+                .buffer()
+                .slice_to_cow(0, app.editor.buffer().len_bytes()),
+            expected
+        );
+    }
+}
+
+#[test]
+fn test_narrow_overlays_fit_terminal_width_after_paste() {
+    use crate::quick_open::QuickOpenState;
+
+    let mut app = App::new(None).unwrap();
+    app.terminal_width = 3;
+    app.terminal_height = 3;
+    app.quick_open = Some(QuickOpenState::new(Vec::new()));
+    app.handle_paste_text("👩‍💻界界");
+
+    let mut out = Vec::new();
+    crate::render::render_quick_open(&app, app.quick_open.as_ref().unwrap(), &mut out).unwrap();
+    let frame = String::from_utf8(out).unwrap();
+    assert!(!frame.contains("[0/0]"), "{frame:?}");
+    assert!(!frame.contains("\x1b[4;1H"), "{frame:?}");
+
+    app.quick_open = None;
+    app.palette_open = true;
+    app.handle_paste_text("Copy");
+    out = Vec::new();
+    crate::render::render_command_palette(&app, &mut out).unwrap();
+    let frame = String::from_utf8(out).unwrap();
+    assert!(!frame.contains("\x1b[4;1H"), "{frame:?}");
+}
+
+#[test]
+fn test_quick_open_paste_refreshes_scrolled_results() {
+    use crate::quick_open::{QuickOpenItem, QuickOpenState};
+
+    let files = (0..24)
+        .map(|i| {
+            let name = format!("item-{i:02}.txt");
+            QuickOpenItem {
+                relative_path: name.clone(),
+                file_name: name.clone(),
+                full_path: name.into(),
+                is_open_tab: false,
+            }
+        })
+        .collect();
+    let mut state = QuickOpenState::new(files);
+    for _ in 0..20 {
+        state.move_down(11);
+    }
+    let mut app = App::new(None).unwrap();
+    app.quick_open = Some(state);
+    app.terminal_width = 80;
+    app.terminal_height = 24;
+    app.handle_paste_text("item-03");
+
+    let mut out = Vec::new();
+    crate::render::render_quick_open(&app, app.quick_open.as_ref().unwrap(), &mut out).unwrap();
+    assert!(String::from_utf8(out).unwrap().contains("[1/24]"));
+    assert_eq!(app.quick_open.as_ref().unwrap().scroll_offset, 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_opening_pasted_path_keeps_controls_out_of_the_frame() {
+    use crate::tests::TestDir;
+
+    let dir = TestDir::new("lume_clipboard_path");
+    let path = dir.path().join("pasted\x07.txt");
+    std::fs::write(&path, "contents").unwrap();
+    let mut app = App::new(None).unwrap();
+    app.terminal_width = 120;
+    app.explorer.root = dir.path().to_owned();
+    app.explorer.refresh();
+    app.execute_command("file.open");
+    app.handle_paste_text(path.to_str().unwrap());
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(app.editor.file_path(), Some(path.as_path()));
+
+    let mut frame = Vec::new();
+    app.render(&mut frame).unwrap();
+    assert!(!frame.contains(&b'\x07'));
 }

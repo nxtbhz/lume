@@ -10,7 +10,7 @@ Build measurements, shared library linkage, test suite totals, Criterion microbe
 
 Compiling the workspace requires Rust `1.88.0` or newer because `lume-core` calls `slice::as_chunks` (`crates/lume-core/src/search.rs:13`) and `usize::is_multiple_of` (`crates/lume-core/src/editor/indent.rs:557`). Root `Cargo.toml` does not set `rust-version`, so Cargo accepts older toolchains until compilation fails.
 
-Interactive sessions require a terminal emulator supporting ANSI 24-bit color, the alternate screen, and SGR mouse reporting. Terminals that do not answer Kitty keyboard enhancement queries (`\x1b[?u\x1b[c`) block startup in `crossterm::terminal::supports_keyboard_enhancement` until its 2-second timeout expires (`crates/lume-tui/src/terminal.rs:112`).
+Interactive sessions require a terminal emulator supporting ANSI 24-bit color, the alternate screen, and SGR mouse reporting. Keyboard enhancements are optional. If the terminal does not answer the capability probe, Lume uses standard terminal input after the 2-second probe timeout.
 
 ### Build and run
 
@@ -24,6 +24,8 @@ cargo build --release --locked --bin lume
 ```
 
 Running `lume .` opens the working directory in the sidebar tree alongside an untitled tab. Passing multiple files opens one tab per file, and paths containing `*` or `?` expand internally (`crates/lume-tui/src/args.rs:60`).
+
+Use `Ctrl+C` and `Ctrl+V` to copy and paste within Lume, including across tabs. See the [terminal keymap](docs/reference.md#modeless-editor-keybindings) for system clipboard support.
 
 ### Verification and benchmarks
 

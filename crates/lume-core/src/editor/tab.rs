@@ -1,4 +1,4 @@
-use crate::buffer::{RopeBuffer, TextBuffer};
+use crate::buffer::{visual, RopeBuffer, TextBuffer, LINE_BREAKS};
 use crate::cursor::CursorSet;
 use crate::diff::LineDiffStatus;
 use crate::editor::line_ending::LineEnding;
@@ -140,19 +140,14 @@ impl Tab {
     }
 
     pub fn cursor_visual_line_col_for(&self, cursors: &CursorSet) -> (usize, usize) {
-        use unicode_width::UnicodeWidthChar;
         let head = cursors.primary().head.min(self.buffer.len_bytes());
         let line = self.buffer.byte_to_line(head);
         let line_start_byte = self.buffer.line_to_byte(line);
-        let line_prefix = self.buffer.slice_to_cow(line_start_byte, head);
-        let mut visual_col = 0;
-        for c in line_prefix.chars() {
-            if c == '\t' {
-                visual_col += 4 - (visual_col % 4);
-            } else {
-                visual_col += c.width().unwrap_or(0);
-            }
-        }
-        (line, visual_col)
+        let line_text = std::borrow::Cow::from(self.buffer.rope().line(line));
+        let content = line_text.trim_end_matches(LINE_BREAKS);
+        (
+            line,
+            visual::column_at_byte(content, head - line_start_byte),
+        )
     }
 }

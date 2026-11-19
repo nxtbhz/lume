@@ -1,6 +1,11 @@
 use std::borrow::Cow;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub mod visual;
+
+// The line breaks recognized by Ropey with its default features.
+pub const LINE_BREAKS: [char; 7] = ['\n', '\r', '\x0b', '\x0c', '\u{85}', '\u{2028}', '\u{2029}'];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TextDelta {
     pub start_byte: usize,

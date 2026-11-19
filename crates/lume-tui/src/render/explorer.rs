@@ -8,6 +8,7 @@ use crossterm::{
 };
 
 use crate::explorer::FileExplorer;
+use crate::render::text::fit_text;
 
 impl FileExplorer {
     pub fn render<W: Write>(
@@ -15,14 +16,14 @@ impl FileExplorer {
         writer: &mut W,
         top_row: u16,
         height: usize,
+        width: usize,
         is_focused: bool,
     ) -> std::io::Result<()> {
-        if !self.is_visible || height == 0 {
+        if !self.is_visible || height == 0 || width == 0 {
             return Ok(());
         }
 
-        let width = self.width;
-        let content_w = width.saturating_sub(1); // last column is the vertical border
+        let content_w = width - 1; // last column is the vertical border
 
         // Header (Row top_row)
         queue!(
@@ -45,12 +46,10 @@ impl FileExplorer {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or_else(|| self.root.to_str().unwrap_or("WORKSPACE"));
-        let header_raw = format!(" 📁 {} [F2]", root_name);
-        let header_text = truncate_to_width(&header_raw, content_w);
-        let fill = content_w.saturating_sub(display_width(&header_text));
+        let header = format!(" 📁 {root_name} [F2]");
         queue!(
             writer,
-            Print(format!("{}{:fill$}", header_text, "", fill = fill)),
+            Print(fit_text(&header, content_w)),
             SetForegroundColor(Color::DarkGrey),
             Print("│"),
             ResetColor
@@ -103,11 +102,7 @@ impl FileExplorer {
                     get_file_icon(&item.name)
                 };
 
-                let prefix = format!("{}{}", indent, icon);
-                let avail_name = content_w.saturating_sub(display_width(&prefix));
-                let name_truncated = truncate_to_width(&item.name, avail_name);
-                let line_text = format!("{}{}", prefix, name_truncated);
-                let line_fill = content_w.saturating_sub(display_width(&line_text));
+                let line_text = format!("{indent}{icon}{}", item.name);
 
                 let fg = if is_sel {
                     if is_focused {
@@ -124,7 +119,7 @@ impl FileExplorer {
                 queue!(
                     writer,
                     SetForegroundColor(fg),
-                    Print(format!("{}{:fill$}", line_text, "", fill = line_fill)),
+                    Print(fit_text(&line_text, content_w)),
                     SetBackgroundColor(Color::Reset),
                     SetForegroundColor(Color::DarkGrey),
                     Print("│"),
@@ -218,50 +213,4 @@ pub(crate) fn get_file_color(name: &str) -> Color {
     } else {
         Color::White
     }
-}
-
-pub(crate) fn char_display_width(c: char) -> usize {
-    if c < ' '
-        || ('\u{007f}'..='\u{009f}').contains(&c)
-        || ('\u{0300}'..='\u{036f}').contains(&c)
-        || ('\u{fe00}'..='\u{fe0f}').contains(&c)
-    {
-        0
-    } else if ('\u{1100}'..='\u{115f}').contains(&c)
-        || ('\u{2e80}'..='\u{303e}').contains(&c)
-        || ('\u{3040}'..='\u{a4cf}').contains(&c)
-        || ('\u{ac00}'..='\u{d7a3}').contains(&c)
-        || ('\u{f900}'..='\u{faff}').contains(&c)
-        || ('\u{fe10}'..='\u{fe6f}').contains(&c)
-        || ('\u{ff00}'..='\u{ff60}').contains(&c)
-        || ('\u{ffe0}'..='\u{ffe6}').contains(&c)
-        || c == '\u{2615}'
-        || c == '\u{2795}'
-        || ('\u{1f300}'..='\u{1f9ff}').contains(&c)
-        || ('\u{1fa00}'..='\u{1faff}').contains(&c)
-        || ('\u{20000}'..='\u{2fffd}').contains(&c)
-        || ('\u{30000}'..='\u{3fffd}').contains(&c)
-    {
-        2
-    } else {
-        1
-    }
-}
-
-pub(crate) fn display_width(s: &str) -> usize {
-    s.chars().map(char_display_width).sum()
-}
-
-pub(crate) fn truncate_to_width(s: &str, max_width: usize) -> String {
-    let mut out = String::new();
-    let mut used = 0;
-    for c in s.chars() {
-        let w = char_display_width(c);
-        if used + w > max_width {
-            break;
-        }
-        out.push(c);
-        used += w;
-    }
-    out
 }

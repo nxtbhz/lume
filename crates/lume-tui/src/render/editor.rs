@@ -1,5 +1,4 @@
 use std::io::Write;
-use unicode_width::UnicodeWidthChar;
 
 use crossterm::{
     cursor::MoveTo,
@@ -11,6 +10,7 @@ use crossterm::{
 use crate::app::App;
 use crate::render::gutter::render_gutter;
 use crate::split::{PaneRect, SplitDirection};
+use lume_core::buffer::{visual, LINE_BREAKS};
 use lume_core::{CursorSet, TextBuffer};
 use lume_syntax::TokenType;
 
@@ -87,13 +87,8 @@ fn render_pane_viewport<W: Write>(
                 let tab_buffer = &app.editor.tabs()[tab_idx].buffer;
                 if let Some(line) = tab_buffer.line(buffer_line) {
                     let line_start_byte = tab_buffer.line_to_byte(buffer_line);
-                    let mut line_str = line.to_string();
-                    if line_str.ends_with('\n') {
-                        line_str.pop();
-                        if line_str.ends_with('\r') {
-                            line_str.pop();
-                        }
-                    }
+                    let line_text = std::borrow::Cow::from(line);
+                    let line_str = line_text.trim_end_matches(LINE_BREAKS);
 
                     let line_end_byte = line_start_byte + line_str.len();
                     let start_tok = tokens.partition_point(|t| t.end_byte <= line_start_byte);
@@ -105,7 +100,7 @@ fn render_pane_viewport<W: Write>(
                         app.search_state
                     {
                         if !search.query.is_empty() {
-                            lume_core::search::find_matches_in_str(&line_str, &search.query, false)
+                            lume_core::search::find_matches_in_str(line_str, &search.query, false)
                                 .into_iter()
                                 .map(|(s, e)| (line_start_byte + s, line_start_byte + e))
                                 .collect()
@@ -116,26 +111,30 @@ fn render_pane_viewport<W: Write>(
                         Vec::new()
                     };
 
-                    let chars: Vec<char> = line_str.chars().collect();
-                    let mut current_byte = line_start_byte;
+                    let viewport_end = scroll_col.saturating_add(text_w);
                     let mut run_text = String::new();
                     let mut run_style: Option<(Option<Color>, Color)> = None;
 
-                    for (col_idx, &c) in chars.iter().enumerate() {
-                        let char_len = c.len_utf8();
-                        let char_byte = current_byte;
-                        current_byte += char_len;
-
-                        if col_idx < scroll_col || col_idx >= scroll_col + text_w {
+                    for grapheme in visual::graphemes(line_str) {
+                        let start_col = grapheme.column;
+                        if start_col >= viewport_end {
+                            break;
+                        }
+                        let visible_cols = (start_col + grapheme.width)
+                            .min(viewport_end)
+                            .saturating_sub(start_col.max(scroll_col));
+                        if visible_cols == 0 {
                             continue;
                         }
+                        let char_byte = line_start_byte + grapheme.byte_offset;
+                        let char_end = char_byte + grapheme.text.len();
 
                         let is_selected = selection_range
                             .as_ref()
-                            .is_some_and(|r| r.contains(&char_byte));
+                            .is_some_and(|r| r.start < char_end && char_byte < r.end);
                         let search_match = line_matches
                             .iter()
-                            .find(|(s, e)| *s <= char_byte && char_byte < *e);
+                            .find(|(s, e)| *s < char_end && char_byte < *e);
                         let is_bracket_match =
                             bracket_pair.is_some_and(|(b1, b2)| char_byte == b1 || char_byte == b2);
 
@@ -201,19 +200,7 @@ fn render_pane_viewport<W: Write>(
                                 (None, fg)
                             };
 
-                        let char_w = if c == '\t' {
-                            4 - (printed_cols % 4)
-                        } else {
-                            c.width().unwrap_or(0)
-                        };
-
-                        if is_split && printed_cols + char_w > rect.width {
-                            break;
-                        }
-
-                        if run_style == Some(style) {
-                            run_text.push(c);
-                        } else {
+                        if run_style != Some(style) {
                             if let Some((prev_bg, prev_fg)) = run_style {
                                 if let Some(bg) = prev_bg {
                                     queue!(writer, SetBackgroundColor(bg))?;
@@ -227,9 +214,13 @@ fn render_pane_viewport<W: Write>(
                                 run_text.clear();
                             }
                             run_style = Some(style);
-                            run_text.push(c);
                         }
-                        printed_cols += char_w;
+                        if visible_cols == grapheme.width {
+                            run_text.push_str(grapheme.display_text());
+                        } else {
+                            run_text.extend(std::iter::repeat_n(' ', visible_cols));
+                        }
+                        printed_cols += visible_cols;
                     }
 
                     if let Some((prev_bg, prev_fg)) = run_style {
@@ -255,7 +246,7 @@ fn render_pane_viewport<W: Write>(
             if pad > 0 {
                 queue!(writer, Print(" ".repeat(pad)))?;
             }
-        } else {
+        } else if printed_cols < rect.width {
             queue!(writer, Clear(ClearType::UntilNewLine))?;
         }
     }

@@ -1,4 +1,4 @@
-use crate::buffer::TextBuffer;
+use crate::buffer::{visual, TextBuffer, LINE_BREAKS};
 use crate::editor::Editor;
 
 impl Editor {
@@ -11,7 +11,7 @@ impl Editor {
             } else {
                 line_len - 1
             }
-        } else if line_len > 0 && rope.char(line_start_char + line_len - 1) == '\r' {
+        } else if line_len > 0 && LINE_BREAKS.contains(&rope.char(line_start_char + line_len - 1)) {
             line_len - 1
         } else {
             line_len
@@ -27,15 +27,31 @@ impl Editor {
     }
 
     pub fn set_cursor_from_line_col(&mut self, line: usize, col: usize, select: bool) {
+        self.set_cursor_from_column(line, select, |line| {
+            line.char_to_byte(col.min(line.len_chars()))
+        });
+    }
+
+    pub fn set_cursor_from_visual_line_col(&mut self, line: usize, col: usize, select: bool) {
+        self.set_cursor_from_column(line, select, |line| {
+            visual::byte_at_column(&std::borrow::Cow::from(line), col)
+        });
+    }
+
+    fn set_cursor_from_column(
+        &mut self,
+        line: usize,
+        select: bool,
+        byte_offset: impl FnOnce(ropey::RopeSlice<'_>) -> usize,
+    ) {
         let tab = &mut self.tabs[self.active_tab];
         tab.history.break_group();
         let total_lines = tab.buffer.len_lines();
         let target_line = line.min(total_lines.saturating_sub(1));
-        let line_start_char = tab.buffer.rope().line_to_char(target_line);
-        let content_len = Self::line_content_len_chars(tab.buffer.rope(), target_line);
-
-        let target_char = line_start_char + col.min(content_len);
-        let target_byte = tab.buffer.char_to_byte(target_char);
+        let rope = tab.buffer.rope();
+        let content_len = Self::line_content_len_chars(rope, target_line);
+        let content = rope.line(target_line).slice(..content_len);
+        let target_byte = rope.line_to_byte(target_line) + byte_offset(content);
 
         let primary = tab.cursors.primary_mut();
         if select {
@@ -48,38 +64,25 @@ impl Editor {
     pub fn select_word_at_cursor(&mut self) {
         let tab = &mut self.tabs[self.active_tab];
         let head = tab.cursors.primary().head;
-        let len = tab.buffer.len_bytes();
-        if len == 0 {
-            return;
-        }
+        let rope = tab.buffer.rope();
+        let is_word_char = |byte| {
+            let c = rope.char(rope.byte_to_char(byte));
+            c.is_alphanumeric() || c == '_'
+        };
 
-        let char_idx = tab.buffer.byte_to_char(head);
-        let total_chars = tab.buffer.len_chars();
-
-        // Scan backwards
-        let mut start_char = char_idx;
-        while start_char > 0 {
-            let prev_c = tab.buffer.rope().char(start_char - 1);
-            if prev_c.is_alphanumeric() || prev_c == '_' {
-                start_char -= 1;
-            } else {
+        let mut start_byte = head;
+        while start_byte > 0 {
+            let previous = visual::previous_boundary(rope, start_byte);
+            if !is_word_char(previous) {
                 break;
             }
+            start_byte = previous;
         }
 
-        // Scan forwards
-        let mut end_char = char_idx;
-        while end_char < total_chars {
-            let c = tab.buffer.rope().char(end_char);
-            if c.is_alphanumeric() || c == '_' {
-                end_char += 1;
-            } else {
-                break;
-            }
+        let mut end_byte = head;
+        while end_byte < rope.len_bytes() && is_word_char(end_byte) {
+            end_byte = visual::next_boundary(rope, end_byte);
         }
-
-        let start_byte = tab.buffer.char_to_byte(start_char);
-        let end_byte = tab.buffer.char_to_byte(end_char);
 
         let primary = tab.cursors.primary_mut();
         primary.anchor = start_byte;
@@ -123,18 +126,7 @@ impl Editor {
         }
 
         if primary.head > 0 {
-            let char_idx = tab.buffer.byte_to_char(primary.head);
-            let rope = tab.buffer.rope();
-            let target_char = if char_idx >= 2
-                && rope.char(char_idx - 1) == '\n'
-                && rope.char(char_idx - 2) == '\r'
-            {
-                char_idx - 2
-            } else {
-                char_idx - 1
-            };
-            let prev_byte = tab.buffer.char_to_byte(target_char);
-            let primary = tab.cursors.primary_mut();
+            let prev_byte = visual::previous_boundary(tab.buffer.rope(), primary.head);
             if select {
                 primary.select_to(prev_byte);
             } else {
@@ -154,19 +146,7 @@ impl Editor {
         }
 
         if primary.head < tab.buffer.len_bytes() {
-            let char_idx = tab.buffer.byte_to_char(primary.head);
-            let total_chars = tab.buffer.len_chars();
-            let rope = tab.buffer.rope();
-            let target_char = if char_idx + 1 < total_chars
-                && rope.char(char_idx) == '\r'
-                && rope.char(char_idx + 1) == '\n'
-            {
-                char_idx + 2
-            } else {
-                char_idx + 1
-            };
-            let next_byte = tab.buffer.char_to_byte(target_char);
-            let primary = tab.cursors.primary_mut();
+            let next_byte = visual::next_boundary(tab.buffer.rope(), primary.head);
             if select {
                 primary.select_to(next_byte);
             } else {

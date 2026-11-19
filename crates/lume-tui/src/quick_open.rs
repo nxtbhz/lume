@@ -2,7 +2,22 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::split::PaneRect;
+use lume_core::buffer::LINE_BREAKS;
 use lume_core::fuzzy::fuzzy_match;
+
+pub(crate) const HEADER_ROWS: usize = 3;
+
+pub(crate) fn layout(term_w: usize, term_h: usize) -> PaneRect {
+    let width = (term_w * 3 / 4).clamp(50, 84).min(term_w);
+    let height = term_h.saturating_sub(4).clamp(6, 14).min(term_h);
+    PaneRect {
+        left: (term_w - width) / 2,
+        top: 3.min((term_h - height) / 2),
+        width,
+        height,
+    }
+}
 
 /// A workspace file entry indexed for Quick Open.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,12 +129,8 @@ impl QuickOpenState {
             self.filtered = matches;
         }
 
-        if self.filtered.is_empty() {
-            self.selected_idx = 0;
-            self.scroll_offset = 0;
-        } else if self.selected_idx >= self.filtered.len() {
-            self.selected_idx = self.filtered.len() - 1;
-        }
+        self.selected_idx = self.selected_idx.min(self.filtered.len().saturating_sub(1));
+        self.scroll_offset = self.scroll_offset.min(self.selected_idx);
     }
 
     /// Handles typing a character into the query.
@@ -150,11 +161,7 @@ impl QuickOpenState {
 
     /// Handles pasting text into the query, sanitizing to a single line.
     pub fn handle_paste(&mut self, text: &str) {
-        let single_line = text
-            .lines()
-            .next()
-            .unwrap_or("")
-            .trim_matches(&['\r', '\n'][..]);
+        let single_line = text.split(LINE_BREAKS).next().unwrap_or("");
         if single_line.is_empty() {
             return;
         }
@@ -168,6 +175,14 @@ impl QuickOpenState {
         self.cursor_pos += paste_len;
         self.query = chars.into_iter().collect();
         self.update_filter();
+    }
+
+    pub(crate) fn visible_offset(&self, box_height: usize) -> usize {
+        let list_height = box_height.saturating_sub(HEADER_ROWS);
+        self.scroll_offset.max(
+            self.selected_idx
+                .saturating_sub(list_height.saturating_sub(1)),
+        )
     }
 
     /// Moves selection up.

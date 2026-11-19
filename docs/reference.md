@@ -52,6 +52,10 @@ Modeless mode is active on startup (`modal_enabled = false`, `crates/lume-tui/sr
 
 Copy (`Ctrl+C`), cut (`Ctrl+X`), and Vim yank operations build ANSI OSC 52 escape sequences up to `MAX_OSC52_BYTES = 10 MiB` (`crates/lume-core/src/clipboard.rs:41`). When `$TMUX` is set or `$TERM` starts with `screen` or `tmux`, `osc52_sequence_auto` wraps the sequence in tmux DCS passthrough (`\x1bPtmux;...\x1b\\`, `crates/lume-core/src/clipboard.rs:66-72`).
 
+Use `Ctrl+C` and `Ctrl+V` for Lume's internal clipboard. These shortcuts work with standard terminal input and need no keyboard extensions. You can also run **Edit: Copy** and **Edit: Paste** from the command palette.
+
+Lume accepts `Ctrl+Shift+C` when it receives the key. The terminal controls its own shortcuts and can handle the key before it reaches Lume. Copying to other applications requires the terminal to accept OSC 52. Use your terminal's paste action to paste from the system clipboard.
+
 ## Key chords and modal Vim mode
 
 Pressing `Ctrl+K` sets `pending_chord = Some('k')` until the next key (`crates/lume-tui/src/input/key.rs:45-71`).

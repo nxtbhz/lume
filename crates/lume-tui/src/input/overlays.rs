@@ -351,13 +351,6 @@ impl App {
                 }
                 self.prompt = Some(prompt);
             }
-            KeyCode::Char('v') if ctrl && !alt => {
-                if let Some(clip) = self.editor.clipboard() {
-                    let single_line = clip.lines().next().unwrap_or("");
-                    prompt.insert_str(single_line);
-                }
-                self.prompt = Some(prompt);
-            }
             KeyCode::Char(c) if !ctrl && !alt => {
                 prompt.handle_char(c);
                 self.prompt = Some(prompt);
@@ -568,18 +561,6 @@ impl App {
                 }
                 self.search_state = Some(state);
             }
-            KeyCode::Char('v') if ctrl && !alt => {
-                if let Some(clip) = self.editor.clipboard() {
-                    let single_line = clip.lines().next().unwrap_or("");
-                    for c in single_line.chars() {
-                        state.handle_char(c);
-                    }
-                    if state.active_field == SearchField::Query {
-                        self.update_search_query(&mut state);
-                    }
-                }
-                self.search_state = Some(state);
-            }
             KeyCode::Char(c) if !ctrl && !alt => {
                 state.handle_char(c);
                 if state.active_field == SearchField::Query {
@@ -626,13 +607,6 @@ impl App {
             KeyCode::Backspace => {
                 self.palette_query.pop();
                 self.palette_selected = 0;
-            }
-            KeyCode::Char('v') if ctrl && !alt => {
-                if let Some(clip) = self.editor.clipboard() {
-                    let single_line = clip.lines().next().unwrap_or("");
-                    self.palette_query.push_str(single_line);
-                    self.palette_selected = 0;
-                }
             }
             KeyCode::Char(c) if !ctrl && !alt => {
                 self.palette_query.push(c);
@@ -714,6 +688,10 @@ impl App {
     ) -> std::io::Result<()> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let visible_rows =
+            crate::quick_open::layout(self.terminal_width as usize, self.terminal_height as usize)
+                .height
+                .saturating_sub(crate::quick_open::HEADER_ROWS);
 
         match key.code {
             KeyCode::Esc => {
@@ -725,7 +703,7 @@ impl App {
                 self.quick_open = Some(state);
             }
             KeyCode::Down => {
-                state.move_down(10);
+                state.move_down(visible_rows);
                 self.quick_open = Some(state);
             }
             KeyCode::PageUp => {
@@ -736,7 +714,7 @@ impl App {
             }
             KeyCode::PageDown => {
                 for _ in 0..10 {
-                    state.move_down(10);
+                    state.move_down(visible_rows);
                 }
                 self.quick_open = Some(state);
             }
@@ -751,12 +729,6 @@ impl App {
             }
             KeyCode::Backspace => {
                 state.handle_backspace();
-                self.quick_open = Some(state);
-            }
-            KeyCode::Char('v') if ctrl && !alt => {
-                if let Some(clip) = self.editor.clipboard() {
-                    state.handle_paste(clip);
-                }
                 self.quick_open = Some(state);
             }
             KeyCode::Char(c) if !ctrl && !alt => {

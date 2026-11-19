@@ -8,6 +8,7 @@ use crossterm::{
 };
 
 use crate::app::{ActiveFocus, App};
+use crate::render::text::{display_width, fit_text};
 use crate::vim::VimMode;
 
 pub fn render_status_bar<W: Write>(
@@ -112,8 +113,8 @@ pub fn render_status_bar<W: Write>(
             let rest_left = format!(" {}", core_info);
             let badge_prefix_len =
                 prefix.chars().count() + badge_str.chars().count() + suffix_badge.chars().count();
-            let left_len = badge_prefix_len + rest_left.chars().count();
-            let spaces = width.saturating_sub(left_len + right_status.chars().count());
+            let left_len = badge_prefix_len + display_width(&rest_left);
+            let spaces = width.saturating_sub(left_len + display_width(&right_status));
             let tail = format!(
                 "{}{:spaces$}{}",
                 rest_left,
@@ -122,12 +123,9 @@ pub fn render_status_bar<W: Write>(
                 spaces = spaces
             );
             let tail_cap = width.saturating_sub(badge_prefix_len);
-            let tail_trimmed: String = tail.chars().take(tail_cap).collect();
-
             if width < badge_prefix_len {
                 let full_badge = format!("{}{}{}", prefix, badge_str, suffix_badge);
-                let trimmed: String = full_badge.chars().take(width).collect();
-                queue!(writer, Print(trimmed), ResetColor)?;
+                queue!(writer, Print(fit_text(&full_badge, width)), ResetColor)?;
             } else {
                 queue!(
                     writer,
@@ -138,7 +136,7 @@ pub fn render_status_bar<W: Write>(
                     SetBackgroundColor(Color::DarkBlue),
                     SetForegroundColor(Color::White),
                     Print(suffix_badge),
-                    Print(tail_trimmed),
+                    Print(fit_text(&tail, tail_cap)),
                     ResetColor
                 )?;
             }
@@ -146,7 +144,7 @@ pub fn render_status_bar<W: Write>(
             let left_status = format!(" LUME │ {}", core_info);
 
             let spaces =
-                width.saturating_sub(left_status.chars().count() + right_status.chars().count());
+                width.saturating_sub(display_width(&left_status) + display_width(&right_status));
             let bar = format!(
                 "{}{:width$}{}",
                 left_status,
@@ -154,8 +152,7 @@ pub fn render_status_bar<W: Write>(
                 right_status,
                 width = spaces
             );
-            let bar_trimmed: String = bar.chars().take(width).collect();
-            queue!(writer, Print(bar_trimmed), ResetColor)?;
+            queue!(writer, Print(fit_text(&bar, width)), ResetColor)?;
         }
     }
     Ok(())

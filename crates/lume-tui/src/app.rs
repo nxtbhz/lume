@@ -11,6 +11,7 @@ use crate::explorer::FileExplorer;
 use crate::prompt::InputPrompt;
 use crate::search::{SearchField, SearchState};
 use crate::vim::VimState;
+use lume_core::buffer::LINE_BREAKS;
 use lume_core::{Editor, TextBuffer};
 use lume_syntax::{ByteDelta, HighlightToken, Language, SyntaxRequest, SyntaxWorker};
 
@@ -348,50 +349,61 @@ impl App {
 
     pub fn handle_paste_text(&mut self, text: &str) {
         self.editor.set_clipboard(text.to_string());
-        let single_line = text.lines().next().unwrap_or("");
-        if let Some(mut qo) = self.quick_open.take() {
-            qo.handle_paste(single_line);
-            self.quick_open = Some(qo);
-        } else if self.palette_open {
-            self.palette_query.push_str(single_line);
-            self.palette_selected = 0;
+        if self.has_paste_overlay() {
+            self.paste_into_overlay(text);
+        } else {
+            self.paste_into_editor(text);
+        }
+    }
+
+    pub(crate) fn has_paste_overlay(&self) -> bool {
+        self.prompt.is_some()
+            || self.search_state.is_some()
+            || self.quick_open.is_some()
+            || self.palette_open
+    }
+
+    pub(crate) fn paste_into_overlay(&mut self, text: &str) {
+        let line = text.split(LINE_BREAKS).next().unwrap_or("");
+        if let Some(prompt) = &mut self.prompt {
+            prompt.insert_str(line);
         } else if let Some(mut state) = self.search_state.take() {
-            for c in single_line.chars() {
-                state.handle_char(c);
-            }
+            state.insert_str(line);
             if state.active_field == SearchField::Query {
                 self.update_search_query(&mut state);
+                self.adjust_viewport();
             }
             self.search_state = Some(state);
-            self.adjust_viewport();
-        } else if let Some(mut prompt) = self.prompt.take() {
-            prompt.insert_str(single_line);
-            self.prompt = Some(prompt);
-        } else {
-            let tab_id = self.editor.active_tab().id;
-            let cursor = *self.editor.cursors().primary();
-            let len_before = self.editor.buffer().len_bytes();
-            let start = cursor.min();
-            let old_len = if cursor.is_selection() {
-                cursor.max() - cursor.min()
-            } else {
-                0
-            };
-            let _ = self.editor.insert_str(text);
-            let len_after = self.editor.buffer().len_bytes();
-            let new_len =
-                (len_after as isize - len_before as isize + old_len as isize).max(0) as usize;
-            self.shift_syntax_for_delta(tab_id, start, old_len, new_len);
-            if self.modal_enabled && self.vim_state.mode == crate::vim::VimMode::Visual {
-                self.vim_state.set_mode(crate::vim::VimMode::Normal);
-            }
-            self.adjust_viewport();
+        } else if let Some(state) = &mut self.quick_open {
+            state.handle_paste(line);
+        } else if self.palette_open {
+            self.palette_query.push_str(line);
+            self.palette_selected = 0;
         }
+    }
+
+    pub(crate) fn paste_into_editor(&mut self, text: &str) -> bool {
+        let tab_id = self.editor.active_tab().id;
+        let cursor = *self.editor.cursors().primary();
+        let single_cursor = self.editor.cursors().cursors().len() == 1;
+        if self.editor.insert_str(text).is_err() {
+            return false;
+        }
+        if single_cursor {
+            self.shift_syntax_for_delta(tab_id, cursor.min(), cursor.range().len(), text.len());
+        } else {
+            self.syntax_cache.remove(&tab_id);
+        }
+        if self.modal_enabled && self.vim_state.mode == crate::vim::VimMode::Visual {
+            self.vim_state.set_mode(crate::vim::VimMode::Normal);
+        }
+        self.adjust_viewport();
+        true
     }
 
     pub fn explorer_width(&self) -> usize {
         if self.explorer.is_visible {
-            self.explorer.width
+            self.explorer.width.min(self.terminal_width as usize)
         } else {
             0
         }
@@ -435,7 +447,7 @@ impl App {
     }
 
     pub fn adjust_viewport(&mut self) {
-        let (cursor_row, cursor_col) = self.editor.cursor_line_col();
+        let (cursor_row, cursor_col) = self.editor.cursor_visual_line_col();
         let (height, width) = if self.splits.is_split {
             let area_w = (self.terminal_width as usize).saturating_sub(self.explorer_width());
             let (p0, _, p1) = self.splits.layout(
@@ -652,15 +664,17 @@ impl App {
     pub fn has_pending_syntax_response(&mut self) -> bool {
         let mut updated = false;
         while let Some(res) = self.syntax_worker.try_recv_response() {
-            let is_newer = self
-                .syntax_cache
-                .get(&res.buffer_id)
-                .map(|(rev, _)| res.revision >= *rev)
-                .unwrap_or(true);
-            if is_newer {
+            if self.syntax_in_flight.get(&res.buffer_id) == Some(&res.revision) {
+                self.syntax_in_flight.remove(&res.buffer_id);
+            }
+            if self
+                .editor
+                .tabs()
+                .iter()
+                .any(|tab| tab.id == res.buffer_id && tab.revision == res.revision)
+            {
                 self.syntax_cache
                     .insert(res.buffer_id, (res.revision, Arc::new(res.tokens)));
-                self.syntax_in_flight.remove(&res.buffer_id);
                 let is_visible = res.buffer_id == self.editor.active_tab().id
                     || (self.splits.is_split
                         && self.splits.panes.iter().any(|p| {

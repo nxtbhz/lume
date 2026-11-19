@@ -1,9 +1,8 @@
 use crossterm::style::Color;
 
 use crate::explorer::FileExplorer;
-use crate::render::explorer::{
-    char_display_width, display_width, get_file_color, get_file_icon, truncate_to_width,
-};
+use crate::render::explorer::{get_file_color, get_file_icon};
+use crate::render::text::{display_width, fit_text};
 use crate::tests::TestDir;
 
 #[test]
@@ -37,12 +36,8 @@ fn test_explorer_unicode_icon_border_alignment() {
         } else {
             get_file_icon(name)
         };
-        let prefix = format!("  {}", icon);
-        let avail_name = content_w.saturating_sub(display_width(&prefix));
-        let name_truncated = truncate_to_width(name, avail_name);
-        let line_text = format!("{}{}", prefix, name_truncated);
-        let line_fill = content_w.saturating_sub(display_width(&line_text));
-        let formatted = format!("{}{:fill$}│", line_text, "", fill = line_fill);
+        let line_text = fit_text(&format!("  {icon}{name}"), content_w);
+        let formatted = format!("{line_text}│");
         assert_eq!(
             display_width(&formatted),
             content_w + 1,
@@ -221,9 +216,7 @@ fn test_explorer_file_colors_and_char_width() {
     assert_eq!(get_file_color("Makefile"), Color::White);
     assert_eq!(get_file_color("no_ext"), Color::White);
 
-    assert_eq!(char_display_width('a'), 1);
-    assert_eq!(char_display_width('\0'), 0);
-    assert_eq!(char_display_width('\u{0080}'), 0);
+    assert_eq!(fit_text("a\0\u{0080}", 3), "a��");
 }
 
 #[test]
@@ -279,22 +272,30 @@ fn test_explorer_navigation_click_and_render() {
 
     // Render explorer
     let mut buf = Vec::new();
-    assert!(explorer.render(&mut buf, 0, 24, true).is_ok());
+    assert!(explorer
+        .render(&mut buf, 0, 24, explorer.width, true)
+        .is_ok());
     assert!(!buf.is_empty());
 
     buf.clear();
-    assert!(explorer.render(&mut buf, 0, 24, false).is_ok());
+    assert!(explorer
+        .render(&mut buf, 0, 24, explorer.width, false)
+        .is_ok());
 
     // Invisible render
     explorer.is_visible = false;
     buf.clear();
-    assert!(explorer.render(&mut buf, 0, 24, false).is_ok());
+    assert!(explorer
+        .render(&mut buf, 0, 24, explorer.width, false)
+        .is_ok());
     assert!(buf.is_empty());
 
     // Zero height render
     explorer.is_visible = true;
     buf.clear();
-    assert!(explorer.render(&mut buf, 0, 0, false).is_ok());
+    assert!(explorer
+        .render(&mut buf, 0, 0, explorer.width, false)
+        .is_ok());
     assert!(buf.is_empty());
 }
 

@@ -1,4 +1,4 @@
-use crate::buffer::{BufferError, TextBuffer};
+use crate::buffer::{visual, BufferError, TextBuffer, LINE_BREAKS};
 use crate::editor::Editor;
 
 impl Editor {
@@ -102,8 +102,8 @@ impl Editor {
             .buffer
             .slice_to_cow(line_start_byte, line_end_byte)
             .into_owned();
-        if !yanked.ends_with('\n') {
-            yanked.push('\n');
+        if !yanked.ends_with(LINE_BREAKS) {
+            yanked.push_str(tab.line_ending.as_str());
         }
         yanked
     }
@@ -142,10 +142,10 @@ impl Editor {
                 if head < total_bytes {
                     let char_idx = tab.buffer.byte_to_char(head);
                     let ch = tab.buffer.rope().char(char_idx);
-                    if ch == '\n' || ch == '\r' {
+                    if LINE_BREAKS.contains(&ch) {
                         (head, head)
                     } else {
-                        let next_byte = tab.buffer.char_to_byte(char_idx + 1);
+                        let next_byte = visual::next_boundary(tab.buffer.rope(), head);
                         (next_byte, next_byte)
                     }
                 } else {
@@ -155,19 +155,30 @@ impl Editor {
         };
 
         let mut deltas = Vec::new();
-        let text_to_insert = if linewise && insert_byte == tab.buffer.len_bytes() && insert_byte > 0
+        let mut text_to_insert = String::new();
+        let line_ending = tab.line_ending.as_str();
+        let rope = tab.buffer.rope();
+        if linewise
+            && insert_byte == tab.buffer.len_bytes()
+            && insert_byte > 0
+            && !LINE_BREAKS.contains(&rope.char(rope.len_chars() - 1))
         {
-            let last_c = tab.buffer.rope().char(tab.buffer.len_chars() - 1);
-            if last_c != '\n' {
-                let mut s = String::from(tab.line_ending.as_str());
-                s.push_str(text);
-                s
-            } else {
-                text.to_string()
-            }
-        } else {
-            text.to_string()
-        };
+            text_to_insert.push_str(line_ending);
+        }
+        // Keep adjacent line breaks distinct when a paste joins CR and LF.
+        if linewise
+            && text.starts_with('\n')
+            && insert_byte > 0
+            && rope.byte(insert_byte - 1) == b'\r'
+        {
+            text_to_insert.push('\r');
+        }
+        text_to_insert.push_str(text);
+        if linewise && !text.ends_with(LINE_BREAKS) {
+            text_to_insert.push_str(line_ending);
+        } else if linewise && text.ends_with('\r') && rope.get_byte(insert_byte) == Some(b'\n') {
+            text_to_insert.push('\n');
+        }
 
         let delta = tab.buffer.insert(insert_byte, &text_to_insert)?;
         deltas.push(delta);

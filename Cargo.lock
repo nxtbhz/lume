@@ -533,6 +533,7 @@ dependencies = [
  "proptest",
  "ropey",
  "thiserror",
+ "unicode-segmentation",
  "unicode-width",
 ]
 

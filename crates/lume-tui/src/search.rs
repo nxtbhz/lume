@@ -3,8 +3,10 @@ use crossterm::{
     queue,
     style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
 };
-use lume_core::Cursor;
+use lume_core::{buffer::visual, Cursor};
 use std::io::Write;
+
+use crate::render::text::{display_width, fit_text};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SearchMode {
@@ -90,16 +92,16 @@ impl SearchState {
     }
 
     pub fn handle_char(&mut self, c: char) {
-        match self.active_field {
-            SearchField::Query => {
-                self.query.insert(self.query_cursor, c);
-                self.query_cursor += c.len_utf8();
-            }
-            SearchField::Replacement => {
-                self.replacement.insert(self.replacement_cursor, c);
-                self.replacement_cursor += c.len_utf8();
-            }
-        }
+        self.insert_str(c.encode_utf8(&mut [0; 4]));
+    }
+
+    pub(crate) fn insert_str(&mut self, text: &str) {
+        let (field, cursor) = match self.active_field {
+            SearchField::Query => (&mut self.query, &mut self.query_cursor),
+            SearchField::Replacement => (&mut self.replacement, &mut self.replacement_cursor),
+        };
+        field.insert_str(*cursor, text);
+        *cursor += text.len();
     }
 
     pub fn handle_backspace(&mut self) {
@@ -203,6 +205,9 @@ impl SearchState {
         row: u16,
     ) -> std::io::Result<()> {
         let width = terminal_width as usize;
+        if width == 0 {
+            return Ok(());
+        }
         let bg_color = Color::Rgb {
             r: 24,
             g: 28,
@@ -216,12 +221,9 @@ impl SearchState {
             SetForegroundColor(Color::White)
         )?;
 
-        let cursor_col: usize;
-
-        match self.mode {
+        let (content, hints, cursor_byte) = match self.mode {
             SearchMode::Find => {
                 let prefix = " Find: ";
-                let query_display = &self.query;
                 let status_text = if self.query.is_empty() {
                     " (Type to search) ".to_string()
                 } else if self.match_count == 0 {
@@ -230,17 +232,8 @@ impl SearchState {
                     format!(" [{}/{}] ", self.active_match_idx + 1, self.match_count)
                 };
                 let hints = " (Enter/F3: Next, Shift+Enter/Shift+F3: Prev, Esc: Cancel) ";
-
-                cursor_col =
-                    prefix.chars().count() + self.query[..self.query_cursor].chars().count();
-
-                let left_content = format!("{}{}{}", prefix, query_display, status_text);
-                let spaces =
-                    width.saturating_sub(left_content.chars().count() + hints.chars().count());
-                let full_bar = format!("{}{:spaces$}{}", left_content, "", hints, spaces = spaces);
-                let trimmed: String = full_bar.chars().take(width).collect();
-
-                queue!(writer, Print(trimmed), ResetColor)?;
+                let content = format!("{prefix}{}{status_text}", self.query);
+                (content, hints, prefix.len() + self.query_cursor)
             }
             SearchMode::Replace => {
                 let find_prefix = if self.active_field == SearchField::Query {
@@ -264,32 +257,32 @@ impl SearchState {
 
                 let hints = " (Enter: Replace, Ctrl+Alt+Enter: All, Tab: Field, Esc: Cancel) ";
 
-                if self.active_field == SearchField::Query {
-                    cursor_col = find_prefix.chars().count()
-                        + self.query[..self.query_cursor].chars().count();
+                let cursor_byte = if self.active_field == SearchField::Query {
+                    find_prefix.len() + self.query_cursor
                 } else {
-                    cursor_col = find_prefix.chars().count()
-                        + self.query.chars().count()
-                        + replace_prefix.chars().count()
-                        + self.replacement[..self.replacement_cursor].chars().count();
-                }
-
-                let left_content = format!(
-                    "{}{}{}{}{}",
-                    find_prefix, self.query, replace_prefix, self.replacement, status_text
+                    find_prefix.len()
+                        + self.query.len()
+                        + replace_prefix.len()
+                        + self.replacement_cursor
+                };
+                let content = format!(
+                    "{find_prefix}{}{replace_prefix}{}{status_text}",
+                    self.query, self.replacement
                 );
-                let spaces =
-                    width.saturating_sub(left_content.chars().count() + hints.chars().count());
-                let full_bar = format!("{}{:spaces$}{}", left_content, "", hints, spaces = spaces);
-                let trimmed: String = full_bar.chars().take(width).collect();
-
-                queue!(writer, Print(trimmed), ResetColor)?;
+                (content, hints, cursor_byte)
             }
-        }
+        };
 
-        // Position terminal cursor in active field
-        let safe_col = (cursor_col as u16).min(terminal_width.saturating_sub(1));
-        queue!(writer, MoveTo(safe_col, row), Show)?;
+        let spaces = width.saturating_sub(display_width(&content) + display_width(hints));
+        let bar = format!("{content}{:spaces$}{hints}", "");
+        let cursor_col = visual::column_at_byte(&content, cursor_byte).min(width - 1) as u16;
+        queue!(
+            writer,
+            Print(fit_text(&bar, width)),
+            ResetColor,
+            MoveTo(cursor_col, row),
+            Show
+        )?;
 
         Ok(())
     }

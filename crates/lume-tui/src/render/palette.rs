@@ -7,10 +7,14 @@ use crossterm::{
 };
 
 use crate::app::App;
+use crate::render::text::{display_width, fit_text};
 
 pub fn render_command_palette<W: Write>(app: &App, writer: &mut W) -> std::io::Result<()> {
-    let box_w = (app.terminal_width as usize).clamp(36, 68);
-    let box_h = 11;
+    let box_w = (app.terminal_width as usize).min(68);
+    let box_h = 11.min(app.terminal_height as usize);
+    if box_w == 0 || box_h == 0 {
+        return Ok(());
+    }
     let start_x = (app.terminal_width as usize).saturating_sub(box_w) / 2;
     let start_y = (app.terminal_height as usize).saturating_sub(box_h) / 3;
 
@@ -35,21 +39,17 @@ pub fn render_command_palette<W: Write>(app: &App, writer: &mut W) -> std::io::R
 
         if y == 0 {
             let title = " Command Palette (Esc to close) ";
-            let title_fit: String = title.chars().take(box_w).collect();
-            let fill = box_w.saturating_sub(title_fit.chars().count());
             queue!(
                 writer,
                 SetForegroundColor(Color::Cyan),
-                Print(format!("{}{:fill$}", title_fit, "", fill = fill))
+                Print(fit_text(title, box_w))
             )?;
         } else if y == 1 {
             let prompt = format!(" > {}█", app.palette_query);
-            let prompt_fit: String = prompt.chars().take(box_w).collect();
-            let fill = box_w.saturating_sub(prompt_fit.chars().count());
             queue!(
                 writer,
                 SetForegroundColor(Color::White),
-                Print(format!("{}{:fill$}", prompt_fit, "", fill = fill))
+                Print(fit_text(&prompt, box_w))
             )?;
         } else if y == 2 {
             queue!(
@@ -64,13 +64,6 @@ pub fn render_command_palette<W: Write>(app: &App, writer: &mut W) -> std::io::R
                 let prefix = if is_sel { " > " } else { "   " };
                 let title = item.title;
                 let shortcut = item.shortcut;
-
-                let prefix_chars = prefix.chars().count();
-                let shortcut_chars = shortcut.chars().count();
-                let avail = box_w.saturating_sub(prefix_chars + shortcut_chars + 2);
-                let title_fit: String = title.chars().take(avail).collect();
-                let title_chars = title_fit.chars().count();
-                let spaces = box_w.saturating_sub(prefix_chars + title_chars + shortcut_chars + 1);
 
                 if is_sel {
                     queue!(
@@ -90,17 +83,19 @@ pub fn render_command_palette<W: Write>(app: &App, writer: &mut W) -> std::io::R
                     )?;
                 }
 
-                queue!(
-                    writer,
-                    Print(format!(
-                        "{}{}{:spaces$}{} ",
-                        prefix,
-                        title_fit,
-                        "",
-                        shortcut,
-                        spaces = spaces
-                    ))
-                )?;
+                let label = format!("{prefix}{title}");
+                let shortcut_width = display_width(shortcut) + 2;
+                if shortcut_width + prefix.len() < box_w && !shortcut.is_empty() {
+                    queue!(
+                        writer,
+                        Print(fit_text(&label, box_w - shortcut_width)),
+                        Print(" "),
+                        Print(shortcut),
+                        Print(" ")
+                    )?;
+                } else {
+                    queue!(writer, Print(fit_text(&label, box_w)))?;
+                }
             } else {
                 queue!(writer, Print(" ".repeat(box_w)))?;
             }

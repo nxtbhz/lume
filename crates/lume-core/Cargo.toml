@@ -10,6 +10,7 @@ ropey.workspace = true
 crossbeam-channel.workspace = true
 thiserror.workspace = true
 unicode-width.workspace = true
+unicode-segmentation.workspace = true
 
 
 [dev-dependencies]

@@ -1,6 +1,9 @@
 use crate::app::{ActiveFocus, App};
+use crate::quick_open::{self, HEADER_ROWS};
+use crate::render::tab_bar::tab_label;
 use crate::split::HitTarget;
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+use lume_core::buffer::visual;
 use lume_core::TextBuffer;
 use std::time::{Duration, Instant};
 
@@ -10,22 +13,19 @@ impl App {
         let row = mouse.row as usize;
 
         if let Some(mut state) = self.quick_open.take() {
-            let term_w = self.terminal_width as usize;
-            let term_h = self.terminal_height as usize;
-            let box_w = (term_w * 3 / 4).clamp(50, 84).min(term_w);
-            let box_h = 14.min(term_h.saturating_sub(4)).max(6);
-            let start_x = term_w.saturating_sub(box_w) / 2;
-            let start_y = 3.min(term_h.saturating_sub(box_h) / 2);
+            let rect =
+                quick_open::layout(self.terminal_width as usize, self.terminal_height as usize);
 
             match mouse.kind {
                 MouseEventKind::Down(MouseButton::Left) => {
-                    if col >= start_x
-                        && col < start_x + box_w
-                        && row >= start_y
-                        && row < start_y + box_h
+                    if col >= rect.left
+                        && col < rect.left + rect.width
+                        && row >= rect.top
+                        && row < rect.top + rect.height
                     {
-                        if row >= start_y + 3 {
-                            let item_idx = state.scroll_offset + (row - (start_y + 3));
+                        let first_item_row = rect.top + HEADER_ROWS;
+                        if row >= first_item_row {
+                            let item_idx = state.visible_offset(rect.height) + row - first_item_row;
                             if item_idx < state.filtered.len() {
                                 state.selected_idx = item_idx;
                                 if let Some(item) = state.selected_item() {
@@ -54,7 +54,7 @@ impl App {
                     return Ok(true);
                 }
                 MouseEventKind::ScrollDown => {
-                    state.move_down(10);
+                    state.move_down(rect.height.saturating_sub(HEADER_ROWS));
                     self.quick_open = Some(state);
                     return Ok(true);
                 }
@@ -161,17 +161,17 @@ impl App {
 
                     if self.click_count == 2 {
                         self.editor
-                            .set_cursor_from_line_col(buffer_line, buffer_col, false);
+                            .set_cursor_from_visual_line_col(buffer_line, buffer_col, false);
                         self.editor.select_word_at_cursor();
                         self.mouse_dragging = false;
                     } else if self.click_count >= 3 {
                         self.editor
-                            .set_cursor_from_line_col(buffer_line, buffer_col, false);
+                            .set_cursor_from_visual_line_col(buffer_line, buffer_col, false);
                         self.editor.select_line_at_cursor();
                         self.mouse_dragging = false;
                     } else {
                         self.editor
-                            .set_cursor_from_line_col(buffer_line, buffer_col, false);
+                            .set_cursor_from_visual_line_col(buffer_line, buffer_col, false);
                         self.mouse_dragging = true;
                     }
                     self.sync_active_pane();
@@ -206,7 +206,7 @@ impl App {
                         (b_line, b_col)
                     };
                     self.editor
-                        .set_cursor_from_line_col(buffer_line, buffer_col, true);
+                        .set_cursor_from_visual_line_col(buffer_line, buffer_col, true);
                     self.sync_active_pane();
                     Ok(true)
                 } else {
@@ -304,15 +304,10 @@ impl App {
     pub fn handle_tab_bar_click(&mut self, col: usize) {
         let mut current_col = 0;
         for (i, tab) in self.editor.tabs().iter().enumerate() {
-            let dirty = if tab.is_dirty { "*" } else { "" };
-            let is_active = i == self.editor.active_tab_idx();
-            let tab_text = if is_active {
-                format!(" [ {}: {}{} x ] ", i + 1, tab.name(), dirty)
-            } else {
-                format!("  {}: {}{} x   ", i + 1, tab.name(), dirty)
-            };
-
-            let tab_len = tab_text.chars().count();
+            let label = tab_label(tab, i, i == self.editor.active_tab_idx());
+            let tab_len: usize = visual::graphemes_from(&label, current_col)
+                .map(|g| g.width)
+                .sum();
             if col >= current_col && col < current_col + tab_len {
                 // Check if clicked the 'x' button inside tab (always located 4 characters before the end)
                 let close_button_offset = tab_len.saturating_sub(4);
