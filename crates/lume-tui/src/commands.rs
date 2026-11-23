@@ -287,7 +287,13 @@ impl App {
             COMMANDS
                 .iter()
                 .filter(|c| {
-                    c.title.to_lowercase().contains(&q) || c.shortcut.to_lowercase().contains(&q)
+                    c.title.to_lowercase().contains(&q)
+                        || self
+                            .config
+                            .keymaps
+                            .shortcuts_for(c.id)
+                            .iter()
+                            .any(|s| s.to_lowercase().contains(&q))
                 })
                 .collect()
         }

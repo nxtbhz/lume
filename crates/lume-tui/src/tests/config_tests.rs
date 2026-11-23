@@ -229,3 +229,60 @@ preset = "vim"
     assert_eq!(app.vim_state.mode, crate::vim::VimMode::Normal);
     assert_eq!(app.editor.buffer().rope().to_string(), "jx");
 }
+
+#[test]
+fn which_key_and_palette_reflect_active_keymap_preset_and_overrides() {
+    let cfg = AppConfig::from_toml_str(
+        r#"
+[keymaps]
+preset = "minimal"
+
+[keymaps.global]
+"Space f" = "file.quick_open"
+"#,
+        crate::commands::is_valid_action_id,
+    )
+    .unwrap();
+
+    let mut app = App::open_targets_with_config(
+        CliTargets::default(),
+        LoadedConfig {
+            config: cfg,
+            path: None,
+            warning: None,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(app.shortcut_label_for_command("file.quick_open"), "Space f");
+    assert_eq!(app.shortcut_label_for_command("file.close_tab"), "");
+
+    let lines = crate::render::palette::build_which_key_lines(&app);
+    let joined = lines.join("\n");
+    assert!(joined.contains("Space f"));
+    assert!(!joined.contains("Ctrl+W"));
+
+    // Verify render_command_palette renders "Space f" in the ANSI buffer
+    app.open_command_palette();
+    let mut out = Vec::new();
+    crate::render::palette::render_command_palette(&app, &mut out).unwrap();
+    let rendered = String::from_utf8_lossy(&out);
+    assert!(rendered.contains("Space f"));
+
+    // Verify status bar reflects active keymap hints and pending key sequence
+    app.palette_open = false;
+    app.status_message = None;
+    app.terminal_width = 160;
+    let mut status_out = Vec::new();
+    crate::render::render_status_bar(&app, &mut status_out, 0).unwrap();
+    let status_text = String::from_utf8_lossy(&status_out);
+    assert!(status_text.contains("Space f: Quick Open"));
+    assert!(!status_text.contains("Ctrl+S: Save"));
+
+    app.pending_keys
+        .push(crate::config::KeyCombo::parse("Space").unwrap());
+    let mut pending_out = Vec::new();
+    crate::render::render_status_bar(&app, &mut pending_out, 0).unwrap();
+    let pending_text = String::from_utf8_lossy(&pending_out);
+    assert!(pending_text.contains("Keys: Space ..."));
+}

@@ -8,8 +8,30 @@ use crossterm::{
 };
 
 use crate::app::{ActiveFocus, App};
+use crate::config::format_key_sequence;
 use crate::render::text::{display_width, fit_text};
 use crate::vim::VimMode;
+
+fn default_status_hint(app: &App) -> String {
+    const HINTS: &[(&str, &str)] = &[
+        ("view.toggle_explorer", "Explorer"),
+        ("file.save", "Save"),
+        ("file.quick_open", "Quick Open"),
+        ("view.command_palette", "Palette"),
+        ("view.which_key", "Help"),
+    ];
+    let mut parts = Vec::new();
+    for (action_id, label) in HINTS {
+        if let Some(key) = app.config.keymaps.primary_shortcut_for(action_id) {
+            parts.push(format!("{key}: {label}"));
+        }
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", parts.join(" │ "))
+    }
+}
 
 pub fn render_status_bar<W: Write>(
     app: &App,
@@ -42,16 +64,16 @@ pub fn render_status_bar<W: Write>(
             "[Explorer OFF] "
         };
 
-        let right_status = if let Some((ref msg, time)) = app.status_message {
+        let right_status = if !app.pending_keys.is_empty() {
+            format!("Keys: {} ... ", format_key_sequence(&app.pending_keys))
+        } else if let Some((ref msg, time)) = app.status_message {
             if time.elapsed() < Duration::from_secs(4) {
                 format!("{} ", msg)
             } else {
-                "F2: Explorer │ Ctrl+O: Open │ Ctrl+S: Save │ Ctrl+P: Quick Open │ F1: Help "
-                    .to_string()
+                default_status_hint(app)
             }
         } else {
-            "F2: Explorer │ Ctrl+O: Open │ Ctrl+S: Save │ Ctrl+P: Quick Open │ F1: Help "
-                .to_string()
+            default_status_hint(app)
         };
 
         let width = app.terminal_width as usize;

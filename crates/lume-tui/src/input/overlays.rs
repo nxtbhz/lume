@@ -4,7 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use lume_core::TextBuffer;
 use lume_syntax::Language;
 
-use crate::app::{ActiveFocus, App};
+use crate::app::App;
 use crate::prompt::{parse_goto_line, InputPrompt, PromptAction};
 use crate::search::{SearchField, SearchMode, SearchState};
 

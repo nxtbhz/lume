@@ -7,8 +7,8 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 pub use keymap::{
-    format_key_sequence, parse_key_sequence, KeyCombo, KeySequence, KeymapContext, KeymapPreset,
-    KeymapTable, LookupResult,
+    format_key_sequence, parse_key_sequence, KeyCombo, KeymapContext, KeymapPreset, KeymapTable,
+    LookupResult,
 };
 use toml_parser::{parse_toml_document, TomlEntry, TomlValue};
 
