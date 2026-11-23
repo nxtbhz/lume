@@ -137,8 +137,16 @@ impl SyntaxHighlighter {
 
     fn classify_node(&self, kind: &str, node: Node, text: &str) -> Option<TokenType> {
         match self.language {
-            Language::C => classify_c_node(kind, node, text),
-            Language::Cpp => classify_cpp_node(kind, node, text),
+            Language::C | Language::Cpp => match kind {
+                "preproc_include" | "preproc_def" | "preproc_function_def" => {
+                    Some(TokenType::Macro)
+                }
+                // Conditional nodes also contain the code they wrap.
+                "#if" | "#ifdef" | "#ifndef" | "#elif" | "#elifdef" | "#elifndef" | "#else"
+                | "#endif" => Some(TokenType::Macro),
+                _ if self.language == Language::C => classify_c_node(kind, node, text),
+                _ => classify_cpp_node(kind, node, text),
+            },
             Language::Rust => classify_rust_node(kind, node, text),
             Language::Python => classify_python_node(kind, node, text),
             Language::Java => classify_java_node(kind, node, text),
@@ -268,11 +276,6 @@ fn classify_c_node(kind: &str, node: Node, text: &str) -> Option<TokenType> {
         "string_literal" | "system_lib_string" | "char_literal" => Some(TokenType::String),
         "number_literal" => Some(TokenType::Number),
         "comment" => Some(TokenType::Comment),
-        "preproc_include"
-        | "preproc_def"
-        | "preproc_function_def"
-        | "preproc_ifdef"
-        | "preproc_if" => Some(TokenType::Macro),
         "identifier" => {
             if let Some(parent) = node.parent() {
                 if parent.kind() == "call_expression" || parent.kind() == "function_declarator" {
@@ -305,11 +308,6 @@ fn classify_cpp_node(kind: &str, node: Node, text: &str) -> Option<TokenType> {
         }
         "number_literal" => Some(TokenType::Number),
         "comment" => Some(TokenType::Comment),
-        "preproc_include"
-        | "preproc_def"
-        | "preproc_function_def"
-        | "preproc_ifdef"
-        | "preproc_if" => Some(TokenType::Macro),
         "identifier" | "field_identifier" => {
             if let Some(parent) = node.parent() {
                 if parent.kind() == "call_expression" || parent.kind() == "function_declarator" {

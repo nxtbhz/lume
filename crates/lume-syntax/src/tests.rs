@@ -20,6 +20,49 @@ fn test_c_highlighting() {
 }
 
 #[test]
+fn test_c_and_cpp_header_guards_preserve_syntax_highlighting() {
+    let code = "\
+#ifndef ARENA_H
+#define ARENA_H
+#include <stddef.h>
+struct region_t { size_t size; };
+# if 1
+void arena_destroy(void);
+#elif 0
+int arena_size(void);
+#else
+int arena_capacity(void);
+#endif
+#endif /* ARENA_H */
+";
+    for path in ["arena.h", "arena.hpp"] {
+        let mut highlighter = SyntaxHighlighter::new(Language::from_path(path).unwrap()).unwrap();
+        highlighter.update(code);
+        let tokens = highlighter.highlight_range(0, code.len(), code);
+
+        for (fragment, token_type) in [
+            ("#ifndef", TokenType::Macro),
+            ("# if", TokenType::Macro),
+            ("#elif", TokenType::Macro),
+            ("#else", TokenType::Macro),
+            ("#endif", TokenType::Macro),
+            ("struct", TokenType::Keyword),
+            ("size_t", TokenType::Type),
+            ("arena_destroy", TokenType::Function),
+            ("arena_size", TokenType::Function),
+            ("arena_capacity", TokenType::Function),
+            ("/* ARENA_H */", TokenType::Comment),
+        ] {
+            assert!(
+                tokens.iter().any(|token| token.token_type == token_type
+                    && &code[token.start_byte..token.end_byte] == fragment),
+                "{path}: expected {fragment:?} to be highlighted as {token_type:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn test_cpp_cuda_highlighting() {
     let code =
         "__global__ void addKernel(int* c, const int* a) {\n    int i = threadIdx.x;\n    c[i] = a[i];\n}";
