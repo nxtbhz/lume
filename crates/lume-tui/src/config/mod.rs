@@ -1,5 +1,6 @@
 //! Configuration parsing, keymap resolution, and settings schema for Lume.
 
+pub mod keymap;
 pub mod toml_parser;
 
 use std::path::PathBuf;
