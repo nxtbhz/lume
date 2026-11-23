@@ -1,6 +1,7 @@
 mod app;
 mod args;
 mod commands;
+mod config;
 mod explorer;
 mod input;
 mod prompt;
