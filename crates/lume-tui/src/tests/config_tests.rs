@@ -1,7 +1,7 @@
-use crate::app::App;
+use crate::app::{ActiveFocus, App};
 use crate::args::CliTargets;
 use crate::commands::is_valid_action_id;
-use crate::config::{AppConfig, KeymapPreset, LoadedConfig};
+use crate::config::{AppConfig, KeymapContext, KeymapPreset, LoadedConfig, LookupResult};
 use crate::tests::TestDir;
 
 #[test]
@@ -91,6 +91,10 @@ fn config_open_scaffolds_missing_file_and_config_reload_keeps_valid_config_on_er
     app.execute_command("config.open");
     assert!(cfg_path.exists());
     assert_eq!(app.editor.file_path(), Some(cfg_path.as_path()));
+    assert_eq!(
+        AppConfig::load_from_path(&cfg_path, is_valid_action_id).unwrap(),
+        AppConfig::default(),
+    );
 
     std::fs::write(&cfg_path, "[editor]\ntab_size = 999\n").unwrap();
     app.execute_command("config.reload");
@@ -101,6 +105,112 @@ fn config_open_scaffolds_missing_file_and_config_reload_keeps_valid_config_on_er
         .unwrap()
         .0
         .contains("Config error"));
+}
+
+#[test]
+fn startup_materializes_legacy_presets_and_preserves_custom_bindings() {
+    let dir = TestDir::new("lume_cfg_materialize");
+    let cfg_path = dir.path().join("config.toml");
+    let without_file =
+        AppConfig::load_startup_with_paths(None, Some(&cfg_path), false, is_valid_action_id)
+            .unwrap();
+    assert_eq!(without_file.config, AppConfig::default());
+    assert!(!cfg_path.exists());
+
+    for preset in ["default", "minimal", "vim"] {
+        let legacy = format!(
+            "\u{feff}# Keep my settings\r\n[editor]\r\ntab_size = 2\r\n\r\n[keymaps]\r\npreset = \"{preset}\"\r\n\r\n[keymaps.global] # keep this header\r\n'CTRL+w' = 'none'\r\n'Ctrl+K f' = 'file.quick_open'\r\n'Ctrl+K' = 'none'\r\n'Space f' = 'file.quick_open' # my shortcut"
+        );
+        std::fs::write(&cfg_path, &legacy).unwrap();
+        let expected = AppConfig::from_toml_str(&legacy, is_valid_action_id).unwrap();
+        let loaded = AppConfig::load_from_path(&cfg_path, is_valid_action_id).unwrap();
+        let migrated = std::fs::read_to_string(&cfg_path).unwrap();
+        assert!(migrated.starts_with("\u{feff}# Keep my settings\r\n[editor]\r\ntab_size = 2\r\n"));
+        assert!(migrated.contains("format = \"explicit\"\r\n"));
+        assert!(migrated.contains("[keymaps.global] # keep this header\r\n"));
+        assert!(migrated.contains("'CTRL+w' = 'none'\r\n"));
+        assert!(migrated.contains("# 'Ctrl+K f' = 'file.quick_open'\r\n'Ctrl+K' = 'none'"));
+        assert!(migrated.contains("'Space f' = 'file.quick_open' # my shortcut"));
+        assert!(migrated.contains("[keymaps.search]\r\n"));
+        assert_eq!(loaded.editor, expected.editor);
+        assert_eq!(loaded.preset, expected.preset);
+        for ctx in KeymapContext::all() {
+            assert_eq!(
+                loaded.keymaps.entries_for(ctx),
+                expected.keymaps.entries_for(ctx)
+            );
+        }
+        assert_eq!(
+            AppConfig::load_from_path(&cfg_path, is_valid_action_id).unwrap(),
+            loaded
+        );
+        assert_eq!(std::fs::read_to_string(&cfg_path).unwrap(), migrated);
+    }
+}
+
+#[test]
+fn explicit_keymaps_control_explorer_and_search_after_reload_and_restart() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let dir = TestDir::new("lume_cfg_disable");
+    let cfg_path = dir.path().join("config.toml");
+    let file = dir.path().join("notes.txt");
+    std::fs::write(&file, "test test").unwrap();
+    let original = crate::config::default_config_toml();
+    std::fs::write(&cfg_path, &original).unwrap();
+    let targets = CliTargets {
+        workspace: Some(dir.path().to_path_buf()),
+        files: vec![file],
+        config_path: Some(cfg_path.clone()),
+        ..CliTargets::default()
+    };
+    let mut app = App::open_targets(targets.clone()).unwrap();
+    let f2 = KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE);
+    app.focus = ActiveFocus::Explorer;
+    app.handle_key(f2).unwrap();
+    assert!(app.prompt.is_some());
+    app.prompt = None;
+
+    let edited = original
+        .replace("\"F2\" = \"explorer.rename\"", "\"F2\" = \"none\"")
+        .replace("\"F3\" = \"search.next\"", "\"F4\" = \"search.next\"")
+        .replace("\"Ctrl+W\" = \"file.close_tab\"\n", "");
+    std::fs::write(&cfg_path, &edited).unwrap();
+    app.execute_command("config.reload");
+
+    for mut app in [app, App::open_targets(targets).unwrap()] {
+        let ctrl_w = crate::config::parse_key_sequence("Ctrl+W").unwrap();
+        assert_eq!(
+            app.config.keymaps.lookup(KeymapContext::Global, &ctrl_w.0),
+            LookupResult::None,
+        );
+        app.focus = ActiveFocus::Explorer;
+        app.handle_key(f2).unwrap();
+        assert!(app.prompt.is_none());
+        assert!(app.explorer.is_visible);
+        assert_eq!(app.focus, ActiveFocus::Explorer);
+        app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE))
+            .unwrap();
+        assert!(app.prompt.take().is_some());
+        app.focus = ActiveFocus::Editor;
+        app.handle_key(f2).unwrap();
+        assert!(!app.explorer.is_visible);
+
+        app.editor.cursors_mut().set_single(0);
+        app.execute_command("edit.find");
+        for c in "test".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+                .unwrap();
+        }
+        let initial = app.editor.cursors().primary().range();
+        app.handle_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.editor.cursors().primary().range(), initial);
+        app.handle_key(KeyEvent::new(KeyCode::F(4), KeyModifiers::NONE))
+            .unwrap();
+        assert_ne!(app.editor.cursors().primary().range(), initial);
+    }
+    assert_eq!(std::fs::read_to_string(&cfg_path).unwrap(), edited);
 }
 
 #[test]

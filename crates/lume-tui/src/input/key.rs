@@ -28,43 +28,53 @@ impl App {
             return Ok(());
         }
 
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
-
         // 1. If Which-Key overlay is open, any key dismisses it
         if self.which_key_open {
             self.which_key_open = false;
-            if key.code == KeyCode::Esc || key.code == KeyCode::F(1) {
+            if self
+                .config
+                .keymaps
+                .local_action(KeymapContext::WhichKey, key)
+                .is_some()
+            {
                 return Ok(());
             }
         }
 
-        if ctrl && !alt && matches!(key.code, KeyCode::Char('v' | 'V')) && self.has_paste_overlay()
-        {
-            if let Some(text) = self.editor.clipboard().map(str::to_owned) {
-                self.paste_into_overlay(&text);
+        let overlay_ctx = if let Some(prompt) = &self.prompt {
+            Some(prompt.keymap_context())
+        } else if self.search_state.is_some() {
+            Some(KeymapContext::Search)
+        } else if self.quick_open.is_some() {
+            Some(KeymapContext::QuickOpen)
+        } else if self.palette_open {
+            Some(KeymapContext::Palette)
+        } else {
+            None
+        };
+        if let Some(ctx) = overlay_ctx {
+            let action = self
+                .config
+                .keymaps
+                .local_action(ctx, key)
+                .map(str::to_owned);
+            if action.as_deref() == Some("field.paste") {
+                if let Some(text) = self.editor.clipboard().map(str::to_owned) {
+                    self.paste_into_overlay(&text);
+                }
+                return Ok(());
             }
-            return Ok(());
-        }
-
-        // 2. If an Input Prompt is open (Open File, Save As, Language Mode)
-        if let Some(prompt) = self.prompt.take() {
-            return self.handle_prompt_key(prompt, key);
-        }
-
-        // 3. If Search Bar is open (Find or Replace)
-        if let Some(state) = self.search_state.take() {
-            return self.handle_search_key(state, key);
-        }
-
-        // 3.5. If Quick Open is open, route keys to quick open
-        if let Some(state) = self.quick_open.take() {
-            return self.handle_quick_open_key(state, key);
-        }
-
-        // 4. If Command Palette is open, route keys to palette
-        if self.palette_open {
-            return self.handle_palette_key(key);
+            let action = action.as_deref();
+            if let Some(prompt) = self.prompt.take() {
+                return self.handle_prompt_key(prompt, action, key);
+            }
+            if let Some(state) = self.search_state.take() {
+                return self.handle_search_key(state, action, key);
+            }
+            if let Some(state) = self.quick_open.take() {
+                return self.handle_quick_open_key(state, action, key);
+            }
+            return self.handle_palette_key(action, key);
         }
 
         // 5. Unified keymap dispatch across Global + active context
@@ -75,7 +85,7 @@ impl App {
                 KeymapContext::Editor | KeymapContext::Insert => {
                     self.handle_text_editing_fallback(key);
                 }
-                KeymapContext::Normal | KeymapContext::Visual | KeymapContext::Global => {}
+                _ => {}
             }
         }
 
@@ -101,8 +111,11 @@ impl App {
         let combo = KeyCombo::from_key_event(key);
 
         if !self.pending_keys.is_empty()
-            && combo.code == KeyCode::Esc
-            && combo.modifiers == KeyModifiers::NONE
+            && self
+                .config
+                .keymaps
+                .local_action(KeymapContext::Chord, key)
+                .is_some()
         {
             self.clear_pending_keys();
             self.set_status("Cancelled chord");
@@ -170,6 +183,9 @@ impl App {
             match self.config.keymaps.lookup(ctx, seq) {
                 LookupResult::Matched(action) => return ResolvedLookup::Matched(action.to_owned()),
                 LookupResult::Prefix => return ResolvedLookup::Prefix,
+                LookupResult::None if self.config.keymaps.is_disabled(ctx, seq) => {
+                    return ResolvedLookup::None;
+                }
                 LookupResult::None => {}
             }
         }
@@ -199,17 +215,15 @@ impl App {
     }
 
     pub(crate) fn handle_text_editing_fallback(&mut self, key: KeyEvent) {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
-        if ctrl || alt {
-            return;
-        }
-
         let tab_id = self.editor.active_tab().id;
         let cursor = *self.editor.cursors().primary();
 
-        match key.code {
-            KeyCode::Backspace => {
+        match self
+            .config
+            .keymaps
+            .local_action(KeymapContext::TextEditing, key)
+        {
+            Some("edit.backspace") => {
                 let len_before = self.editor.buffer().len_bytes();
                 let min_pos = cursor.min();
                 if self.editor.delete_backwards().is_ok() {
@@ -225,7 +239,7 @@ impl App {
                     }
                 }
             }
-            KeyCode::Delete => {
+            Some("edit.delete_forward") => {
                 let len_before = self.editor.buffer().len_bytes();
                 let start = cursor.min();
                 if self.editor.delete_forwards().is_ok() {
@@ -236,15 +250,19 @@ impl App {
                     }
                 }
             }
-            KeyCode::Enter => {
+            Some("edit.newline") => {
                 self.insert_with_syntax_shift(|editor| editor.insert_newline().is_ok());
             }
-            KeyCode::Tab => {
+            Some("edit.indent") => {
                 let spaces = " ".repeat(self.editor.config().tab_size.max(1));
                 self.insert_with_syntax_shift(|editor| editor.insert_str(&spaces).is_ok());
             }
-            KeyCode::Char(c) => {
-                self.insert_char_with_syntax(c);
+            None => {
+                if let Some(c) = typed_character(key) {
+                    self.insert_char_with_syntax(c);
+                } else {
+                    return;
+                }
             }
             _ => return,
         }
@@ -272,5 +290,18 @@ impl App {
                 (len_after as isize - len_before as isize + old_len as isize).max(0) as usize;
             self.shift_syntax_for_delta(tab_id, start, old_len, new_len);
         }
+    }
+}
+
+pub(super) fn typed_character(key: KeyEvent) -> Option<char> {
+    match key.code {
+        KeyCode::Char(c)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            Some(c)
+        }
+        _ => None,
     }
 }

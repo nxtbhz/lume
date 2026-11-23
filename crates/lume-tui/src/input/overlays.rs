@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::KeyEvent;
 use lume_core::TextBuffer;
 use lume_syntax::Language;
 
 use crate::app::App;
+use crate::input::key::typed_character;
 use crate::prompt::{parse_goto_line, InputPrompt, PromptAction};
 use crate::search::{SearchField, SearchMode, SearchState};
 
@@ -12,14 +13,12 @@ impl App {
     pub(crate) fn handle_prompt_key(
         &mut self,
         mut prompt: InputPrompt,
+        action: Option<&str>,
         key: KeyEvent,
     ) -> std::io::Result<()> {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
-
         if let PromptAction::ConfirmRecoverJournal { tab_idx } = prompt.action {
-            match key.code {
-                KeyCode::Char('r') | KeyCode::Char('R') => {
+            match action {
+                Some("recovery.recover") => {
                     self.editor.recover_tab_journal(tab_idx);
                     self.adjust_viewport();
                     self.update_syntax_highlights_for_tab(tab_idx);
@@ -27,13 +26,13 @@ impl App {
                     self.prompt_next_recovery_if_any();
                     return Ok(());
                 }
-                KeyCode::Char('d') | KeyCode::Char('D') => {
+                Some("recovery.discard") => {
                     self.editor.discard_tab_changes(tab_idx);
                     self.set_status("Discarded journal recovery");
                     self.prompt_next_recovery_if_any();
                     return Ok(());
                 }
-                KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Esc => {
+                Some("prompt.cancel") => {
                     if let Some(tab) = self.editor.tabs_mut().get_mut(tab_idx) {
                         tab.pending_recovery = None;
                     }
@@ -52,8 +51,8 @@ impl App {
             prompt.action,
             PromptAction::ConfirmQuit | PromptAction::ConfirmCloseTab { .. }
         ) {
-            match key.code {
-                KeyCode::Char('s') | KeyCode::Char('S') => {
+            match action {
+                Some("confirm.save") => {
                     match prompt.action {
                         PromptAction::ConfirmQuit => {
                             let mut all_saved = true;
@@ -99,7 +98,7 @@ impl App {
                     }
                     return Ok(());
                 }
-                KeyCode::Char('d') | KeyCode::Char('D') => {
+                Some("confirm.discard") => {
                     match prompt.action {
                         PromptAction::ConfirmQuit => {
                             self.editor.discard_all_journals();
@@ -114,7 +113,7 @@ impl App {
                     }
                     return Ok(());
                 }
-                KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Esc => {
+                Some("prompt.cancel") => {
                     self.set_status("Cancelled");
                     return Ok(());
                 }
@@ -125,11 +124,11 @@ impl App {
             }
         }
 
-        match key.code {
-            KeyCode::Esc => {
+        match action {
+            Some("prompt.cancel") => {
                 self.set_status("Cancelled");
             }
-            KeyCode::Enter => {
+            Some("prompt.submit") => {
                 let val = prompt.value.trim().to_string();
                 match prompt.action {
                     PromptAction::OpenFile => {
@@ -321,29 +320,29 @@ impl App {
                     PromptAction::ConfirmRecoverJournal { .. } => {}
                 }
             }
-            KeyCode::Tab => {
+            Some("prompt.complete") => {
                 prompt.autocomplete();
                 self.prompt = Some(prompt);
             }
-            KeyCode::Backspace => {
+            Some("field.backspace") => {
                 prompt.handle_backspace();
                 self.prompt = Some(prompt);
             }
-            KeyCode::Left => {
+            Some("field.left") => {
                 prompt.move_left();
                 self.prompt = Some(prompt);
             }
-            KeyCode::Right => {
+            Some("field.right") => {
                 prompt.move_right();
                 self.prompt = Some(prompt);
             }
-            KeyCode::Up => {
+            Some("list.up") => {
                 if prompt.selected_suggestion > 0 {
                     prompt.selected_suggestion -= 1;
                 }
                 self.prompt = Some(prompt);
             }
-            KeyCode::Down => {
+            Some("list.down") => {
                 if !prompt.suggestions.is_empty()
                     && prompt.selected_suggestion + 1 < prompt.suggestions.len()
                 {
@@ -351,8 +350,10 @@ impl App {
                 }
                 self.prompt = Some(prompt);
             }
-            KeyCode::Char(c) if !ctrl && !alt => {
-                prompt.handle_char(c);
+            None => {
+                if let Some(c) = typed_character(key) {
+                    prompt.handle_char(c);
+                }
                 self.prompt = Some(prompt);
             }
             _ => {
@@ -365,15 +366,10 @@ impl App {
     pub(crate) fn handle_search_key(
         &mut self,
         mut state: SearchState,
+        action: Option<&str>,
         key: KeyEvent,
     ) -> std::io::Result<()> {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
-        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-
-        let is_ctrl_alt_enter = key.code == KeyCode::Enter && ctrl && alt;
-
-        if is_ctrl_alt_enter {
+        if action == Some("search.replace_all") {
             if state.mode == SearchMode::Replace && !state.query.is_empty() {
                 let count = self
                     .editor
@@ -388,8 +384,8 @@ impl App {
             return Ok(());
         }
 
-        match key.code {
-            KeyCode::Char('z') if ctrl && !alt => {
+        match action {
+            Some("search.undo") => {
                 if self.editor.undo() {
                     self.set_status("Undo");
                     state.match_count =
@@ -407,7 +403,7 @@ impl App {
                 }
                 self.search_state = Some(state);
             }
-            KeyCode::Char('y') if ctrl && !alt => {
+            Some("search.redo") => {
                 if self.editor.redo() {
                     self.set_status("Redo");
                     state.match_count =
@@ -425,7 +421,7 @@ impl App {
                 }
                 self.search_state = Some(state);
             }
-            KeyCode::Esc => {
+            Some("search.cancel") => {
                 let max_bytes = self.editor.buffer().len_bytes();
                 let mut cur = state.initial_cursor;
                 cur.anchor = cur.anchor.min(max_bytes);
@@ -439,15 +435,15 @@ impl App {
                 self.adjust_viewport();
                 self.search_state = None;
             }
-            KeyCode::Tab | KeyCode::BackTab => {
+            Some("search.toggle_field") => {
                 if state.mode == SearchMode::Replace {
                     state.toggle_field();
                 }
                 self.search_state = Some(state);
             }
-            KeyCode::F(3) => {
+            Some("search.next" | "search.previous") => {
                 if !state.query.is_empty() {
-                    let res = if shift {
+                    let res = if action == Some("search.previous") {
                         self.editor.find_prev(&state.query, false)
                     } else {
                         self.editor.find_next(&state.query, false)
@@ -466,22 +462,8 @@ impl App {
                 }
                 self.search_state = Some(state);
             }
-            KeyCode::Enter => {
-                if shift {
-                    if !state.query.is_empty() {
-                        if let Some((s, _e)) = self.editor.find_prev(&state.query, false) {
-                            state.active_match_idx = lume_core::search::find_matches_in_range(
-                                self.editor.buffer(),
-                                &state.query,
-                                0,
-                                s,
-                                false,
-                            )
-                            .len();
-                            self.adjust_viewport();
-                        }
-                    }
-                } else if state.mode == SearchMode::Replace
+            Some("search.accept") => {
+                if state.mode == SearchMode::Replace
                     && state.active_field == SearchField::Replacement
                 {
                     let replaced =
@@ -517,42 +499,42 @@ impl App {
                 }
                 self.search_state = Some(state);
             }
-            KeyCode::Left => {
+            Some("field.left") => {
                 state.move_left();
                 self.search_state = Some(state);
             }
-            KeyCode::Right => {
+            Some("field.right") => {
                 state.move_right();
                 self.search_state = Some(state);
             }
-            KeyCode::Home => {
+            Some("field.home") => {
                 state.move_home();
                 self.search_state = Some(state);
             }
-            KeyCode::End => {
+            Some("field.end") => {
                 state.move_end();
                 self.search_state = Some(state);
             }
-            KeyCode::Backspace => {
+            Some("field.backspace") => {
                 state.handle_backspace();
                 if state.active_field == SearchField::Query {
                     self.update_search_query(&mut state);
                 }
                 self.search_state = Some(state);
             }
-            KeyCode::Delete => {
+            Some("field.delete") => {
                 state.handle_delete();
                 if state.active_field == SearchField::Query {
                     self.update_search_query(&mut state);
                 }
                 self.search_state = Some(state);
             }
-            KeyCode::Char('f') if ctrl && !alt => {
+            Some("search.find_mode") => {
                 state.mode = SearchMode::Find;
                 state.active_field = SearchField::Query;
                 self.search_state = Some(state);
             }
-            KeyCode::Char('h') if ctrl && !alt => {
+            Some("search.replace_mode") => {
                 state.mode = SearchMode::Replace;
                 if state.query.is_empty() {
                     state.active_field = SearchField::Query;
@@ -561,10 +543,12 @@ impl App {
                 }
                 self.search_state = Some(state);
             }
-            KeyCode::Char(c) if !ctrl && !alt => {
-                state.handle_char(c);
-                if state.active_field == SearchField::Query {
-                    self.update_search_query(&mut state);
+            None => {
+                if let Some(c) = typed_character(key) {
+                    state.handle_char(c);
+                    if state.active_field == SearchField::Query {
+                        self.update_search_query(&mut state);
+                    }
                 }
                 self.search_state = Some(state);
             }
@@ -575,26 +559,27 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn handle_palette_key(&mut self, key: KeyEvent) -> std::io::Result<()> {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
-
-        match key.code {
-            KeyCode::Esc => {
+    pub(crate) fn handle_palette_key(
+        &mut self,
+        action: Option<&str>,
+        key: KeyEvent,
+    ) -> std::io::Result<()> {
+        match action {
+            Some("list.cancel") => {
                 self.palette_open = false;
             }
-            KeyCode::Up => {
+            Some("list.up") => {
                 if self.palette_selected > 0 {
                     self.palette_selected -= 1;
                 }
             }
-            KeyCode::Down => {
+            Some("list.down") => {
                 let total = self.filtered_commands().len();
                 if total > 0 && self.palette_selected + 1 < total {
                     self.palette_selected += 1;
                 }
             }
-            KeyCode::Enter => {
+            Some("list.accept") => {
                 let commands = self.filtered_commands();
                 if let Some(cmd) = commands.get(self.palette_selected) {
                     let id = cmd.id;
@@ -604,13 +589,15 @@ impl App {
                     self.palette_open = false;
                 }
             }
-            KeyCode::Backspace => {
+            Some("field.backspace") => {
                 self.palette_query.pop();
                 self.palette_selected = 0;
             }
-            KeyCode::Char(c) if !ctrl && !alt => {
-                self.palette_query.push(c);
-                self.palette_selected = 0;
+            None => {
+                if let Some(c) = typed_character(key) {
+                    self.palette_query.push(c);
+                    self.palette_selected = 0;
+                }
             }
             _ => {}
         }
@@ -618,11 +605,8 @@ impl App {
     }
 
     pub(crate) fn handle_explorer_fallback(&mut self, key: KeyEvent) {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
-
-        if let KeyCode::Char(ch) = key.code {
-            if !ctrl && !alt && (ch.is_alphanumeric() || ch == '.' || ch == '_') {
+        if let Some(ch) = typed_character(key) {
+            if ch.is_alphanumeric() || ch == '.' || ch == '_' {
                 let h = self.text_area_height();
                 self.explorer.jump_to_prefix(ch, h);
             }
@@ -632,41 +616,40 @@ impl App {
     pub(crate) fn handle_quick_open_key(
         &mut self,
         mut state: crate::quick_open::QuickOpenState,
+        action: Option<&str>,
         key: KeyEvent,
     ) -> std::io::Result<()> {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
         let visible_rows =
             crate::quick_open::layout(self.terminal_width as usize, self.terminal_height as usize)
                 .height
                 .saturating_sub(crate::quick_open::HEADER_ROWS);
 
-        match key.code {
-            KeyCode::Esc => {
+        match action {
+            Some("list.cancel") => {
                 self.quick_open = None;
                 self.set_status("Cancelled");
             }
-            KeyCode::Up => {
+            Some("list.up") => {
                 state.move_up();
                 self.quick_open = Some(state);
             }
-            KeyCode::Down => {
+            Some("list.down") => {
                 state.move_down(visible_rows);
                 self.quick_open = Some(state);
             }
-            KeyCode::PageUp => {
+            Some("list.page_up") => {
                 for _ in 0..10 {
                     state.move_up();
                 }
                 self.quick_open = Some(state);
             }
-            KeyCode::PageDown => {
+            Some("list.page_down") => {
                 for _ in 0..10 {
                     state.move_down(visible_rows);
                 }
                 self.quick_open = Some(state);
             }
-            KeyCode::Enter => {
+            Some("list.accept") => {
                 if let Some(item) = state.selected_item() {
                     let full_path = item.full_path.clone();
                     self.quick_open = None;
@@ -675,12 +658,14 @@ impl App {
                     self.quick_open = None;
                 }
             }
-            KeyCode::Backspace => {
+            Some("field.backspace") => {
                 state.handle_backspace();
                 self.quick_open = Some(state);
             }
-            KeyCode::Char(c) if !ctrl && !alt => {
-                state.handle_char(c);
+            None => {
+                if let Some(c) = typed_character(key) {
+                    state.handle_char(c);
+                }
                 self.quick_open = Some(state);
             }
             _ => {

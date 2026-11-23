@@ -41,7 +41,7 @@ pub fn render_status_bar<W: Write>(
     let (cursor_row, cursor_col) = app.editor.cursor_line_col();
     let status_row = app.terminal_height.saturating_sub(1);
     if let Some(ref search) = app.search_state {
-        search.render(writer, app.terminal_width, status_row)?;
+        search.render(writer, app.terminal_width, status_row, &app.config.keymaps)?;
     } else {
         queue!(
             writer,

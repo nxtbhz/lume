@@ -903,7 +903,7 @@ mod tests {
             KeymapPreset::Vim,
         ] {
             let table = KeymapTable::from_preset(preset);
-            for ctx in KeymapContext::ALL {
+            for ctx in KeymapContext::COMMAND_CONTEXTS {
                 for (_seq, action) in table.entries_for(ctx) {
                     assert!(
                         is_valid_action_id(action),

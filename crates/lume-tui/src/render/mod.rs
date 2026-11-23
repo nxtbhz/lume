@@ -43,12 +43,22 @@ impl App {
         // 1. Render File Explorer (if visible)
         if self.explorer.is_visible {
             let is_exp_focused = self.focus == ActiveFocus::Explorer;
+            let shortcut = if is_exp_focused {
+                self.config
+                    .keymaps
+                    .shortcut_in(crate::config::KeymapContext::Explorer, "explorer.rename")
+            } else {
+                self.config
+                    .keymaps
+                    .shortcut_in(crate::config::KeymapContext::Global, "view.toggle_explorer")
+            };
             self.explorer.render(
                 writer,
                 0,
                 self.terminal_height.saturating_sub(1) as usize,
                 text_left,
                 is_exp_focused,
+                shortcut.as_deref(),
             )?;
         }
 
@@ -73,7 +83,12 @@ impl App {
         if let Some(ref quick_open) = self.quick_open {
             render_quick_open(self, quick_open, writer)?;
         } else if let Some(ref prompt) = self.prompt {
-            prompt.render(writer, self.terminal_width, self.terminal_height)?;
+            prompt.render(
+                writer,
+                self.terminal_width,
+                self.terminal_height,
+                &self.config.keymaps,
+            )?;
         } else if self.palette_open {
             render_command_palette(self, writer)?;
         } else if self.which_key_open {

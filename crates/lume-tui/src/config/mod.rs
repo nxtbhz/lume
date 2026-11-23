@@ -3,14 +3,18 @@
 pub mod keymap;
 pub mod toml_parser;
 
+use std::collections::{BTreeMap, HashSet};
 use std::env;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+
+use lume_core::{Editor, RopeBuffer};
 
 pub use keymap::{
     format_key_sequence, parse_key_sequence, KeyCombo, KeymapContext, KeymapPreset, KeymapTable,
     LookupResult,
 };
-use toml_parser::{parse_toml_document, TomlEntry, TomlValue};
+use toml_parser::{parse_table_header, parse_toml_document, TomlDocument, TomlEntry, TomlValue};
 
 /// Errors produced while reading, parsing, or validating `config.toml`.
 #[derive(Debug, thiserror::Error)]
@@ -145,8 +149,9 @@ pub fn resolve_config_path(cli_path: Option<&Path>, no_config: bool) -> Option<P
 }
 
 /// Returns a commented, valid default `config.toml` template for scaffolding and `--print-default-config`.
-pub fn default_config_toml() -> &'static str {
-    r#"# Lume configuration file
+pub fn default_config_toml() -> String {
+    let mut config = String::from(
+        r#"# Lume configuration file
 # Default location: ~/.config/lume/config.toml (override with $LUME_CONFIG or --config)
 # Reload at runtime via Command Palette -> "Config: Reload Configuration".
 
@@ -165,44 +170,130 @@ visible_on_startup = true
 width = 26
 
 [keymaps]
-# Available presets:
-#   "default" - full IDE shortcuts (Ctrl+S, Ctrl+P, Ctrl+W, Ctrl+K chords, etc.)
-#   "minimal" - only Ctrl+Q, Alt+P (Command Palette), F1 (Which-Key), and basic navigation
-#   "vim"     - modal Vim mode enabled by default, Space leader, ":" opens Command Palette
+# The tables below define the active shortcuts.
+# Use "none" or "" to disable a key in its context, including global fallback.
+# Multi-key sequences use spaces (e.g. "Space f f" or "j k").
+format = "explicit"
 preset = "default"
+"#,
+    );
+    let defaults = KeymapTable::default();
+    for ctx in KeymapContext::all() {
+        let _ = writeln!(config, "\n[keymaps.{}]", ctx.section_suffix());
+        for (seq, action) in defaults.entries_for(ctx) {
+            write_binding(&mut config, seq, action);
+        }
+    }
+    config
+}
 
-# Customize or disable any shortcut per context:
-#   [keymaps.global]   - active everywhere outside modal overlays
-#   [keymaps.editor]   - modeless editor navigation/actions
-#   [keymaps.normal]   - modal Normal mode
-#   [keymaps.visual]   - modal Visual mode
-#   [keymaps.insert]   - modal Insert mode
-#   [keymaps.explorer] - file explorer sidebar
-#
-# Use "none" or "" to unbind a default shortcut.
-# Multi-key sequences are separated by spaces (e.g. "Space f f", "Ctrl+K \\", "j k").
+fn write_binding(output: &mut String, seq: &[KeyCombo], action: &str) {
+    let key = format_key_sequence(seq)
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    let _ = writeln!(output, "\"{key}\" = \"{action}\"");
+}
 
-[keymaps.global]
-# "Ctrl+W" = "none"
-# "Ctrl+B" = "none"
-# "Space f" = "file.quick_open"
-# "Alt+n" = "file.new_tab"
+fn is_unbind(action: &str) -> bool {
+    action.is_empty()
+        || action.eq_ignore_ascii_case("none")
+        || action.eq_ignore_ascii_case("unbind")
+}
 
-[keymaps.insert]
-# "j k" = "vim.normal_mode"
-"#
+fn materialize_keymaps(content: &str, doc: &TomlDocument, keymaps: &KeymapTable) -> String {
+    let newline = if content.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let mut additions = BTreeMap::new();
+    let mut inactive_lines = HashSet::new();
+    additions.insert(
+        String::from("keymaps"),
+        String::from("format = \"explicit\"\n"),
+    );
+    for ctx in KeymapContext::all() {
+        let section = format!("keymaps.{}", ctx.section_suffix());
+        let mut existing = HashSet::new();
+        if let Some(table) = doc.get(&section) {
+            for (key, entry) in table {
+                let seq = parse_key_sequence(key).expect("validated key sequence");
+                let action = expect_str(entry, key).expect("validated action").trim();
+                // Preserve bindings suppressed by later legacy overrides as comments.
+                if !is_unbind(action)
+                    && !matches!(keymaps.lookup(ctx, &seq.0), LookupResult::Matched(_))
+                {
+                    inactive_lines.insert(entry.line);
+                }
+                existing.insert(seq.0);
+            }
+        }
+        let mut bindings = String::new();
+        for (seq, action) in keymaps.entries_for(ctx) {
+            if !existing.contains(seq) {
+                write_binding(&mut bindings, seq, action);
+            }
+        }
+        if !bindings.is_empty() {
+            additions.insert(section, bindings);
+        }
+    }
+
+    let mut migrated = String::new();
+    for (idx, line) in content.split_inclusive('\n').enumerate() {
+        if inactive_lines.contains(&(idx + 1)) {
+            migrated.push_str("# ");
+        }
+        migrated.push_str(line);
+        let header = if idx == 0 {
+            line.trim_start_matches('\u{feff}')
+        } else {
+            line
+        };
+        if let Some(section) = header
+            .trim_matches([' ', '\t', '\r', '\n'])
+            .strip_prefix('[')
+            .and_then(|header| parse_table_header(header, idx + 1).ok())
+        {
+            if let Some(bindings) = additions.remove(&section) {
+                if !line.ends_with('\n') {
+                    migrated.push_str(newline);
+                }
+                migrated.push_str(&bindings.replace('\n', newline));
+            }
+        }
+    }
+    // Add any tables that were absent from the original file, in context order.
+    for section in std::iter::once(String::from("keymaps"))
+        .chain(KeymapContext::all().map(|ctx| format!("keymaps.{}", ctx.section_suffix())))
+    {
+        if let Some(bindings) = additions.remove(&section) {
+            if !migrated.is_empty() && !migrated.ends_with(newline) {
+                migrated.push_str(newline);
+            }
+            let _ = write!(migrated, "{newline}[{section}]{newline}");
+            migrated.push_str(&bindings.replace('\n', newline));
+        }
+    }
+    migrated
 }
 
 impl AppConfig {
     /// Parses and validates an [`AppConfig`] from a TOML string.
     ///
     /// Action IDs in `[keymaps.*]` sections are validated with `validator`.
+    #[cfg(test)]
     pub fn from_toml_str(
         input: &str,
         validator: impl Fn(&str) -> bool,
     ) -> Result<Self, ConfigError> {
-        let doc = parse_toml_document(input)?;
+        Self::from_document(&parse_toml_document(input)?, validator).map(|(config, _)| config)
+    }
 
+    fn from_document(
+        doc: &TomlDocument,
+        validator: impl Fn(&str) -> bool,
+    ) -> Result<(Self, bool), ConfigError> {
         // Reject top-level keys outside any table.
         if let Some(root) = doc.get("") {
             if let Some((key, entry)) = root.iter().next() {
@@ -214,22 +305,15 @@ impl AppConfig {
         }
 
         // Reject unknown table headers before applying fields.
-        for (section, table) in &doc {
+        for (section, table) in doc {
             if section.is_empty() {
                 continue;
             }
-            let valid_section = matches!(
-                section.as_str(),
-                "editor"
-                    | "explorer"
-                    | "keymaps"
-                    | "keymaps.global"
-                    | "keymaps.editor"
-                    | "keymaps.normal"
-                    | "keymaps.visual"
-                    | "keymaps.insert"
-                    | "keymaps.explorer"
-            );
+            let valid_section = matches!(section.as_str(), "editor" | "explorer" | "keymaps")
+                || section
+                    .strip_prefix("keymaps.")
+                    .and_then(KeymapContext::from_section_suffix)
+                    .is_some();
             if !valid_section {
                 let line = table.values().next().map(|entry| entry.line);
                 return Err(ConfigError::Validation {
@@ -241,9 +325,19 @@ impl AppConfig {
 
         // Determine preset first so keymaps and Vim default modal setting build on it.
         let mut preset = KeymapPreset::Default;
+        let mut explicit_keymaps = false;
         if let Some(keymaps_table) = doc.get("keymaps") {
             for (key, entry) in keymaps_table {
                 match key.as_str() {
+                    "format" => {
+                        if expect_str(entry, "keymaps.format")? != "explicit" {
+                            return Err(ConfigError::Validation {
+                                line: Some(entry.line),
+                                message: "keymaps.format must be \"explicit\"".into(),
+                            });
+                        }
+                        explicit_keymaps = true;
+                    }
                     "preset" => {
                         let raw = expect_str(entry, "keymaps.preset")?;
                         preset =
@@ -352,8 +446,12 @@ impl AppConfig {
             }
         }
 
-        let mut keymaps = KeymapTable::from_preset(preset);
-        for (section, table) in &doc {
+        let mut keymaps = if explicit_keymaps {
+            KeymapTable::empty()
+        } else {
+            KeymapTable::from_preset(preset)
+        };
+        for (section, table) in doc {
             let Some(suffix) = section.strip_prefix("keymaps.") else {
                 continue;
             };
@@ -366,14 +464,28 @@ impl AppConfig {
                 let raw_action = expect_str(entry, &format!("{section}.{key_spec}"))?;
                 let seq =
                     parse_key_sequence(key_spec).map_err(|err| attach_line(err, entry.line))?;
+                let local = !ctx.local_bindings().is_empty();
+                if local && seq.0.len() != 1 {
+                    return Err(ConfigError::Validation {
+                        line: Some(entry.line),
+                        message: format!("[{section}] only accepts single-key shortcuts"),
+                    });
+                }
                 let action = raw_action.trim();
-                if action.is_empty()
-                    || action.eq_ignore_ascii_case("none")
-                    || action.eq_ignore_ascii_case("unbind")
-                {
-                    keymaps.unbind(ctx, &seq.0);
+                if is_unbind(action) {
+                    if explicit_keymaps {
+                        keymaps.disable(ctx, seq);
+                    } else {
+                        keymaps.unbind(ctx, &seq.0);
+                    }
                 } else {
-                    if !validator(action) {
+                    let valid = if local {
+                        ctx.local_bindings().iter().any(|&(_, id)| id == action)
+                            || (action == "field.paste" && ctx.supports_overlay_paste())
+                    } else {
+                        validator(action)
+                    };
+                    if !valid {
                         return Err(ConfigError::Validation {
                             line: Some(entry.line),
                             message: format!("unknown action `{action}` in [{section}]"),
@@ -384,12 +496,15 @@ impl AppConfig {
             }
         }
 
-        Ok(Self {
-            editor,
-            explorer,
-            preset,
-            keymaps,
-        })
+        Ok((
+            Self {
+                editor,
+                explorer,
+                preset,
+                keymaps,
+            },
+            explicit_keymaps,
+        ))
     }
 
     /// Loads and validates configuration from an explicit file path on disk.
@@ -397,11 +512,31 @@ impl AppConfig {
         path: &Path,
         validator: impl Fn(&str) -> bool,
     ) -> Result<Self, ConfigError> {
-        let content = std::fs::read_to_string(path).map_err(|source| ConfigError::Io {
+        let io_error = |source| ConfigError::Io {
             path: path.to_path_buf(),
             source,
-        })?;
-        Self::from_toml_str(&content, validator)
+        };
+        let content = std::fs::read_to_string(path).map_err(io_error)?;
+        let doc = parse_toml_document(&content)?;
+        let (config, explicit) = Self::from_document(&doc, &validator)?;
+        if explicit {
+            return Ok(config);
+        }
+
+        let migrated = materialize_keymaps(&content, &doc, &config.keymaps);
+        let (config, _) = Self::from_document(&parse_toml_document(&migrated)?, validator)?;
+        let current = std::fs::read_to_string(path).map_err(io_error)?;
+        if current != migrated {
+            if current != content {
+                return Err(io_error(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "configuration changed while migrating keymaps",
+                )));
+            }
+            Editor::write_buffer_atomically(path, &RopeBuffer::from(migrated.as_str()))
+                .map_err(io_error)?;
+        }
+        Ok(config)
     }
 
     /// Loads configuration at application startup using CLI flags and XDG/HOME defaults.
@@ -603,9 +738,11 @@ preset = "minimal"
     }
 
     #[test]
-    fn default_config_template_parses_cleanly() {
-        let res = AppConfig::from_toml_str(default_config_toml(), |_| true);
-        assert!(res.is_ok(), "default_config_toml failed: {:?}", res.err());
+    fn default_config_template_round_trips_every_binding() {
+        let config =
+            AppConfig::from_toml_str(&default_config_toml(), crate::commands::is_valid_action_id)
+                .unwrap();
+        assert_eq!(config, AppConfig::default());
     }
 
     #[test]

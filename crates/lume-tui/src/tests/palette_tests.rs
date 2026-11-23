@@ -438,7 +438,9 @@ fn test_ctrl_a_selects_entire_buffer_and_ctrl_backtab_switches_prev_tab() {
         prompt.handle_char('a');
     }
     let mut out = Vec::new();
-    prompt.render(&mut out, 80, 24).unwrap();
+    prompt
+        .render(&mut out, 80, 24, &crate::config::KeymapTable::default())
+        .unwrap();
     // box_w for term_width=80 is 72, start_x is (80 - 72) / 2 = 4.
     // Rightmost cell inside box is start_x + box_w - 1 = 75 (1-based ANSI col 76).
     // Cursor MoveTo must not place cursor past column 75 (ANSI ";76H").

@@ -8,6 +8,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use crate::config::{KeymapContext, KeymapTable};
 use crate::render::text::fit_text;
 use lume_core::buffer::visual;
 
@@ -40,7 +41,7 @@ impl InputPrompt {
     pub fn open_file() -> Self {
         let mut prompt = Self {
             action: PromptAction::OpenFile,
-            title: Cow::Borrowed(" Open File (Enter: open, Tab: autocomplete, Esc: cancel) "),
+            title: Cow::Borrowed(" Open File "),
             value: String::new(),
             cursor_pos: 0,
             suggestions: Vec::new(),
@@ -55,7 +56,7 @@ impl InputPrompt {
         let len = initial.len();
         let mut prompt = Self {
             action: PromptAction::SaveFileAs,
-            title: Cow::Borrowed(" Save File As (Enter: save, Esc: cancel) "),
+            title: Cow::Borrowed(" Save File As "),
             value: initial,
             cursor_pos: len,
             suggestions: Vec::new(),
@@ -69,9 +70,7 @@ impl InputPrompt {
         let suggestions: Vec<String> = all_langs.iter().map(|s| s.to_string()).collect();
         Self {
             action: PromptAction::SetLanguage,
-            title: Cow::Borrowed(
-                " Select Language Mode (Type to filter, Enter: apply, Esc: cancel) ",
-            ),
+            title: Cow::Borrowed(" Select Language Mode (type to filter) "),
             value: String::new(),
             cursor_pos: 0,
             suggestions,
@@ -80,10 +79,7 @@ impl InputPrompt {
     }
 
     pub fn create_folder(parent_dir: PathBuf, display_name: &str) -> Self {
-        let formatted = format!(
-            " Create Folder in '{}' (Enter: create, Esc: cancel) ",
-            display_name
-        );
+        let formatted = format!(" Create Folder in '{}' ", display_name);
         Self {
             action: PromptAction::CreateFolder { parent_dir },
             title: Cow::Owned(formatted),
@@ -95,10 +91,7 @@ impl InputPrompt {
     }
 
     pub fn create_file(parent_dir: PathBuf, display_name: &str) -> Self {
-        let formatted = format!(
-            " Create File in '{}' (Enter: create, Esc: cancel) ",
-            display_name
-        );
+        let formatted = format!(" Create File in '{}' ", display_name);
         Self {
             action: PromptAction::CreateFile { parent_dir },
             title: Cow::Owned(formatted),
@@ -111,7 +104,7 @@ impl InputPrompt {
 
     pub fn rename_item(source_path: PathBuf, current_name: &str, is_dir: bool) -> Self {
         let formatted = format!(
-            " Rename {} '{}' (Enter: rename, Esc: cancel) ",
+            " Rename {} '{}' ",
             if is_dir { "folder" } else { "file" },
             current_name
         );
@@ -134,10 +127,7 @@ impl InputPrompt {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("folder");
-        let formatted = format!(
-            " Delete folder '{}' and all contents? (y/Enter: confirm, Esc: cancel) ",
-            name
-        );
+        let formatted = format!(" Delete folder '{}' and all contents? ", name);
         Self {
             action: PromptAction::ConfirmDeleteFolder { path },
             title: Cow::Owned(formatted),
@@ -151,7 +141,7 @@ impl InputPrompt {
     pub fn goto_line() -> Self {
         Self {
             action: PromptAction::GoToLine,
-            title: Cow::Borrowed(" Go to Line[:Col] (e.g. 42 or 42:15, Esc: cancel) "),
+            title: Cow::Borrowed(" Go to Line[:Col] (e.g. 42 or 42:15) "),
             value: String::new(),
             cursor_pos: 0,
             suggestions: Vec::new(),
@@ -162,7 +152,7 @@ impl InputPrompt {
     pub fn confirm_quit() -> Self {
         Self {
             action: PromptAction::ConfirmQuit,
-            title: Cow::Borrowed(" Unsaved changes! [S]ave, [D]iscard, [C]ancel / Esc "),
+            title: Cow::Borrowed(" Unsaved changes! "),
             value: String::new(),
             cursor_pos: 0,
             suggestions: Vec::new(),
@@ -171,10 +161,7 @@ impl InputPrompt {
     }
 
     pub fn confirm_close_tab(tab_idx: usize, file_name: &str) -> Self {
-        let formatted = format!(
-            " Unsaved changes in '{}'! [S]ave, [D]iscard, [C]ancel / Esc ",
-            file_name
-        );
+        let formatted = format!(" Unsaved changes in '{}'! ", file_name);
         Self {
             action: PromptAction::ConfirmCloseTab { tab_idx },
             title: Cow::Owned(formatted),
@@ -186,10 +173,7 @@ impl InputPrompt {
     }
 
     pub fn confirm_recover_journal(tab_idx: usize, file_name: &str) -> Self {
-        let formatted = format!(
-            " Found crash journal for '{}'! [R]ecover, [D]iscard, [C]ancel / Esc ",
-            file_name
-        );
+        let formatted = format!(" Found crash journal for '{}'! ", file_name);
         Self {
             action: PromptAction::ConfirmRecoverJournal { tab_idx },
             title: Cow::Owned(formatted),
@@ -336,11 +320,22 @@ impl InputPrompt {
         }
     }
 
+    pub fn keymap_context(&self) -> KeymapContext {
+        match self.action {
+            PromptAction::ConfirmQuit | PromptAction::ConfirmCloseTab { .. } => {
+                KeymapContext::Confirm
+            }
+            PromptAction::ConfirmRecoverJournal { .. } => KeymapContext::Recovery,
+            _ => KeymapContext::Prompt,
+        }
+    }
+
     pub fn render<W: Write>(
         &self,
         writer: &mut W,
         term_width: u16,
         term_height: u16,
+        keymaps: &KeymapTable,
     ) -> std::io::Result<()> {
         let box_w = (term_width as usize).min(72);
         let box_h = (4 + self.suggestions.len().min(5)).min(term_height as usize);
@@ -351,6 +346,32 @@ impl InputPrompt {
         let start_y = (term_height as usize).saturating_sub(box_h) / 3;
         let prompt_prefix = " > ";
         let input = format!("{prompt_prefix}{}", self.value);
+
+        let ctx = self.keymap_context();
+        let actions: &[(&str, &str)] = match ctx {
+            KeymapContext::Confirm => &[
+                ("confirm.save", "save"),
+                ("confirm.discard", "discard"),
+                ("prompt.cancel", "cancel"),
+            ],
+            KeymapContext::Recovery => &[
+                ("recovery.recover", "recover"),
+                ("recovery.discard", "discard"),
+                ("prompt.cancel", "cancel"),
+            ],
+            _ if !self.suggestions.is_empty() => &[
+                ("prompt.submit", "confirm"),
+                ("prompt.complete", "complete"),
+                ("prompt.cancel", "cancel"),
+            ],
+            _ => &[("prompt.submit", "confirm"), ("prompt.cancel", "cancel")],
+        };
+        let hints = keymaps.hints(ctx, actions);
+        let title = if hints.is_empty() {
+            self.title.clone()
+        } else {
+            Cow::Owned(format!("{}({hints}) ", self.title))
+        };
 
         // Header / Box
         for y in 0..box_h {
@@ -369,7 +390,7 @@ impl InputPrompt {
                 queue!(
                     writer,
                     SetForegroundColor(Color::Cyan),
-                    Print(fit_text(&self.title, box_w))
+                    Print(fit_text(&title, box_w))
                 )?;
             } else if y == 1 {
                 queue!(
@@ -584,21 +605,29 @@ mod tests {
         let mut buf = Vec::new();
         let mut prompt = InputPrompt::open_file();
         prompt.suggestions = vec!["file1.rs".to_string(), "file2.rs".to_string()];
-        assert!(prompt.render(&mut buf, 100, 30).is_ok());
+        assert!(prompt
+            .render(&mut buf, 100, 30, &KeymapTable::default())
+            .is_ok());
         assert!(!buf.is_empty());
 
         buf.clear();
         let lang_prompt = InputPrompt::set_language(&["Rust", "C++", "Python"]);
-        assert!(lang_prompt.render(&mut buf, 80, 24).is_ok());
+        assert!(lang_prompt
+            .render(&mut buf, 80, 24, &KeymapTable::default())
+            .is_ok());
 
         buf.clear();
         let delete_prompt =
             InputPrompt::confirm_delete_folder(std::path::PathBuf::from("dummy_dir"));
-        assert!(delete_prompt.render(&mut buf, 80, 24).is_ok());
+        assert!(delete_prompt
+            .render(&mut buf, 80, 24, &KeymapTable::default())
+            .is_ok());
 
         buf.clear();
         let create_prompt = InputPrompt::create_folder(std::path::PathBuf::from("."), "root");
-        assert!(create_prompt.render(&mut buf, 80, 24).is_ok());
+        assert!(create_prompt
+            .render(&mut buf, 80, 24, &KeymapTable::default())
+            .is_ok());
     }
 
     #[test]

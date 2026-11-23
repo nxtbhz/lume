@@ -105,7 +105,10 @@ fn ensure_only_comment_or_empty(rest: &str, line: usize) -> Result<(), ConfigErr
     }
 }
 
-fn parse_table_header(after_open_bracket: &str, line: usize) -> Result<String, ConfigError> {
+pub(super) fn parse_table_header(
+    after_open_bracket: &str,
+    line: usize,
+) -> Result<String, ConfigError> {
     if after_open_bracket.starts_with('[') {
         return Err(ConfigError::Parse {
             line,

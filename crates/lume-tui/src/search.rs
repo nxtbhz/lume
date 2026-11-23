@@ -1,3 +1,4 @@
+use crate::config::{KeymapContext, KeymapTable};
 use crossterm::{
     cursor::{MoveTo, Show},
     queue,
@@ -203,6 +204,7 @@ impl SearchState {
         writer: &mut W,
         terminal_width: u16,
         row: u16,
+        keymaps: &KeymapTable,
     ) -> std::io::Result<()> {
         let width = terminal_width as usize;
         if width == 0 {
@@ -231,7 +233,15 @@ impl SearchState {
                 } else {
                     format!(" [{}/{}] ", self.active_match_idx + 1, self.match_count)
                 };
-                let hints = " (Enter/F3: Next, Shift+Enter/Shift+F3: Prev, Esc: Cancel) ";
+                let hints = keymaps.hints(
+                    KeymapContext::Search,
+                    &[
+                        ("search.accept", "next"),
+                        ("search.next", "next"),
+                        ("search.previous", "previous"),
+                        ("search.cancel", "cancel"),
+                    ],
+                );
                 let content = format!("{prefix}{}{status_text}", self.query);
                 (content, hints, prefix.len() + self.query_cursor)
             }
@@ -255,7 +265,15 @@ impl SearchState {
                     format!(" [{}/{}] ", self.active_match_idx + 1, self.match_count)
                 };
 
-                let hints = " (Enter: Replace, Ctrl+Alt+Enter: All, Tab: Field, Esc: Cancel) ";
+                let hints = keymaps.hints(
+                    KeymapContext::Search,
+                    &[
+                        ("search.accept", "replace"),
+                        ("search.replace_all", "replace all"),
+                        ("search.toggle_field", "field"),
+                        ("search.cancel", "cancel"),
+                    ],
+                );
 
                 let cursor_byte = if self.active_field == SearchField::Query {
                     find_prefix.len() + self.query_cursor
@@ -273,7 +291,12 @@ impl SearchState {
             }
         };
 
-        let spaces = width.saturating_sub(display_width(&content) + display_width(hints));
+        let hints = if hints.is_empty() {
+            hints
+        } else {
+            format!(" ({hints}) ")
+        };
+        let spaces = width.saturating_sub(display_width(&content) + display_width(&hints));
         let bar = format!("{content}{:spaces$}{hints}", "");
         let cursor_col = visual::column_at_byte(&content, cursor_byte).min(width - 1) as u16;
         queue!(
@@ -374,28 +397,38 @@ mod tests {
         let mut state = SearchState::new_find(Cursor::new(0), (0, 0), Some("query"));
         state.match_count = 3;
         state.active_match_idx = 1;
-        assert!(state.render(&mut buf, 80, 24).is_ok());
+        assert!(state
+            .render(&mut buf, 80, 24, &KeymapTable::default())
+            .is_ok());
         assert!(!buf.is_empty());
 
         // Empty query find
         buf.clear();
         let empty_state = SearchState::new_find(Cursor::new(0), (0, 0), None);
-        assert!(empty_state.render(&mut buf, 80, 24).is_ok());
+        assert!(empty_state
+            .render(&mut buf, 80, 24, &KeymapTable::default())
+            .is_ok());
 
         // Zero matches find
         buf.clear();
         let mut zero_state = SearchState::new_find(Cursor::new(0), (0, 0), Some("notfound"));
         zero_state.match_count = 0;
-        assert!(zero_state.render(&mut buf, 80, 24).is_ok());
+        assert!(zero_state
+            .render(&mut buf, 80, 24, &KeymapTable::default())
+            .is_ok());
 
         // Replace mode with query active & replacement active
         buf.clear();
         let mut replace_state = SearchState::new_replace(Cursor::new(0), (0, 0), Some("find_me"));
         replace_state.replacement = "replace_me".to_string();
         replace_state.match_count = 2;
-        assert!(replace_state.render(&mut buf, 80, 24).is_ok());
+        assert!(replace_state
+            .render(&mut buf, 80, 24, &KeymapTable::default())
+            .is_ok());
         replace_state.toggle_field();
         buf.clear();
-        assert!(replace_state.render(&mut buf, 80, 24).is_ok());
+        assert!(replace_state
+            .render(&mut buf, 80, 24, &KeymapTable::default())
+            .is_ok());
     }
 }

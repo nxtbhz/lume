@@ -206,11 +206,19 @@ pub enum KeymapContext {
     Visual,
     Insert,
     Explorer,
+    Prompt,
+    Confirm,
+    Recovery,
+    Search,
+    Palette,
+    QuickOpen,
+    WhichKey,
+    Chord,
+    TextEditing,
 }
 
 impl KeymapContext {
-    /// All supported keymap contexts in canonical priority order.
-    pub const ALL: [Self; 6] = [
+    pub const COMMAND_CONTEXTS: [Self; 6] = [
         Self::Global,
         Self::Editor,
         Self::Normal,
@@ -219,28 +227,142 @@ impl KeymapContext {
         Self::Explorer,
     ];
 
-    /// Parses a context suffix from `[keymaps.<ctx>]`.
-    pub fn from_section_suffix(suffix: &str) -> Option<Self> {
-        match suffix {
-            "global" => Some(Self::Global),
-            "editor" => Some(Self::Editor),
-            "normal" => Some(Self::Normal),
-            "visual" => Some(Self::Visual),
-            "insert" => Some(Self::Insert),
-            "explorer" => Some(Self::Explorer),
-            _ => None,
+    pub const LOCAL_CONTEXTS: [Self; 9] = [
+        Self::Prompt,
+        Self::Confirm,
+        Self::Recovery,
+        Self::Search,
+        Self::Palette,
+        Self::QuickOpen,
+        Self::WhichKey,
+        Self::Chord,
+        Self::TextEditing,
+    ];
+
+    pub fn all() -> impl Iterator<Item = Self> {
+        Self::COMMAND_CONTEXTS
+            .into_iter()
+            .chain(Self::LOCAL_CONTEXTS)
+    }
+
+    pub fn section_suffix(self) -> &'static str {
+        match self {
+            Self::Global => "global",
+            Self::Editor => "editor",
+            Self::Normal => "normal",
+            Self::Visual => "visual",
+            Self::Insert => "insert",
+            Self::Explorer => "explorer",
+            Self::Prompt => "prompt",
+            Self::Confirm => "confirm",
+            Self::Recovery => "recovery",
+            Self::Search => "search",
+            Self::Palette => "palette",
+            Self::QuickOpen => "quick_open",
+            Self::WhichKey => "which_key",
+            Self::Chord => "chord",
+            Self::TextEditing => "text_editing",
         }
     }
 
-    const fn index(self) -> usize {
+    pub fn from_section_suffix(suffix: &str) -> Option<Self> {
+        Self::all().find(|ctx| ctx.section_suffix() == suffix)
+    }
+
+    pub fn local_bindings(self) -> &'static [(&'static str, &'static str)] {
         match self {
-            Self::Global => 0,
-            Self::Editor => 1,
-            Self::Normal => 2,
-            Self::Visual => 3,
-            Self::Insert => 4,
-            Self::Explorer => 5,
+            Self::Prompt => &[
+                ("Enter", "prompt.submit"),
+                ("Esc", "prompt.cancel"),
+                ("Tab", "prompt.complete"),
+                ("Backspace", "field.backspace"),
+                ("Left", "field.left"),
+                ("Right", "field.right"),
+                ("Up", "list.up"),
+                ("Down", "list.down"),
+            ],
+            Self::Confirm => &[
+                ("s", "confirm.save"),
+                ("S", "confirm.save"),
+                ("d", "confirm.discard"),
+                ("D", "confirm.discard"),
+                ("c", "prompt.cancel"),
+                ("C", "prompt.cancel"),
+                ("Esc", "prompt.cancel"),
+            ],
+            Self::Recovery => &[
+                ("r", "recovery.recover"),
+                ("R", "recovery.recover"),
+                ("d", "recovery.discard"),
+                ("D", "recovery.discard"),
+                ("c", "prompt.cancel"),
+                ("C", "prompt.cancel"),
+                ("Esc", "prompt.cancel"),
+            ],
+            Self::Search => &[
+                ("Enter", "search.accept"),
+                ("Shift+Enter", "search.previous"),
+                ("F3", "search.next"),
+                ("Shift+F3", "search.previous"),
+                ("Ctrl+Alt+Enter", "search.replace_all"),
+                ("Esc", "search.cancel"),
+                ("Tab", "search.toggle_field"),
+                ("Shift+Tab", "search.toggle_field"),
+                ("Ctrl+F", "search.find_mode"),
+                ("Ctrl+H", "search.replace_mode"),
+                ("Ctrl+Z", "search.undo"),
+                ("Ctrl+Shift+Z", "search.undo"),
+                ("Ctrl+Y", "search.redo"),
+                ("Ctrl+Shift+Y", "search.redo"),
+                ("Left", "field.left"),
+                ("Right", "field.right"),
+                ("Home", "field.home"),
+                ("End", "field.end"),
+                ("Backspace", "field.backspace"),
+                ("Delete", "field.delete"),
+            ],
+            Self::Palette => &[
+                ("Enter", "list.accept"),
+                ("Shift+Enter", "list.accept"),
+                ("Esc", "list.cancel"),
+                ("Up", "list.up"),
+                ("Down", "list.down"),
+                ("Backspace", "field.backspace"),
+            ],
+            Self::QuickOpen => &[
+                ("Enter", "list.accept"),
+                ("Esc", "list.cancel"),
+                ("Up", "list.up"),
+                ("Down", "list.down"),
+                ("PageUp", "list.page_up"),
+                ("PageDown", "list.page_down"),
+                ("Backspace", "field.backspace"),
+            ],
+            Self::WhichKey => &[("Esc", "which_key.dismiss"), ("F1", "which_key.dismiss")],
+            Self::Chord => &[("Esc", "chord.cancel")],
+            Self::TextEditing => &[
+                ("Backspace", "edit.backspace"),
+                ("Shift+Backspace", "edit.backspace"),
+                ("Delete", "edit.delete_forward"),
+                ("Shift+Delete", "edit.delete_forward"),
+                ("Enter", "edit.newline"),
+                ("Shift+Enter", "edit.newline"),
+                ("Tab", "edit.indent"),
+            ],
+            _ => &[],
         }
+    }
+
+    pub fn supports_overlay_paste(self) -> bool {
+        matches!(
+            self,
+            Self::Prompt
+                | Self::Confirm
+                | Self::Recovery
+                | Self::Search
+                | Self::Palette
+                | Self::QuickOpen
+        )
     }
 }
 
@@ -260,6 +382,7 @@ struct ContextBindings {
     bindings: BTreeMap<Vec<KeyCombo>, String>,
     prefixes: HashSet<Vec<KeyCombo>>,
     order: Vec<Vec<KeyCombo>>,
+    disabled: HashSet<Vec<KeyCombo>>,
 }
 
 impl ContextBindings {
@@ -284,6 +407,7 @@ impl ContextBindings {
         if is_new {
             self.order.push(seq.0.clone());
         }
+        self.disabled.remove(&seq.0);
         self.bindings.insert(seq.0, action);
         self.rebuild_prefixes();
     }
@@ -348,7 +472,8 @@ impl ContextBindings {
 /// Multi-context keymap table supporting single shortcuts, chords, and unbinding.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeymapTable {
-    contexts: [ContextBindings; 6],
+    contexts: [ContextBindings;
+        KeymapContext::COMMAND_CONTEXTS.len() + KeymapContext::LOCAL_CONTEXTS.len()],
 }
 
 impl Default for KeymapTable {
@@ -373,40 +498,91 @@ impl KeymapTable {
             KeymapPreset::Minimal => populate_minimal_preset(&mut table),
             KeymapPreset::Vim => populate_vim_preset(&mut table),
         }
+        for ctx in KeymapContext::LOCAL_CONTEXTS {
+            for &(key, action) in ctx.local_bindings() {
+                table.bind(
+                    ctx,
+                    parse_key_sequence(key).expect("valid built-in key"),
+                    action,
+                );
+            }
+            if ctx.supports_overlay_paste() {
+                for key in ["Ctrl+V", "Ctrl+Shift+V"] {
+                    table.bind(
+                        ctx,
+                        parse_key_sequence(key).expect("valid built-in key"),
+                        "field.paste",
+                    );
+                }
+            }
+        }
         table
     }
 
     /// Binds `seq` in `ctx` to `action`, replacing any conflicting binding/prefix in `ctx`.
     pub fn bind(&mut self, ctx: KeymapContext, seq: KeySequence, action: impl Into<String>) {
-        self.contexts[ctx.index()].bind(seq, action.into());
+        self.contexts[ctx as usize].bind(seq, action.into());
     }
 
     /// Removes `seq` (and any chord starting with `seq`) from `ctx`.
     pub fn unbind(&mut self, ctx: KeymapContext, seq: &[KeyCombo]) {
-        self.contexts[ctx.index()].unbind(seq);
+        self.contexts[ctx as usize].unbind(seq);
+    }
+
+    /// Blocks a sequence in this context, including fallback to global bindings.
+    pub fn disable(&mut self, ctx: KeymapContext, seq: KeySequence) {
+        let bindings = &mut self.contexts[ctx as usize];
+        bindings.bindings.remove(&seq.0);
+        bindings.order.retain(|existing| existing != &seq.0);
+        bindings.disabled.insert(seq.0);
+        bindings.rebuild_prefixes();
+    }
+
+    pub fn is_disabled(&self, ctx: KeymapContext, seq: &[KeyCombo]) -> bool {
+        self.contexts[ctx as usize].disabled.contains(seq)
     }
 
     /// Looks up `seq` in `ctx` without heap allocation.
     pub fn lookup(&self, ctx: KeymapContext, seq: &[KeyCombo]) -> LookupResult<'_> {
-        self.contexts[ctx.index()].lookup(seq)
+        self.contexts[ctx as usize].lookup(seq)
+    }
+
+    pub fn local_action(&self, ctx: KeymapContext, key: KeyEvent) -> Option<&str> {
+        match self.lookup(ctx, &[KeyCombo::from_key_event(key)]) {
+            LookupResult::Matched(action) => Some(action),
+            LookupResult::Prefix | LookupResult::None => None,
+        }
     }
 
     /// Returns the first formatted shortcut bound to `action` across contexts.
     pub fn primary_shortcut_for(&self, action: &str) -> Option<String> {
-        for ctx in KeymapContext::ALL {
-            for (seq, bound_action) in self.entries_for(ctx) {
-                if bound_action == action {
-                    return Some(format_key_sequence(seq));
-                }
-            }
-        }
-        None
+        KeymapContext::COMMAND_CONTEXTS
+            .into_iter()
+            .find_map(|ctx| self.shortcut_in(ctx, action))
+    }
+
+    pub fn shortcut_in(&self, ctx: KeymapContext, action: &str) -> Option<String> {
+        self.entries_for(ctx)
+            .into_iter()
+            .find(|&(_, bound_action)| bound_action == action)
+            .map(|(seq, _)| format_key_sequence(seq))
+    }
+
+    pub fn hints(&self, ctx: KeymapContext, actions: &[(&str, &str)]) -> String {
+        actions
+            .iter()
+            .filter_map(|&(action, label)| {
+                self.shortcut_in(ctx, action)
+                    .map(|key| format!("{key}: {label}"))
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// Returns all distinct formatted shortcuts bound to `action` across contexts.
     pub fn shortcuts_for(&self, action: &str) -> Vec<String> {
         let mut out = Vec::new();
-        for ctx in KeymapContext::ALL {
+        for ctx in KeymapContext::COMMAND_CONTEXTS {
             for (seq, bound_action) in self.entries_for(ctx) {
                 if bound_action == action {
                     let formatted = format_key_sequence(seq);
@@ -421,7 +597,7 @@ impl KeymapTable {
 
     /// Lists all active `(sequence, action_id)` pairs in `ctx` in deterministic display order.
     pub fn entries_for(&self, ctx: KeymapContext) -> Vec<(&[KeyCombo], &str)> {
-        self.contexts[ctx.index()].entries()
+        self.contexts[ctx as usize].entries()
     }
 
     fn bind_one(&mut self, ctx: KeymapContext, code: KeyCode, mods: KeyModifiers, action: &str) {

@@ -7,6 +7,7 @@ use crossterm::{
 };
 
 use crate::app::App;
+use crate::config::KeymapContext;
 use crate::quick_open::{self, QuickOpenState, HEADER_ROWS};
 use crate::render::text::fit_text;
 use lume_core::buffer::visual;
@@ -41,7 +42,15 @@ pub fn render_quick_open<W: Write>(
 
         if y == 0 {
             // Title row
-            let title = " Quick Open File (Ctrl+P, Esc: cancel) ";
+            let hints = app.config.keymaps.hints(
+                KeymapContext::QuickOpen,
+                &[("list.accept", "open"), ("list.cancel", "cancel")],
+            );
+            let title = if hints.is_empty() {
+                String::from(" Quick Open File ")
+            } else {
+                format!(" Quick Open File ({hints}) ")
+            };
             let count_str = format!(
                 "[{}/{}] ",
                 quick_open.filtered.len(),
@@ -51,12 +60,12 @@ pub fn render_quick_open<W: Write>(
             if count_str.len() < box_w {
                 queue!(
                     writer,
-                    Print(fit_text(title, box_w - count_str.len())),
+                    Print(fit_text(&title, box_w - count_str.len())),
                     SetForegroundColor(Color::Yellow),
                     Print(count_str)
                 )?;
             } else {
-                queue!(writer, Print(fit_text(title, box_w)))?;
+                queue!(writer, Print(fit_text(&title, box_w)))?;
             }
         } else if y == 1 {
             let prompt = format!(" > {}█", quick_open.query);

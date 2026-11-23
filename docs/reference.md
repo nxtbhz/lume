@@ -174,7 +174,7 @@ When `FileExplorer` is visible (`26` columns wide by default, `crates/lume-tui/s
 
 ## Configuration file (config.toml)
 
-Lume loads optional TOML configuration using a zero-dependency parser (`crates/lume-tui/src/config/`). Run `lume --print-default-config` or execute `Config: Open Configuration File` (`config.open`) to generate a commented template.
+Lume loads optional TOML configuration using a zero-dependency parser (`crates/lume-tui/src/config/`). Run `lume --print-default-config` to print the full configuration, or run **Config: Open Configuration File** from the Command Palette to open it and create it if needed.
 
 Path resolution order (unless `--no-config` is passed):
 
@@ -205,18 +205,22 @@ When no auto-discovered file exists, Lume skips parsing completely and starts wi
 | `visible_on_startup` | bool | `true` | Open sidebar on launch |
 | `width` | integer | `26` | `12..=80` columns |
 
-### `[keymaps]` presets and overrides
+### `[keymaps]` shortcuts
 
-`[keymaps]` accepts `preset = "default" | "minimal" | "vim"`:
+With `format = "explicit"` in `[keymaps]`, Lume reads shortcuts from the file. On startup or reload, Lume upgrades older files to this format by writing out their active preset bindings and preserving existing settings, comments, and shortcut overrides.
 
-- **`default`**: Full IDE shortcuts (100% compatible with Lume's classic bindings).
-- **`minimal`**: Only `Ctrl+Q` (`app.quit`), `Alt+P` (`view.command_palette`), `F1` (`view.which_key`), and basic arrow/Home/End/PageUp/PageDown navigation — leaving `Ctrl+*` keys unencumbered.
-- **`vim`**: Enables modal mode by default (unless `editor.modal = false` is set explicitly), omits invasive `Ctrl+W`/`Ctrl+B`/`Ctrl+E`/`Ctrl+F`/`Ctrl+H`/`Ctrl+R` global bindings, binds Normal-mode `Space` leader chords (`Space p`, `Space e`, `Space w`, `Space q`), binds `:` to `view.command_palette`, and binds `g d` to `navigation.goto_line`.
+Edit the existing shortcut under its context. For example, change the `F2` entry in `[keymaps.explorer]` to disable that key while the explorer is focused. The global `F2` binding still toggles the explorer from the editor, and `m` still renames the selected item.
 
-Overrides can be placed in per-context tables: `[keymaps.global]`, `[keymaps.editor]`, `[keymaps.normal]`, `[keymaps.visual]`, `[keymaps.insert]`, and `[keymaps.explorer]`.
+```toml
+[keymaps.explorer]
+"F2" = "none"
+```
 
-- **Unbinding:** assign `"none"`, `"unbind"`, or `""` (for example `"Ctrl+W" = "none"`).
-- **Multi-key chords:** separate keys with spaces (for example `"Space f f" = "file.quick_open"`, `"Ctrl+K \\" = "view.split_vertical"`, `"j k" = "vim.normal_mode"`). Pressing `Esc` cancels a pending chord; in typing modes (`editor` / `insert`), mismatched plain-character prefixes replay their pending characters cleanly.
+Save and run **Config: Reload Configuration** to apply the changes. Setting a key to `"none"`, `"unbind"`, or `""` also blocks any global binding for that key in the specified context. Removing the line omits the binding and allows any global binding to apply. Alternate keys are listed individually.
+
+The `global`, `editor`, `normal`, `visual`, `insert`, and `explorer` tables support multi-key chords like `"Space f f" = "file.quick_open"`. The `prompt`, `confirm`, `recovery`, `search`, `palette`, `quick_open`, `which_key`, `chord`, and `text_editing` tables support single-key shortcuts and list the available actions in the generated file.
+
+To initialize the bindings from a different preset, start with a file containing `[keymaps]` and `preset = "minimal"` or `preset = "vim"`. Lume writes out the selected preset on load. The Vim preset also enables modal editing unless `editor.modal = false` is set.
 
 ### Additional bindable action IDs
 

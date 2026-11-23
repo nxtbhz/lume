@@ -18,6 +18,7 @@ impl FileExplorer {
         height: usize,
         width: usize,
         is_focused: bool,
+        shortcut: Option<&str>,
     ) -> std::io::Result<()> {
         if !self.is_visible || height == 0 || width == 0 {
             return Ok(());
@@ -46,7 +47,11 @@ impl FileExplorer {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or_else(|| self.root.to_str().unwrap_or("WORKSPACE"));
-        let header = format!(" 📁 {root_name} [F2]");
+        let header = if let Some(key) = shortcut {
+            format!(" 📁 {root_name} [{key}]")
+        } else {
+            format!(" 📁 {root_name}")
+        };
         queue!(
             writer,
             Print(fit_text(&header, content_w)),

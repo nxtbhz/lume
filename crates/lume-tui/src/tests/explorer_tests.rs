@@ -273,20 +273,20 @@ fn test_explorer_navigation_click_and_render() {
     // Render explorer
     let mut buf = Vec::new();
     assert!(explorer
-        .render(&mut buf, 0, 24, explorer.width, true)
+        .render(&mut buf, 0, 24, explorer.width, true, Some("F2"))
         .is_ok());
     assert!(!buf.is_empty());
 
     buf.clear();
     assert!(explorer
-        .render(&mut buf, 0, 24, explorer.width, false)
+        .render(&mut buf, 0, 24, explorer.width, false, None)
         .is_ok());
 
     // Invisible render
     explorer.is_visible = false;
     buf.clear();
     assert!(explorer
-        .render(&mut buf, 0, 24, explorer.width, false)
+        .render(&mut buf, 0, 24, explorer.width, false, None)
         .is_ok());
     assert!(buf.is_empty());
 
@@ -294,7 +294,7 @@ fn test_explorer_navigation_click_and_render() {
     explorer.is_visible = true;
     buf.clear();
     assert!(explorer
-        .render(&mut buf, 0, 0, explorer.width, false)
+        .render(&mut buf, 0, 0, explorer.width, false, None)
         .is_ok());
     assert!(buf.is_empty());
 }
