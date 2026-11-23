@@ -286,3 +286,100 @@ preset = "minimal"
     let pending_text = String::from_utf8_lossy(&pending_out);
     assert!(pending_text.contains("Keys: Space ..."));
 }
+
+#[test]
+fn pending_chord_completion_and_mismatch_do_not_leave_stale_status_message() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let cfg = AppConfig::from_toml_str(
+        r#"
+[editor]
+modal = true
+
+[keymaps]
+preset = "vim"
+
+[keymaps.insert]
+"j k" = "vim.normal_mode"
+"#,
+        is_valid_action_id,
+    )
+    .unwrap();
+
+    let mut app = App::open_targets_with_config(
+        CliTargets::default(),
+        LoadedConfig {
+            config: cfg,
+            path: None,
+            warning: None,
+        },
+    )
+    .unwrap();
+    app.status_message = None;
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE))
+        .unwrap();
+    assert!(
+        app.status_message
+            .as_ref()
+            .is_none_or(|(m, _)| !m.contains("Key sequence")),
+        "stale status after mismatch: {:?}",
+        app.status_message
+    );
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE))
+        .unwrap();
+    assert!(
+        app.status_message
+            .as_ref()
+            .is_none_or(|(m, _)| !m.contains("Key sequence")),
+        "stale status after completion: {:?}",
+        app.status_message
+    );
+}
+
+#[test]
+fn non_char_pending_key_replays_on_mismatch_in_insert_mode() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let cfg = AppConfig::from_toml_str(
+        r#"
+[editor]
+tab_size = 2
+modal = true
+
+[keymaps]
+preset = "vim"
+
+[keymaps.insert]
+"Tab k" = "vim.normal_mode"
+"#,
+        is_valid_action_id,
+    )
+    .unwrap();
+
+    let mut app = App::open_targets_with_config(
+        CliTargets::default(),
+        LoadedConfig {
+            config: cfg,
+            path: None,
+            warning: None,
+        },
+    )
+    .unwrap();
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(app.vim_state.mode, crate::vim::VimMode::Insert);
+    assert_eq!(app.editor.buffer().rope().to_string(), "  x");
+}

@@ -75,6 +75,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             print!("{}", config::default_config_toml());
             return Ok(());
         }
+        CliCommand::Error(msg) => {
+            return Err(msg.into());
+        }
         CliCommand::BenchStartup(targets) => {
             let start = Instant::now();
             let mut app = App::open_targets(targets)?;

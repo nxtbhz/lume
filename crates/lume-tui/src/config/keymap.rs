@@ -292,11 +292,24 @@ impl ContextBindings {
         if seq.is_empty() {
             return;
         }
+        let exact_action = self.bindings.get(seq).cloned();
         let before = self.bindings.len();
         self.bindings
             .retain(|existing, _| !existing.starts_with(seq));
+        if let Some(action) = exact_action {
+            if let Some(twin) = same_action_compat_twin(seq) {
+                if self
+                    .bindings
+                    .get(twin.as_slice())
+                    .is_some_and(|bound| bound == &action)
+                {
+                    self.bindings.remove(twin.as_slice());
+                }
+            }
+        }
         if self.bindings.len() != before {
-            self.order.retain(|existing| !existing.starts_with(seq));
+            self.order
+                .retain(|existing| self.bindings.contains_key(existing.as_slice()));
             self.rebuild_prefixes();
         }
     }
@@ -809,9 +822,52 @@ fn split_key_spec(spec: &str) -> Result<(Option<&str>, &str), ConfigError> {
     }
 }
 
+fn same_action_compat_twin(seq: &[KeyCombo]) -> Option<Vec<KeyCombo>> {
+    match seq {
+        [KeyCombo {
+            code: KeyCode::Char(c),
+            modifiers,
+        }] if c.is_ascii_alphabetic()
+            && modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            && !modifiers.contains(KeyModifiers::SHIFT) =>
+        {
+            Some(vec![KeyCombo {
+                code: KeyCode::Char(*c),
+                modifiers: *modifiers | KeyModifiers::SHIFT,
+            }])
+        }
+        [first, KeyCombo {
+            code: KeyCode::Char(c),
+            modifiers: KeyModifiers::NONE,
+        }] if c.is_ascii_alphabetic() => {
+            let flipped = if c.is_ascii_uppercase() {
+                c.to_ascii_lowercase()
+            } else {
+                c.to_ascii_uppercase()
+            };
+            Some(vec![
+                *first,
+                KeyCombo {
+                    code: KeyCode::Char(flipped),
+                    modifiers: KeyModifiers::NONE,
+                },
+            ])
+        }
+        _ => None,
+    }
+}
+
 fn parse_key_code(token: &str, full_spec: &str) -> Result<KeyCode, ConfigError> {
     if token.chars().count() == 1 {
         if let Some(ch) = token.chars().next() {
+            if ch.is_control() {
+                return Err(ConfigError::Validation {
+                    line: None,
+                    message: format!(
+                        "control character is not allowed in key `{full_spec}`; use named keys like Tab or Enter"
+                    ),
+                });
+            }
             return Ok(KeyCode::Char(ch));
         }
     }
@@ -946,5 +1002,12 @@ mod tests {
         assert!(parse_key_sequence("   ").is_err());
         assert!(parse_key_sequence("Ctrl+UnknownKey").is_err());
         assert!(parse_key_sequence("Ctrl+").is_err());
+    }
+
+    #[test]
+    fn parse_key_sequence_rejects_control_characters() {
+        assert!(parse_key_sequence("Ctrl+\t").is_err());
+        assert!(parse_key_sequence("Ctrl+\n").is_err());
+        assert!(parse_key_sequence("\x1b").is_err());
     }
 }

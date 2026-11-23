@@ -360,7 +360,9 @@ impl AppConfig {
             let Some(ctx) = KeymapContext::from_section_suffix(suffix) else {
                 continue;
             };
-            for (key_spec, entry) in table {
+            let mut ordered_entries: Vec<(&String, &TomlEntry)> = table.iter().collect();
+            ordered_entries.sort_by_key(|(_, entry)| entry.line);
+            for (key_spec, entry) in ordered_entries {
                 let raw_action = expect_str(entry, &format!("{section}.{key_spec}"))?;
                 let seq =
                     parse_key_sequence(key_spec).map_err(|err| attach_line(err, entry.line))?;
@@ -619,5 +621,81 @@ preset = "minimal"
         )
         .unwrap();
         assert!(!overridden.editor.modal);
+    }
+
+    #[test]
+    fn unbind_removes_same_action_compatibility_aliases_without_touching_other_actions() {
+        let cfg = AppConfig::from_toml_str(
+            r#"
+[keymaps.global]
+"Ctrl+K W" = "none"
+"Alt+P" = "none"
+"Ctrl+C" = "none"
+"Ctrl+P" = "none"
+"#,
+            |_| true,
+        )
+        .unwrap();
+
+        let ctrl_k_w_lower = parse_key_sequence("Ctrl+K w").unwrap().0;
+        let ctrl_k_w_upper = parse_key_sequence("Ctrl+K W").unwrap().0;
+        let alt_shift_p = parse_key_sequence("Alt+Shift+P").unwrap().0;
+        let ctrl_shift_c = parse_key_sequence("Ctrl+Shift+C").unwrap().0;
+        let ctrl_p = parse_key_sequence("Ctrl+P").unwrap().0;
+        let ctrl_shift_p = parse_key_sequence("Ctrl+Shift+P").unwrap().0;
+
+        assert_eq!(
+            cfg.keymaps.lookup(KeymapContext::Global, &ctrl_k_w_upper),
+            LookupResult::None
+        );
+        assert_eq!(
+            cfg.keymaps.lookup(KeymapContext::Global, &ctrl_k_w_lower),
+            LookupResult::None
+        );
+        assert_eq!(
+            cfg.keymaps.lookup(KeymapContext::Global, &alt_shift_p),
+            LookupResult::None
+        );
+        assert_eq!(
+            cfg.keymaps.lookup(KeymapContext::Global, &ctrl_shift_c),
+            LookupResult::None
+        );
+        assert_eq!(
+            cfg.keymaps.lookup(KeymapContext::Global, &ctrl_p),
+            LookupResult::None
+        );
+        assert_eq!(
+            cfg.keymaps.lookup(KeymapContext::Global, &ctrl_shift_p),
+            LookupResult::Matched("view.command_palette")
+        );
+    }
+
+    #[test]
+    fn keymap_overrides_apply_in_source_line_order() {
+        let cfg = AppConfig::from_toml_str(
+            r#"
+[keymaps]
+preset = "minimal"
+
+[keymaps.global]
+"Ctrl+p" = "file.save"
+"Ctrl+P" = "view.command_palette"
+"Space f" = "file.quick_open"
+"Space" = "none"
+"#,
+            test_validator,
+        )
+        .unwrap();
+
+        let ctrl_p = parse_key_sequence("Ctrl+P").unwrap().0;
+        let space_f = parse_key_sequence("Space f").unwrap().0;
+        assert_eq!(
+            cfg.keymaps.lookup(KeymapContext::Global, &ctrl_p),
+            LookupResult::Matched("view.command_palette")
+        );
+        assert_eq!(
+            cfg.keymaps.lookup(KeymapContext::Global, &space_f),
+            LookupResult::None
+        );
     }
 }

@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::app::{ActiveFocus, App};
-use crate::config::{format_key_sequence, KeyCombo, KeymapContext, LookupResult};
+use crate::config::{KeyCombo, KeymapContext, LookupResult};
 use crate::vim::VimMode;
 use lume_core::TextBuffer;
 
@@ -140,9 +140,7 @@ impl App {
 
                 if matches!(ctx, KeymapContext::Editor | KeymapContext::Insert) {
                     for prev in prior {
-                        if let KeyCode::Char(c) = prev.code {
-                            self.insert_char_with_syntax(c);
-                        }
+                        self.handle_text_editing_fallback(KeyEvent::new(prev.code, prev.modifiers));
                     }
                 }
 
@@ -198,9 +196,6 @@ impl App {
         } else {
             self.vim_state.clear_pending();
         }
-
-        let formatted = format_key_sequence(&self.pending_keys);
-        self.set_status(format!("Key sequence: {formatted} ..."));
     }
 
     pub(crate) fn handle_text_editing_fallback(&mut self, key: KeyEvent) {

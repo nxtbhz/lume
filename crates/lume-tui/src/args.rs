@@ -5,6 +5,7 @@ pub enum CliCommand {
     Help,
     Version,
     PrintDefaultConfig,
+    Error(String),
     BenchStartup(CliTargets),
     Run(CliTargets),
 }
@@ -169,18 +170,33 @@ where
     while i < all_args.len() {
         let arg = &all_args[i];
         if arg == "--config" {
-            if let Some(next_path) = all_args.get(i + 1) {
-                config_path = Some(PathBuf::from(next_path));
-                i += 2;
-                continue;
+            let Some(next_path) = all_args.get(i + 1) else {
+                return CliCommand::Error("missing file path after `--config`".to_string());
+            };
+            let is_known_flag = matches!(
+                next_path.as_str(),
+                "-h" | "--help"
+                    | "-v"
+                    | "--version"
+                    | "--config"
+                    | "--no-config"
+                    | "--print-default-config"
+                    | "--bench-startup"
+            ) || next_path.starts_with("--config=");
+            if next_path.is_empty() || is_known_flag {
+                return CliCommand::Error(format!(
+                    "missing file path after `--config` (got `{next_path}`)"
+                ));
             }
-            i += 1;
+            config_path = Some(PathBuf::from(next_path));
+            i += 2;
             continue;
         }
         if let Some(path) = arg.strip_prefix("--config=") {
-            if !path.is_empty() {
-                config_path = Some(PathBuf::from(path));
+            if path.is_empty() {
+                return CliCommand::Error("missing file path after `--config=`".to_string());
             }
+            config_path = Some(PathBuf::from(path));
             i += 1;
             continue;
         }
@@ -497,5 +513,21 @@ mod tests {
             parse_cli_args(["lume", "--print-default-config"]),
             CliCommand::PrintDefaultConfig
         );
+    }
+
+    #[test]
+    fn test_parse_config_flag_errors_on_missing_path() {
+        assert!(matches!(
+            parse_cli_args(["lume", "--config"]),
+            CliCommand::Error(_)
+        ));
+        assert!(matches!(
+            parse_cli_args(["lume", "--config="]),
+            CliCommand::Error(_)
+        ));
+        assert!(matches!(
+            parse_cli_args(["lume", "--config", "--no-config"]),
+            CliCommand::Error(_)
+        ));
     }
 }
