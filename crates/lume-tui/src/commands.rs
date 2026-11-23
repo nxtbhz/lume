@@ -271,6 +271,14 @@ pub fn is_valid_action_id(id: &str) -> bool {
 }
 
 impl App {
+    /// Returns the active primary shortcut label for `id` from `self.config.keymaps`.
+    pub fn shortcut_label_for_command(&self, id: &str) -> String {
+        self.config
+            .keymaps
+            .primary_shortcut_for(id)
+            .unwrap_or_default()
+    }
+
     pub fn filtered_commands(&self) -> Vec<&'static CommandItem> {
         if self.palette_query.is_empty() {
             COMMANDS.iter().collect()
@@ -618,8 +626,62 @@ impl App {
                     self.set_status("Modal mode (Vim Motions): OFF");
                 }
             }
-            "config.open" | "config.reload" => {
-                self.set_status("Config command wired in Task 6");
+            "config.open" => {
+                let Some(path) = self
+                    .config_path
+                    .clone()
+                    .or_else(|| crate::config::resolve_config_path(None, false))
+                else {
+                    self.set_status("Could not determine configuration file path");
+                    return;
+                };
+                self.config_path = Some(path.clone());
+                if !path.exists() {
+                    if let Some(parent) = path.parent() {
+                        if let Err(err) = std::fs::create_dir_all(parent) {
+                            self.set_status(format!("Config error: {err}"));
+                            return;
+                        }
+                    }
+                    if let Err(err) =
+                        std::fs::write(&path, crate::config::default_config_toml())
+                    {
+                        self.set_status(format!("Config error: {err}"));
+                        return;
+                    }
+                }
+                let target_canon = path.canonicalize().unwrap_or_else(|_| path.clone());
+                if let Some(existing_idx) = self.editor.tabs().iter().position(|tab| {
+                    tab.file_path.as_ref().is_some_and(|p| {
+                        p.canonicalize().unwrap_or_else(|_| p.clone()) == target_canon
+                    })
+                }) {
+                    self.editor.switch_tab(existing_idx);
+                    self.focus = ActiveFocus::Editor;
+                    self.set_status(format!("Switched to config {}", path.display()));
+                } else {
+                    self.open_file_into_editor(&path, "Opened config ", "Config open error: ");
+                }
+            }
+            "config.reload" => {
+                let Some(path) = self
+                    .config_path
+                    .clone()
+                    .or_else(|| crate::config::resolve_config_path(None, false))
+                else {
+                    self.set_status("Config error: no configuration file path configured");
+                    return;
+                };
+                match crate::config::AppConfig::load_from_path(&path, is_valid_action_id) {
+                    Ok(cfg) => {
+                        self.apply_config(cfg);
+                        self.config_path = Some(path);
+                        self.set_status("Configuration reloaded");
+                    }
+                    Err(err) => {
+                        self.set_status(format!("Config error: {err}"));
+                    }
+                }
             }
             "search.find_next" => {
                 if let Some(q) = self.last_search_query.clone() {

@@ -2,11 +2,12 @@ use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossterm::terminal::size as terminal_size;
 
 use crate::args::{parse_cli_args, CliCommand, CliTargets};
+use crate::config::{AppConfig, KeyCombo, LoadedConfig};
 use crate::explorer::FileExplorer;
 use crate::prompt::InputPrompt;
 use crate::search::{SearchField, SearchState};
@@ -68,6 +69,11 @@ pub struct App {
     // Split View & Key Chords
     pub splits: crate::split::SplitState,
     pub pending_chord: Option<char>,
+
+    // Configuration & Keymaps
+    pub config: AppConfig,
+    pub config_path: Option<PathBuf>,
+    pub pending_keys: Vec<KeyCombo>,
 }
 
 impl App {
@@ -89,7 +95,7 @@ impl App {
             }
             None => CliTargets::default(),
         };
-        Self::open_targets(targets)
+        Self::open_targets_with_config(targets, LoadedConfig::default())
     }
 
     #[allow(dead_code)]
@@ -103,13 +109,26 @@ impl App {
             .collect();
         match parse_cli_args(&str_args) {
             CliCommand::Run(targets) | CliCommand::BenchStartup(targets) => {
-                Self::open_targets(targets)
+                Self::open_targets_with_config(targets, LoadedConfig::default())
             }
-            _ => Self::open_targets(CliTargets::default()),
+            _ => Self::open_targets_with_config(CliTargets::default(), LoadedConfig::default()),
         }
     }
 
     pub fn open_targets(targets: CliTargets) -> Result<Self, std::io::Error> {
+        let loaded = AppConfig::load_startup(
+            targets.config_path.as_deref(),
+            targets.no_config,
+            crate::commands::is_valid_action_id,
+        )
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string()))?;
+        Self::open_targets_with_config(targets, loaded)
+    }
+
+    pub fn open_targets_with_config(
+        targets: CliTargets,
+        loaded: LoadedConfig,
+    ) -> Result<Self, std::io::Error> {
         let initial_cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
         let workspace_root = if let Some(ref ws) = targets.workspace {
@@ -217,8 +236,13 @@ impl App {
 
             splits: crate::split::SplitState::new(),
             pending_chord: None,
+
+            config: AppConfig::default(),
+            config_path: loaded.path,
+            pending_keys: Vec::new(),
         };
 
+        app.apply_config(loaded.config);
         app.refresh_git_head();
 
         if let Some(msg) = initial_status {
@@ -235,9 +259,44 @@ impl App {
             app.set_status(format!("Workspace: {}", workspace_root.display()));
         }
 
+        if let Some(warning) = loaded.warning {
+            app.set_status(warning);
+        }
+
         app.prompt_next_recovery_if_any();
 
         Ok(app)
+    }
+
+    /// Applies an [`AppConfig`] to editor settings, autosave, explorer, and active keymaps.
+    pub fn apply_config(&mut self, config: AppConfig) {
+        {
+            let ed_cfg = self.editor.config_mut();
+            ed_cfg.tab_size = config.editor.tab_size;
+            ed_cfg.smart_indent = config.editor.smart_indent;
+            ed_cfg.smart_unindent = config.editor.smart_unindent;
+            ed_cfg.auto_pairs = config.editor.auto_pairs;
+        }
+        {
+            let autosave = self.editor.autosave_controller_mut();
+            autosave.config.enabled = config.editor.auto_save;
+            autosave.config.debounce = Duration::from_millis(config.editor.auto_save_debounce_ms);
+        }
+        let was_modal = self.modal_enabled;
+        self.modal_enabled = config.editor.modal;
+        if !self.modal_enabled || !was_modal {
+            self.vim_state.set_mode(crate::vim::VimMode::Normal);
+        }
+        self.show_line_numbers = config.editor.line_numbers;
+        self.explorer.is_visible = config.explorer.visible_on_startup;
+        self.explorer.width = config.explorer.width;
+        if !self.explorer.is_visible && self.focus == ActiveFocus::Explorer {
+            self.focus = ActiveFocus::Editor;
+        }
+        self.pending_keys.clear();
+        self.pending_chord = None;
+        self.vim_state.clear_pending();
+        self.config = config;
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {

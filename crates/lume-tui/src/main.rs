@@ -87,8 +87,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         CliCommand::Run(targets) => targets,
     };
 
-    let _guard = TerminalGuard::init()?;
     let mut app = App::open_targets(targets)?;
+    let _guard = TerminalGuard::init()?;
     let mut out = BufWriter::with_capacity(128 * 1024, stdout());
 
     run(&mut app, &mut out)?;
