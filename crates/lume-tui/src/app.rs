@@ -66,9 +66,8 @@ pub struct App {
     // Clipboard
     pub pending_osc52: Option<String>,
 
-    // Split View & Key Chords
+    // Split View
     pub splits: crate::split::SplitState,
-    pub pending_chord: Option<char>,
 
     // Configuration & Keymaps
     pub config: AppConfig,
@@ -235,7 +234,6 @@ impl App {
             pending_osc52: None,
 
             splits: crate::split::SplitState::new(),
-            pending_chord: None,
 
             config: AppConfig::default(),
             config_path: loaded.path,
@@ -294,9 +292,14 @@ impl App {
             self.focus = ActiveFocus::Editor;
         }
         self.pending_keys.clear();
-        self.pending_chord = None;
         self.vim_state.clear_pending();
         self.config = config;
+    }
+
+    /// Clears any pending multi-key chord and synchronized Vim pending operator.
+    pub fn clear_pending_keys(&mut self) {
+        self.pending_keys.clear();
+        self.vim_state.clear_pending();
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {

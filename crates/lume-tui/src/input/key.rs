@@ -1,7 +1,26 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::app::{ActiveFocus, App};
+use crate::config::{format_key_sequence, KeyCombo, KeymapContext, LookupResult};
+use crate::vim::VimMode;
 use lume_core::TextBuffer;
+
+/// Outcome of routing a single [`KeyEvent`] through the active [`crate::config::KeymapTable`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DispatchOutcome {
+    /// A bound action was executed (or a pending chord was cancelled).
+    Executed,
+    /// The key extended or started a multi-key chord prefix.
+    Pending,
+    /// No binding or prefix matched in the active or global contexts.
+    Unmatched,
+}
+
+enum ResolvedLookup {
+    Matched(String),
+    Prefix,
+    None,
+}
 
 impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> std::io::Result<()> {
@@ -11,7 +30,6 @@ impl App {
 
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
-        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
         // 1. If Which-Key overlay is open, any key dismisses it
         if self.which_key_open {
@@ -49,295 +67,215 @@ impl App {
             return self.handle_palette_key(key);
         }
 
-        // 4.5. If Ctrl+K chord is pending, route second key
-        if self.pending_chord == Some('k') {
-            self.pending_chord = None;
-            match key.code {
-                KeyCode::Char('\\') | KeyCode::Char('|') => {
-                    self.execute_command("view.split_vertical");
+        // 5. Unified keymap dispatch across Global + active context
+        let active_ctx = self.active_keymap_context();
+        if self.dispatch_keymap(active_ctx, key) == DispatchOutcome::Unmatched {
+            match active_ctx {
+                KeymapContext::Explorer => self.handle_explorer_fallback(key),
+                KeymapContext::Editor | KeymapContext::Insert => {
+                    self.handle_text_editing_fallback(key);
                 }
-                KeyCode::Char('-') | KeyCode::Char('_') => {
-                    self.execute_command("view.split_horizontal");
-                }
-                KeyCode::Char('w') | KeyCode::Char('W') => {
-                    self.execute_command("view.focus_next_split");
-                }
-                KeyCode::Char('q') | KeyCode::Char('Q') => {
-                    self.execute_command("view.close_split");
-                }
-                KeyCode::Char('m') | KeyCode::Char('M') => {
-                    self.execute_command("language.set_mode");
-                }
-                KeyCode::Esc => {
-                    self.set_status("Cancelled chord");
-                }
-                _ => {
-                    self.set_status("Cancelled chord");
-                }
-            }
-            return Ok(());
-        }
-
-        // 5. Global Shortcuts
-        if ctrl && alt && (key.code == KeyCode::Char('v') || key.code == KeyCode::Char('V')) {
-            self.execute_command("settings.toggle_modal");
-            return Ok(());
-        }
-
-        if alt && !ctrl && (key.code == KeyCode::Char('p') || key.code == KeyCode::Char('P')) {
-            self.open_command_palette();
-            return Ok(());
-        }
-
-        if ctrl && !alt {
-            match key.code {
-                KeyCode::Char('q') => {
-                    self.execute_command("app.quit");
-                    return Ok(());
-                }
-                KeyCode::Char('P') => {
-                    self.open_command_palette();
-                    return Ok(());
-                }
-                KeyCode::Char('p') => {
-                    if shift {
-                        self.open_command_palette();
-                    } else {
-                        self.open_quick_open();
-                    }
-                    return Ok(());
-                }
-                KeyCode::Char('o') => {
-                    self.execute_command("file.open");
-                    return Ok(());
-                }
-                KeyCode::Char('s') => {
-                    if shift {
-                        self.execute_command("file.save_as");
-                    } else {
-                        self.execute_command("file.save");
-                    }
-                    return Ok(());
-                }
-                KeyCode::Char('S') => {
-                    self.execute_command("file.save_as");
-                    return Ok(());
-                }
-                KeyCode::Char('b') | KeyCode::Char('e') => {
-                    self.execute_command("view.toggle_explorer");
-                    return Ok(());
-                }
-                KeyCode::Char('t') => {
-                    self.execute_command("file.new_tab");
-                    return Ok(());
-                }
-                KeyCode::Char('w') => {
-                    self.execute_command("file.close_tab");
-                    return Ok(());
-                }
-                KeyCode::Tab => {
-                    if shift {
-                        self.execute_command("file.prev_tab");
-                    } else {
-                        self.execute_command("file.next_tab");
-                    }
-                    return Ok(());
-                }
-                KeyCode::BackTab => {
-                    self.execute_command("file.prev_tab");
-                    return Ok(());
-                }
-                KeyCode::Char('a') | KeyCode::Char('A') => {
-                    self.execute_command("edit.select_all");
-                    return Ok(());
-                }
-                KeyCode::Char('z') => {
-                    self.execute_command("edit.undo");
-                    return Ok(());
-                }
-                KeyCode::Char('y') | KeyCode::Char('r') => {
-                    self.execute_command("edit.redo");
-                    return Ok(());
-                }
-                KeyCode::Char('c' | 'C') => {
-                    self.execute_command("edit.copy");
-                    return Ok(());
-                }
-                KeyCode::Char('x' | 'X') => {
-                    self.execute_command("edit.cut");
-                    return Ok(());
-                }
-                KeyCode::Char('v' | 'V') => {
-                    self.execute_command("edit.paste");
-                    return Ok(());
-                }
-                KeyCode::Char('f') => {
-                    self.execute_command("edit.find");
-                    return Ok(());
-                }
-                KeyCode::Char('h') => {
-                    self.execute_command("edit.replace");
-                    return Ok(());
-                }
-                KeyCode::Char('m') => {
-                    self.execute_command("navigation.match_bracket");
-                    return Ok(());
-                }
-                KeyCode::Char('g') | KeyCode::Char('G') => {
-                    self.execute_command("navigation.goto_line");
-                    return Ok(());
-                }
-                KeyCode::Char('k') | KeyCode::Char('K') => {
-                    self.pending_chord = Some('k');
-                    self.set_status(
-                        "(Ctrl+K) was pressed. Waiting for second key (\\, -, w, q, m)...",
-                    );
-                    return Ok(());
-                }
-                _ => {}
+                KeymapContext::Normal | KeymapContext::Visual | KeymapContext::Global => {}
             }
         }
+
+        Ok(())
+    }
+
+    pub(crate) fn active_keymap_context(&self) -> KeymapContext {
+        if self.focus == ActiveFocus::Explorer && self.explorer.is_visible {
+            KeymapContext::Explorer
+        } else if self.modal_enabled {
+            match self.vim_state.mode {
+                VimMode::Normal => KeymapContext::Normal,
+                VimMode::Visual => KeymapContext::Visual,
+                VimMode::Insert => KeymapContext::Insert,
+            }
+        } else {
+            KeymapContext::Editor
+        }
+    }
+
+    /// Dispatches `key` against `ctx` and [`KeymapContext::Global`], managing multi-key chords.
+    pub fn dispatch_keymap(&mut self, ctx: KeymapContext, key: KeyEvent) -> DispatchOutcome {
+        let combo = KeyCombo::from_key_event(key);
+
+        if !self.pending_keys.is_empty()
+            && combo.code == KeyCode::Esc
+            && combo.modifiers == KeyModifiers::NONE
+        {
+            self.clear_pending_keys();
+            self.set_status("Cancelled chord");
+            return DispatchOutcome::Executed;
+        }
+
+        if self.pending_keys.is_empty() {
+            return self.dispatch_single_combo(ctx, combo);
+        }
+
+        self.pending_keys.push(combo);
+        match self.resolve_sequence(ctx, &self.pending_keys) {
+            ResolvedLookup::Matched(action) => {
+                self.clear_pending_keys();
+                self.execute_command(&action);
+                DispatchOutcome::Executed
+            }
+            ResolvedLookup::Prefix => {
+                self.sync_pending_state(ctx);
+                DispatchOutcome::Pending
+            }
+            ResolvedLookup::None => {
+                self.pending_keys.pop();
+                let prior = std::mem::take(&mut self.pending_keys);
+                self.vim_state.clear_pending();
+
+                let prior_has_modifiers = prior.iter().any(|k| {
+                    k.modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                });
+                if prior_has_modifiers {
+                    self.set_status("Cancelled chord");
+                    return DispatchOutcome::Executed;
+                }
+
+                if matches!(ctx, KeymapContext::Editor | KeymapContext::Insert) {
+                    for prev in prior {
+                        if let KeyCode::Char(c) = prev.code {
+                            self.insert_char_with_syntax(c);
+                        }
+                    }
+                }
+
+                // Re-evaluate the current key alone with an empty pending buffer.
+                self.dispatch_single_combo(ctx, combo)
+            }
+        }
+    }
+
+    fn dispatch_single_combo(&mut self, ctx: KeymapContext, combo: KeyCombo) -> DispatchOutcome {
+        match self.resolve_sequence(ctx, &[combo]) {
+            ResolvedLookup::Matched(action) => {
+                self.execute_command(&action);
+                DispatchOutcome::Executed
+            }
+            ResolvedLookup::Prefix => {
+                self.pending_keys.push(combo);
+                self.sync_pending_state(ctx);
+                DispatchOutcome::Pending
+            }
+            ResolvedLookup::None => DispatchOutcome::Unmatched,
+        }
+    }
+
+    fn resolve_sequence(&self, ctx: KeymapContext, seq: &[KeyCombo]) -> ResolvedLookup {
+        if ctx != KeymapContext::Global {
+            match self.config.keymaps.lookup(ctx, seq) {
+                LookupResult::Matched(action) => return ResolvedLookup::Matched(action.to_owned()),
+                LookupResult::Prefix => return ResolvedLookup::Prefix,
+                LookupResult::None => {}
+            }
+        }
+        match self.config.keymaps.lookup(KeymapContext::Global, seq) {
+            LookupResult::Matched(action) => ResolvedLookup::Matched(action.to_owned()),
+            LookupResult::Prefix => ResolvedLookup::Prefix,
+            LookupResult::None => ResolvedLookup::None,
+        }
+    }
+
+    fn sync_pending_state(&mut self, ctx: KeymapContext) {
+        if matches!(ctx, KeymapContext::Normal | KeymapContext::Visual)
+            && self.pending_keys.len() == 1
+        {
+            if let KeyCombo {
+                code: KeyCode::Char(c),
+                modifiers: KeyModifiers::NONE,
+            } = self.pending_keys[0]
+            {
+                self.vim_state.set_pending(c);
+            } else {
+                self.vim_state.clear_pending();
+            }
+        } else {
+            self.vim_state.clear_pending();
+        }
+
+        let formatted = format_key_sequence(&self.pending_keys);
+        self.set_status(format!("Key sequence: {formatted} ..."));
+    }
+
+    pub(crate) fn handle_text_editing_fallback(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        if ctrl || alt {
+            return;
+        }
+
+        let tab_id = self.editor.active_tab().id;
+        let cursor = *self.editor.cursors().primary();
 
         match key.code {
-            KeyCode::F(1) => {
-                self.which_key_open = true;
-                return Ok(());
-            }
-            KeyCode::F(2) => {
-                if self.focus == ActiveFocus::Explorer && self.explorer.is_visible {
-                    self.execute_command("explorer.rename");
-                } else {
-                    self.execute_command("view.toggle_explorer");
-                }
-                return Ok(());
-            }
-            KeyCode::F(3) => {
-                if let Some(ref q) = self.last_search_query.clone() {
-                    if shift {
-                        let _ = self.editor.find_prev(q, false);
-                    } else {
-                        let _ = self.editor.find_next(q, false);
-                    }
-                    self.adjust_viewport();
-                }
-                return Ok(());
-            }
-            KeyCode::Right if alt => {
-                self.execute_command("file.next_tab");
-                return Ok(());
-            }
-            KeyCode::Left if alt => {
-                self.execute_command("file.prev_tab");
-                return Ok(());
-            }
-            _ => {}
-        }
-
-        // 6. If File Explorer is Focused
-        if self.focus == ActiveFocus::Explorer && self.explorer.is_visible {
-            return self.handle_explorer_key(key);
-        }
-
-        // 7. Editor key handling (Modal or Modeless)
-        if self.modal_enabled {
-            self.handle_modal_key(key)?;
-        } else {
-            let tab_id = self.editor.active_tab().id;
-            let cursor = *self.editor.cursors().primary();
-            match (key.code, ctrl, alt) {
-                (KeyCode::Left, true, false) => self.editor.move_word_backward(shift),
-                (KeyCode::Right, true, false) => self.editor.move_word_end_forward(shift),
-                (KeyCode::Left, false, false) => self.editor.move_left(shift),
-                (KeyCode::Right, false, false) => self.editor.move_right(shift),
-                (KeyCode::Up, false, false) => self.editor.move_up(shift),
-                (KeyCode::Down, false, false) => self.editor.move_down(shift),
-                (KeyCode::PageUp, false, false) => {
-                    let h = self.text_area_height().max(1);
-                    self.editor.page_up(h, shift);
-                }
-                (KeyCode::PageDown, false, false) => {
-                    let h = self.text_area_height().max(1);
-                    self.editor.page_down(h, shift);
-                }
-                (KeyCode::Home, false, false) => self.editor.move_home(shift),
-                (KeyCode::End, false, false) => self.editor.move_end(shift),
-                (KeyCode::Backspace, false, false) => {
-                    let len_before = self.editor.buffer().len_bytes();
-                    let min_pos = cursor.min();
-                    if self.editor.delete_backwards().is_ok() {
-                        let len_after = self.editor.buffer().len_bytes();
-                        let deleted = len_before.saturating_sub(len_after);
-                        if deleted > 0 {
-                            let start = if cursor.is_selection() {
-                                min_pos
-                            } else {
-                                min_pos.saturating_sub(deleted)
-                            };
-                            self.shift_syntax_for_delta(tab_id, start, deleted, 0);
-                        }
+            KeyCode::Backspace => {
+                let len_before = self.editor.buffer().len_bytes();
+                let min_pos = cursor.min();
+                if self.editor.delete_backwards().is_ok() {
+                    let len_after = self.editor.buffer().len_bytes();
+                    let deleted = len_before.saturating_sub(len_after);
+                    if deleted > 0 {
+                        let start = if cursor.is_selection() {
+                            min_pos
+                        } else {
+                            min_pos.saturating_sub(deleted)
+                        };
+                        self.shift_syntax_for_delta(tab_id, start, deleted, 0);
                     }
                 }
-                (KeyCode::Delete, false, false) => {
-                    let len_before = self.editor.buffer().len_bytes();
-                    let start = cursor.min();
-                    if self.editor.delete_forwards().is_ok() {
-                        let len_after = self.editor.buffer().len_bytes();
-                        let deleted = len_before.saturating_sub(len_after);
-                        if deleted > 0 {
-                            self.shift_syntax_for_delta(tab_id, start, deleted, 0);
-                        }
-                    }
-                }
-                (KeyCode::Enter, false, false) => {
-                    let len_before = self.editor.buffer().len_bytes();
-                    let start = cursor.min();
-                    let old_len = if cursor.is_selection() {
-                        cursor.max() - cursor.min()
-                    } else {
-                        0
-                    };
-                    if self.editor.insert_newline().is_ok() {
-                        let len_after = self.editor.buffer().len_bytes();
-                        let new_len = (len_after as isize - len_before as isize + old_len as isize)
-                            .max(0) as usize;
-                        self.shift_syntax_for_delta(tab_id, start, old_len, new_len);
-                    }
-                }
-                (KeyCode::Tab, false, false) => {
-                    let len_before = self.editor.buffer().len_bytes();
-                    let start = cursor.min();
-                    let old_len = if cursor.is_selection() {
-                        cursor.max() - cursor.min()
-                    } else {
-                        0
-                    };
-                    if self.editor.insert_str("    ").is_ok() {
-                        let len_after = self.editor.buffer().len_bytes();
-                        let new_len = (len_after as isize - len_before as isize + old_len as isize)
-                            .max(0) as usize;
-                        self.shift_syntax_for_delta(tab_id, start, old_len, new_len);
-                    }
-                }
-                (KeyCode::Char(c), false, false) => {
-                    let len_before = self.editor.buffer().len_bytes();
-                    let start = cursor.min();
-                    let old_len = if cursor.is_selection() {
-                        cursor.max() - cursor.min()
-                    } else {
-                        0
-                    };
-                    if self.editor.insert_char(c).is_ok() {
-                        let len_after = self.editor.buffer().len_bytes();
-                        let new_len = (len_after as isize - len_before as isize + old_len as isize)
-                            .max(0) as usize;
-                        self.shift_syntax_for_delta(tab_id, start, old_len, new_len);
-                    }
-                }
-                _ => {}
             }
+            KeyCode::Delete => {
+                let len_before = self.editor.buffer().len_bytes();
+                let start = cursor.min();
+                if self.editor.delete_forwards().is_ok() {
+                    let len_after = self.editor.buffer().len_bytes();
+                    let deleted = len_before.saturating_sub(len_after);
+                    if deleted > 0 {
+                        self.shift_syntax_for_delta(tab_id, start, deleted, 0);
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                self.insert_with_syntax_shift(|editor| editor.insert_newline().is_ok());
+            }
+            KeyCode::Tab => {
+                let spaces = " ".repeat(self.editor.config().tab_size.max(1));
+                self.insert_with_syntax_shift(|editor| editor.insert_str(&spaces).is_ok());
+            }
+            KeyCode::Char(c) => {
+                self.insert_char_with_syntax(c);
+            }
+            _ => return,
         }
 
         self.adjust_viewport();
-        Ok(())
+    }
+
+    pub(crate) fn insert_char_with_syntax(&mut self, ch: char) {
+        self.insert_with_syntax_shift(|editor| editor.insert_char(ch).is_ok());
+    }
+
+    fn insert_with_syntax_shift(&mut self, op: impl FnOnce(&mut lume_core::Editor) -> bool) {
+        let tab_id = self.editor.active_tab().id;
+        let cursor = *self.editor.cursors().primary();
+        let len_before = self.editor.buffer().len_bytes();
+        let start = cursor.min();
+        let old_len = if cursor.is_selection() {
+            cursor.max() - cursor.min()
+        } else {
+            0
+        };
+        if op(&mut self.editor) {
+            let len_after = self.editor.buffer().len_bytes();
+            let new_len =
+                (len_after as isize - len_before as isize + old_len as isize).max(0) as usize;
+            self.shift_syntax_for_delta(tab_id, start, old_len, new_len);
+        }
     }
 }

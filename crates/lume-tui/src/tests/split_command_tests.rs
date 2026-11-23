@@ -34,27 +34,28 @@ fn test_ctrl_k_chord_lifecycle_and_cancellation() {
 
     // 1. Press Ctrl+K
     let ctrl_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL);
+    let ctrl_k_combo = crate::config::KeyCombo::from_key_event(ctrl_k);
     app.handle_key(ctrl_k).unwrap();
-    assert_eq!(app.pending_chord, Some('k'));
+    assert_eq!(app.pending_keys, vec![ctrl_k_combo]);
 
     // 2. Press '\' -> split vertical
     let backslash = KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::NONE);
     app.handle_key(backslash).unwrap();
-    assert_eq!(app.pending_chord, None);
+    assert!(app.pending_keys.is_empty());
     assert!(app.splits.is_split);
 
     // 3. Press Ctrl+K then Esc -> cancels chord
     app.handle_key(ctrl_k).unwrap();
-    assert_eq!(app.pending_chord, Some('k'));
+    assert_eq!(app.pending_keys, vec![ctrl_k_combo]);
     let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
     app.handle_key(esc).unwrap();
-    assert_eq!(app.pending_chord, None);
+    assert!(app.pending_keys.is_empty());
 
     // 4. Press Ctrl+K then unknown key 'x' -> resets chord without stuck state
     app.handle_key(ctrl_k).unwrap();
     let x = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
     app.handle_key(x).unwrap();
-    assert_eq!(app.pending_chord, None);
+    assert!(app.pending_keys.is_empty());
 
     // 5. Press Ctrl+K then '-' -> horizontal split
     app.handle_key(ctrl_k).unwrap();

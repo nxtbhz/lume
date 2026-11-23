@@ -102,3 +102,130 @@ fn config_open_scaffolds_missing_file_and_config_reload_keeps_valid_config_on_er
         .0
         .contains("Config error"));
 }
+
+#[test]
+fn custom_minimal_keymap_disables_ctrl_w_and_uses_custom_chord() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use lume_core::TextBuffer;
+
+    let invalid = AppConfig::from_toml_str(
+        r#"
+[keymaps]
+preset = "minimal"
+
+[keymaps.global]
+"Space s" = "file.split_noop_check"
+"#,
+        is_valid_action_id,
+    );
+    assert!(invalid.is_err());
+
+    let cfg = AppConfig::from_toml_str(
+        r#"
+[editor]
+tab_size = 2
+
+[keymaps]
+preset = "minimal"
+
+[keymaps.global]
+"Alt+n" = "file.new_tab"
+"Space v" = "view.split_vertical"
+"#,
+        is_valid_action_id,
+    )
+    .unwrap();
+
+    let mut app = App::open_targets_with_config(
+        CliTargets::default(),
+        LoadedConfig {
+            config: cfg,
+            path: None,
+            warning: None,
+        },
+    )
+    .unwrap();
+
+    // Ctrl+W does not close tab under minimal preset (and does not prompt/modify tabs)
+    app.editor.new_tab();
+    assert_eq!(app.editor.tabs().len(), 2);
+    app.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(app.editor.tabs().len(), 2);
+
+    // Alt+n opens a new tab
+    app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::ALT))
+        .unwrap();
+    assert_eq!(app.editor.tabs().len(), 3);
+
+    // Esc cancels a pending chord cleanly
+    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
+        .unwrap();
+    assert!(!app.pending_keys.is_empty());
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.pending_keys.is_empty());
+    assert!(!app.splits.is_split);
+
+    // Chord "Space v" splits vertically
+    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
+        .unwrap();
+    assert!(!app.pending_keys.is_empty());
+    app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.splits.is_split);
+    assert!(app.pending_keys.is_empty());
+
+    // Tab uses configured tab_size = 2
+    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(app.editor.buffer().slice_to_cow(0, 2), "  ");
+}
+
+#[test]
+fn insert_mode_multi_key_sequence_replays_pending_chars_on_mismatch() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let cfg = AppConfig::from_toml_str(
+        r#"
+[editor]
+modal = true
+
+[keymaps]
+preset = "vim"
+
+[keymaps.insert]
+"j k" = "vim.normal_mode"
+"#,
+        is_valid_action_id,
+    )
+    .unwrap();
+
+    let mut app = App::open_targets_with_config(
+        CliTargets::default(),
+        LoadedConfig {
+            config: cfg,
+            path: None,
+            warning: None,
+        },
+    )
+    .unwrap();
+
+    // Enter Insert mode, type "jx" -> replays 'j' and inserts 'x', staying in Insert
+    app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(app.vim_state.mode, crate::vim::VimMode::Insert);
+    assert_eq!(app.editor.buffer().rope().to_string(), "jx");
+
+    // Type "jk" -> returns to Normal without inserting "jk"
+    app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE))
+        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(app.vim_state.mode, crate::vim::VimMode::Normal);
+    assert_eq!(app.editor.buffer().rope().to_string(), "jx");
+}

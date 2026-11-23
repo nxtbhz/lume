@@ -75,7 +75,7 @@ impl App {
 
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                self.pending_chord = None;
+                self.clear_pending_keys();
                 // Click in status bar (Row status_row)
                 if row == status_row {
                     // Click on language area (Ln ..., Col ... | <Lang>)

@@ -104,7 +104,8 @@ fn test_inactive_split_pane_syntax_response_triggers_update_and_mouse_clears_cho
     );
 
     // Also verify mouse click cancels pending Ctrl+K chord
-    app.pending_chord = Some('k');
+    app.pending_keys
+        .push(crate::config::KeyCombo::parse("Ctrl+K").unwrap());
     app.handle_mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: 60,
@@ -112,7 +113,7 @@ fn test_inactive_split_pane_syntax_response_triggers_update_and_mouse_clears_cho
         modifiers: KeyModifiers::NONE,
     })
     .unwrap();
-    assert_eq!(app.pending_chord, None);
+    assert!(app.pending_keys.is_empty());
 }
 
 #[test]

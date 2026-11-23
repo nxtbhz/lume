@@ -617,68 +617,16 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn handle_explorer_key(&mut self, key: KeyEvent) -> std::io::Result<()> {
+    pub(crate) fn handle_explorer_fallback(&mut self, key: KeyEvent) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
 
-        match key.code {
-            KeyCode::Up => {
-                self.explorer.move_up();
-            }
-            KeyCode::Down => {
-                self.explorer.move_down(self.text_area_height());
-            }
-            KeyCode::PageUp => {
-                for _ in 0..self.text_area_height().max(1) {
-                    self.explorer.move_up();
-                }
-            }
-            KeyCode::PageDown => {
-                for _ in 0..self.text_area_height().max(1) {
-                    self.explorer.move_down(self.text_area_height());
-                }
-            }
-            KeyCode::Left => {
-                self.explorer.collapse_selected();
-            }
-            KeyCode::Right => {
-                self.explorer.expand_selected();
-            }
-            KeyCode::Enter | KeyCode::Char(' ') => {
-                if let Some(path) = self.explorer.activate_selected() {
-                    self.open_file_into_editor(&path, "Opened ", "Open error: ");
-                }
-            }
-            KeyCode::Tab | KeyCode::Esc => {
-                self.focus = ActiveFocus::Editor;
-            }
-            KeyCode::Char('a') if !ctrl && !alt => {
-                self.execute_command("explorer.new_file");
-            }
-            KeyCode::Char('n') if !ctrl && !alt => {
-                self.execute_command("explorer.new_folder");
-            }
-            KeyCode::Char('m') | KeyCode::F(2) if !ctrl && !alt => {
-                self.execute_command("explorer.rename");
-            }
-            KeyCode::Char('d') if !ctrl && !alt => {
-                self.execute_command("explorer.delete_folder");
-            }
-            KeyCode::Delete => {
-                self.execute_command("explorer.delete_folder");
-            }
-            KeyCode::Char('r') if !ctrl && !alt => {
-                self.execute_command("explorer.refresh");
-            }
-            KeyCode::Char(ch)
-                if !ctrl && !alt && (ch.is_alphanumeric() || ch == '.' || ch == '_') =>
-            {
+        if let KeyCode::Char(ch) = key.code {
+            if !ctrl && !alt && (ch.is_alphanumeric() || ch == '.' || ch == '_') {
                 let h = self.text_area_height();
                 self.explorer.jump_to_prefix(ch, h);
             }
-            _ => {}
         }
-        Ok(())
     }
 
     pub(crate) fn handle_quick_open_key(
