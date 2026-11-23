@@ -8,10 +8,13 @@ Invocation syntax is `lume [OPTIONS] [PATH]...` (`crates/lume-tui/src/args.rs:15
 
 | Flag or argument | Default | Behavior | Source |
 | :--- | :--- | :--- | :--- |
-| `-h`, `--help` | Off | Print CLI usage text and exit with status `0` | [args.rs](../crates/lume-tui/src/args.rs#L170-L172) |
-| `-v`, `--version` | Off | Print `lume 0.1.0 (M1 functional MVP)` and exit with status `0` | [main.rs](../crates/lume-tui/src/main.rs#L69-L72) |
-| `--bench-startup` | Off | Open targets, render once into `std::io::sink()`, print elapsed time, and exit | [main.rs](../crates/lume-tui/src/main.rs#L73-L81) |
-| `[PATH]...` | Empty workspace | Open directories as workspace root (first dir wins) and files as tabs | [args.rs](../crates/lume-tui/src/args.rs#L193-L208) |
+| `-h`, `--help` | Off | Print CLI usage text and exit with status `0` | [args.rs](../crates/lume-tui/src/args.rs#L211-L213) |
+| `-v`, `--version` | Off | Print `lume 0.1.0 (M1 functional MVP)` and exit with status `0` | [main.rs](../crates/lume-tui/src/main.rs#L70-L73) |
+| `--config <PATH>` | Auto-discovered | Load configuration from `<PATH>` (or `--config=<PATH>`); missing or invalid files fail on startup | [args.rs](../crates/lume-tui/src/args.rs#L172-L186) |
+| `--no-config` | Off | Ignore any `config.toml` and run with built-in defaults | [args.rs](../crates/lume-tui/src/args.rs#L188-L191) |
+| `--print-default-config` | Off | Print the commented default `config.toml` template to stdout and exit with status `0` | [main.rs](../crates/lume-tui/src/main.rs#L74-L77) |
+| `--bench-startup` | Off | Open targets, render once into `std::io::sink()`, print elapsed time, and exit | [main.rs](../crates/lume-tui/src/main.rs#L78-L86) |
+| `[PATH]...` | Empty workspace | Open directories as workspace root (first dir wins) and files as tabs | [args.rs](../crates/lume-tui/src/args.rs#L238-L253) |
 
 Arguments containing `*` or `?` expand via `expand_glob` (`crates/lume-tui/src/args.rs:60-149`), skipping hidden entries unless the glob segment itself starts with `.`. Passing `-` does not read standard input; `parse_cli_args` passes `"-"` through as a file path (`crates/lume-tui/src/args.rs:163`).
 
@@ -48,7 +51,7 @@ Modeless mode is active on startup (`modal_enabled = false`, `crates/lume-tui/sr
 | `F1` | Open Which-Key sheet | Any key or `Esc` dismisses the overlay | [key.rs](../crates/lume-tui/src/input/key.rs#L194-L197) |
 | `Arrows`, `Home`, `End`, `PageUp`, `PageDown` | Move cursor | Hold `Shift` to extend selection | [key.rs](../crates/lume-tui/src/input/key.rs#L242-L255) |
 | `Ctrl+Left` / `Ctrl+Right` | Word backward / word end forward | Hold `Shift` to extend selection | [key.rs](../crates/lume-tui/src/input/key.rs#L240-L241) |
-| `Tab` | Insert four spaces | Inserts `"    "` at cursor | [key.rs](../crates/lume-tui/src/input/key.rs#L298-L312) |
+| `Tab` | Insert `tab_size` spaces | Inserts `editor.tab_size` spaces (`4` by default) at cursor | [key.rs](../crates/lume-tui/src/input/key.rs#L228-L231) |
 
 Copy (`Ctrl+C`), cut (`Ctrl+X`), and Vim yank operations build ANSI OSC 52 escape sequences up to `MAX_OSC52_BYTES = 10 MiB` (`crates/lume-core/src/clipboard.rs:41`). When `$TMUX` is set or `$TERM` starts with `screen` or `tmux`, `osc52_sequence_auto` wraps the sequence in tmux DCS passthrough (`\x1bPtmux;...\x1b\\`, `crates/lume-core/src/clipboard.rs:66-72`).
 
@@ -125,7 +128,7 @@ When `FileExplorer` is visible (`26` columns wide by default, `crates/lume-tui/s
 
 ## Command palette actions
 
-`COMMANDS` in `crates/lume-tui/src/commands.rs:15-201` defines 37 entries shown in the Command Palette (`Ctrl+Shift+P` or `Alt+P`). Programmatic calls to `App::execute_command` also accept `:set modal`, `:set nomodal`, and `:set modal!` (`crates/lume-tui/src/commands.rs:511-530`).
+`COMMANDS` in `crates/lume-tui/src/commands.rs` defines 39 entries shown in the Command Palette (`Ctrl+Shift+P` or `Alt+P`), displaying the active shortcut from `config.toml` (or blank when unbound). Programmatic calls to `App::execute_command` also accept `:set modal`, `:set nomodal`, `:set modal!`, and all motion, vim, search, and explorer action IDs listed under [Configuration file (`config.toml`)](#configuration-file-configtoml).
 
 | Command ID | Palette title | Listed shortcut | Target behavior |
 | :--- | :--- | :--- | :--- |
@@ -165,7 +168,67 @@ When `FileExplorer` is visible (`26` columns wide by default, `crates/lume-tui/s
 | `settings.toggle_smart_unindent` | `Settings: Toggle Smart Unindent` | `""` | Toggle `Backspace` dedent by `tab_size` (`4`) |
 | `settings.toggle_modal` | `Settings: Toggle Modal Mode (Vim Motions) [:set modal]` | `Ctrl+Alt+V` | Toggle Vim modal keybindings |
 | `edit.select_all` | `Edit: Select All` | `Ctrl+A` | Select entire buffer |
+| `config.open` | `Config: Open Configuration File` | `""` | Open (or scaffold) `config.toml` in a tab |
+| `config.reload` | `Config: Reload Configuration` | `""` | Reload and validate `config.toml` at runtime |
 | `app.quit` | `App: Quit` | `Ctrl+Q` | Exit editor (confirms if any tab is dirty) |
+
+## Configuration file (config.toml)
+
+Lume loads optional TOML configuration using a zero-dependency parser (`crates/lume-tui/src/config/`). Run `lume --print-default-config` or execute `Config: Open Configuration File` (`config.open`) to generate a commented template.
+
+Path resolution order (unless `--no-config` is passed):
+
+1. `--config <PATH>` (or `--config=<PATH>`) — missing or invalid files fail on startup with an error.
+2. `$LUME_CONFIG` (when non-empty).
+3. `$XDG_CONFIG_HOME/lume/config.toml` (when non-empty).
+4. `$HOME/.config/lume/config.toml` (or `%APPDATA%\lume\config.toml` on Windows).
+
+When no auto-discovered file exists, Lume skips parsing completely and starts with built-in defaults. If an auto-discovered file has syntax or validation errors, Lume opens with defaults and displays the error line in the status bar. Running `config.reload` on a broken file keeps the previously active configuration intact and reports the error.
+
+### `[editor]` settings
+
+| Key | Type | Default | Constraints |
+| :--- | :--- | :--- | :--- |
+| `tab_size` | integer | `4` | `1..=16` |
+| `smart_indent` | bool | `true` | Auto-indent after `{`, `(`, `[`, `:` |
+| `smart_unindent` | bool | `true` | Dedent by `tab_size` on `Backspace` |
+| `auto_pairs` | bool | `true` | Auto-close `() [] {} "" ''` |
+| `modal` | bool | `false` (`true` for `preset = "vim"`) | Enable Vim modal editing on startup |
+| `line_numbers` | bool | `true` | Show line-number/diff gutter |
+| `auto_save` | bool | `false` | Enable debounced background autosave |
+| `auto_save_debounce_ms` | integer | `1000` | `100..=60000` |
+
+### `[explorer]` settings
+
+| Key | Type | Default | Constraints |
+| :--- | :--- | :--- | :--- |
+| `visible_on_startup` | bool | `true` | Open sidebar on launch |
+| `width` | integer | `26` | `12..=80` columns |
+
+### `[keymaps]` presets and overrides
+
+`[keymaps]` accepts `preset = "default" | "minimal" | "vim"`:
+
+- **`default`**: Full IDE shortcuts (100% compatible with Lume's classic bindings).
+- **`minimal`**: Only `Ctrl+Q` (`app.quit`), `Alt+P` (`view.command_palette`), `F1` (`view.which_key`), and basic arrow/Home/End/PageUp/PageDown navigation — leaving `Ctrl+*` keys unencumbered.
+- **`vim`**: Enables modal mode by default (unless `editor.modal = false` is set explicitly), omits invasive `Ctrl+W`/`Ctrl+B`/`Ctrl+E`/`Ctrl+F`/`Ctrl+H`/`Ctrl+R` global bindings, binds Normal-mode `Space` leader chords (`Space p`, `Space e`, `Space w`, `Space q`), binds `:` to `view.command_palette`, and binds `g d` to `navigation.goto_line`.
+
+Overrides can be placed in per-context tables: `[keymaps.global]`, `[keymaps.editor]`, `[keymaps.normal]`, `[keymaps.visual]`, `[keymaps.insert]`, and `[keymaps.explorer]`.
+
+- **Unbinding:** assign `"none"`, `"unbind"`, or `""` (for example `"Ctrl+W" = "none"`).
+- **Multi-key chords:** separate keys with spaces (for example `"Space f f" = "file.quick_open"`, `"Ctrl+K \\" = "view.split_vertical"`, `"j k" = "vim.normal_mode"`). Pressing `Esc` cancels a pending chord; in typing modes (`editor` / `insert`), mismatched plain-character prefixes replay their pending characters cleanly.
+
+### Additional bindable action IDs
+
+In addition to all 39 Command Palette IDs above (plus `:set modal`, `:set nomodal`, `:set modal!`), keymaps may bind any of these actions:
+
+| Group | Action IDs |
+| :--- | :--- |
+| Search repeat | `search.find_next`, `search.find_prev` |
+| Explorer navigation | `explorer.move_up`, `explorer.move_down`, `explorer.page_up`, `explorer.page_down`, `explorer.collapse`, `explorer.expand`, `explorer.activate`, `explorer.focus_editor` |
+| Cursor motions | `motion.left`, `motion.right`, `motion.up`, `motion.down`, `motion.word_left`, `motion.word_right`, `motion.word_forward`, `motion.home`, `motion.end`, `motion.page_up`, `motion.page_down`, `motion.document_start`, `motion.document_end` |
+| Selecting motions | `motion.select_left`, `motion.select_right`, `motion.select_up`, `motion.select_down`, `motion.select_word_left`, `motion.select_word_right`, `motion.select_word_forward`, `motion.select_home`, `motion.select_end`, `motion.select_page_up`, `motion.select_page_down`, `motion.select_document_start`, `motion.select_document_end` |
+| Vim modal actions | `vim.normal_mode`, `vim.insert_mode`, `vim.append_mode`, `vim.open_line_below`, `vim.open_line_above`, `vim.visual_mode`, `vim.delete_char`, `vim.delete_line`, `vim.yank_line`, `vim.paste`, `vim.visual_delete`, `vim.visual_yank` |
 
 ## Supported syntax languages
 
@@ -198,6 +261,8 @@ Runtime behavior reads five environment variables (`Journal::journal_dir` in `cr
 
 | Variable | Component | Default when unset | Effect |
 | :--- | :--- | :--- | :--- |
+| `LUME_CONFIG` | `lume-tui` | Falls back to `$XDG_CONFIG_HOME/lume/config.toml` | Overrides the default `config.toml` file path |
+| `XDG_CONFIG_HOME` | `lume-tui` | Falls back to `$HOME/.config/lume/config.toml` | Base config directory for `lume/config.toml` |
 | `LUME_JOURNAL_DIR` | `lume-core` | Falls back to `$XDG_CACHE_HOME/lume/journal` | Overrides directory used for `.journal` crash files |
 | `XDG_CACHE_HOME` | `lume-core` | Falls back to `$HOME/.cache/lume/journal` | Base cache directory for `lume/journal` |
 | `HOME` | `lume-core` | Falls back to `$TMPDIR/lume_journal_<pid>` | Parent of `.cache/lume/journal` |

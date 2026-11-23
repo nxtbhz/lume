@@ -232,18 +232,6 @@ impl KeymapContext {
         }
     }
 
-    /// Lowercase TOML section suffix for this context.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Global => "global",
-            Self::Editor => "editor",
-            Self::Normal => "normal",
-            Self::Visual => "visual",
-            Self::Insert => "insert",
-            Self::Explorer => "explorer",
-        }
-    }
-
     const fn index(self) -> usize {
         match self {
             Self::Global => 0,
@@ -305,7 +293,8 @@ impl ContextBindings {
             return;
         }
         let before = self.bindings.len();
-        self.bindings.retain(|existing, _| !existing.starts_with(seq));
+        self.bindings
+            .retain(|existing, _| !existing.starts_with(seq));
         if self.bindings.len() != before {
             self.order.retain(|existing| !existing.starts_with(seq));
             self.rebuild_prefixes();
@@ -710,7 +699,12 @@ fn populate_default_preset(table: &mut KeymapTable) {
 
     // Ctrl+K chords (bind canonical uppercase/symbol first for clean display labels)
     let ctrl_k = (KeyCode::Char('k'), CTRL);
-    table.bind_two(g, ctrl_k, (KeyCode::Char('\\'), NONE), "view.split_vertical");
+    table.bind_two(
+        g,
+        ctrl_k,
+        (KeyCode::Char('\\'), NONE),
+        "view.split_vertical",
+    );
     table.bind_two(g, ctrl_k, (KeyCode::Char('|'), NONE), "view.split_vertical");
     table.bind_two(
         g,
@@ -914,8 +908,10 @@ mod tests {
     fn key_combo_normalizes_shift_uppercase_and_backtab_across_terminals() {
         let spec_ctrl_shift_p = KeyCombo::parse("Ctrl+Shift+P").unwrap();
         let ev_upper_ctrl = KeyEvent::new(KeyCode::Char('P'), KeyModifiers::CONTROL);
-        let ev_lower_ctrl_shift =
-            KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+        let ev_lower_ctrl_shift = KeyEvent::new(
+            KeyCode::Char('p'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        );
         assert_eq!(KeyCombo::from_key_event(ev_upper_ctrl), spec_ctrl_shift_p);
         assert_eq!(
             KeyCombo::from_key_event(ev_lower_ctrl_shift),

@@ -7,7 +7,8 @@ use crate::vim::VimMode;
 
 impl App {
     /// Routes a key event directly through the current modal context (`Normal`/`Visual`/`Insert`).
-    #[cfg_attr(not(test), allow(dead_code))]
+    // Called directly by clipboard_tests; runtime input routes through App::handle_key.
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn handle_modal_key(&mut self, key: KeyEvent) -> std::io::Result<()> {
         let ctx = match self.vim_state.mode {
             VimMode::Normal => KeymapContext::Normal,

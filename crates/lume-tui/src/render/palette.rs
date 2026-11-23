@@ -156,9 +156,7 @@ fn collect_context_items(app: &App, ctx: KeymapContext) -> Vec<String> {
         }
 
         let formatted = format_key_sequence(seq);
-        let dedup_key = formatted
-            .replace("Shift+", "")
-            .to_ascii_lowercase();
+        let dedup_key = formatted.replace("Shift+", "").to_ascii_lowercase();
         if !seen_lower.insert((action, dedup_key)) {
             continue;
         }
@@ -189,7 +187,8 @@ fn push_wrapped_section(lines: &mut Vec<String>, tag: &str, items: &[String], ma
 
     for item in items {
         let sep = if has_item { " │ " } else { "" };
-        if has_item && display_width(&current) + display_width(sep) + display_width(item) > max_width
+        if has_item
+            && display_width(&current) + display_width(sep) + display_width(item) > max_width
         {
             lines.push(current);
             current = format!("{continuation}{item}");

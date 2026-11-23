@@ -90,7 +90,7 @@ pub(crate) fn parse_toml_document(input: &str) -> Result<TomlDocument, ConfigErr
 }
 
 fn trim_horizontal_ws(s: &str) -> &str {
-    s.trim_matches(|c: char| c == ' ' || c == '\t' || c == '\r')
+    s.trim_matches([' ', '\t', '\r'])
 }
 
 fn ensure_only_comment_or_empty(rest: &str, line: usize) -> Result<(), ConfigError> {
@@ -176,9 +176,7 @@ fn parse_value(input: &str, line: usize) -> Result<(TomlValue, &str), ConfigErro
         return Ok((TomlValue::Str(s), trailing));
     }
 
-    let end = input
-        .find(|c: char| c == ' ' || c == '\t' || c == '\r' || c == '#')
-        .unwrap_or(input.len());
+    let end = input.find([' ', '\t', '\r', '#']).unwrap_or(input.len());
     let token = &input[..end];
     let trailing = &input[end..];
 

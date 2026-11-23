@@ -362,7 +362,8 @@ impl AppConfig {
             };
             for (key_spec, entry) in table {
                 let raw_action = expect_str(entry, &format!("{section}.{key_spec}"))?;
-                let seq = parse_key_sequence(key_spec).map_err(|err| attach_line(err, entry.line))?;
+                let seq =
+                    parse_key_sequence(key_spec).map_err(|err| attach_line(err, entry.line))?;
                 let action = raw_action.trim();
                 if action.is_empty()
                     || action.eq_ignore_ascii_case("none")
@@ -594,9 +595,8 @@ preset = "minimal"
         assert!(loaded.warning.is_some());
 
         let missing = temp.path().join("missing.toml");
-        let err =
-            AppConfig::load_startup_with_paths(Some(&missing), None, false, test_validator)
-                .unwrap_err();
+        let err = AppConfig::load_startup_with_paths(Some(&missing), None, false, test_validator)
+            .unwrap_err();
         assert!(matches!(err, ConfigError::Io { .. }));
     }
 
@@ -608,7 +608,8 @@ preset = "minimal"
 
     #[test]
     fn vim_preset_enables_modal_by_default_unless_explicitly_disabled() {
-        let cfg = AppConfig::from_toml_str("[keymaps]\npreset = \"vim\"\n", test_validator).unwrap();
+        let cfg =
+            AppConfig::from_toml_str("[keymaps]\npreset = \"vim\"\n", test_validator).unwrap();
         assert!(cfg.editor.modal);
         assert_eq!(cfg.preset, KeymapPreset::Vim);
 

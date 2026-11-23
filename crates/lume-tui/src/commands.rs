@@ -9,6 +9,8 @@ use lume_syntax::Language;
 pub struct CommandItem {
     pub id: &'static str,
     pub title: &'static str,
+    // Kept for static default shortcut metadata inspected by tests; runtime rendering reads active keymaps.
+    #[cfg_attr(not(test), expect(dead_code))]
     pub shortcut: &'static str,
 }
 
@@ -649,9 +651,7 @@ impl App {
                             return;
                         }
                     }
-                    if let Err(err) =
-                        std::fs::write(&path, crate::config::default_config_toml())
-                    {
+                    if let Err(err) = std::fs::write(&path, crate::config::default_config_toml()) {
                         self.set_status(format!("Config error: {err}"));
                         return;
                     }
@@ -829,8 +829,7 @@ impl App {
                 if let Ok(deleted) = self.editor.delete_line() {
                     self.vim_state.yank(deleted.clone(), true);
                     self.editor.set_clipboard(deleted.clone());
-                    self.pending_osc52 =
-                        Some(lume_core::clipboard::osc52_sequence_auto(&deleted));
+                    self.pending_osc52 = Some(lume_core::clipboard::osc52_sequence_auto(&deleted));
                 }
             }
             "vim.yank_line" => {
