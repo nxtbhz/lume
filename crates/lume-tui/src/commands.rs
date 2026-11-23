@@ -194,11 +194,81 @@ pub const COMMANDS: &[CommandItem] = &[
         shortcut: "Ctrl+A",
     },
     CommandItem {
+        id: "config.open",
+        title: "Config: Open Configuration File",
+        shortcut: "",
+    },
+    CommandItem {
+        id: "config.reload",
+        title: "Config: Reload Configuration",
+        shortcut: "",
+    },
+    CommandItem {
         id: "app.quit",
         title: "App: Quit",
         shortcut: "Ctrl+Q",
     },
 ];
+
+/// Action IDs bindable in `config.toml` that are not listed as Command Palette rows.
+pub const EXTRA_BINDABLE_ACTIONS: &[&str] = &[
+    ":set modal",
+    ":set nomodal",
+    ":set modal!",
+    "search.find_next",
+    "search.find_prev",
+    "explorer.move_up",
+    "explorer.move_down",
+    "explorer.page_up",
+    "explorer.page_down",
+    "explorer.collapse",
+    "explorer.expand",
+    "explorer.activate",
+    "explorer.focus_editor",
+    "motion.left",
+    "motion.right",
+    "motion.up",
+    "motion.down",
+    "motion.word_left",
+    "motion.word_right",
+    "motion.word_forward",
+    "motion.home",
+    "motion.end",
+    "motion.page_up",
+    "motion.page_down",
+    "motion.document_start",
+    "motion.document_end",
+    "motion.select_left",
+    "motion.select_right",
+    "motion.select_up",
+    "motion.select_down",
+    "motion.select_word_left",
+    "motion.select_word_right",
+    "motion.select_word_forward",
+    "motion.select_home",
+    "motion.select_end",
+    "motion.select_page_up",
+    "motion.select_page_down",
+    "motion.select_document_start",
+    "motion.select_document_end",
+    "vim.normal_mode",
+    "vim.insert_mode",
+    "vim.append_mode",
+    "vim.open_line_below",
+    "vim.open_line_above",
+    "vim.visual_mode",
+    "vim.delete_char",
+    "vim.delete_line",
+    "vim.yank_line",
+    "vim.paste",
+    "vim.visual_delete",
+    "vim.visual_yank",
+];
+
+/// Returns `true` if `id` is a recognized bindable action ID.
+pub fn is_valid_action_id(id: &str) -> bool {
+    COMMANDS.iter().any(|c| c.id == id) || EXTRA_BINDABLE_ACTIONS.contains(&id)
+}
 
 impl App {
     pub fn filtered_commands(&self) -> Vec<&'static CommandItem> {
@@ -548,6 +618,197 @@ impl App {
                     self.set_status("Modal mode (Vim Motions): OFF");
                 }
             }
+            "config.open" | "config.reload" => {
+                self.set_status("Config command wired in Task 6");
+            }
+            "search.find_next" => {
+                if let Some(q) = self.last_search_query.clone() {
+                    let _ = self.editor.find_next(&q, false);
+                }
+            }
+            "search.find_prev" => {
+                if let Some(q) = self.last_search_query.clone() {
+                    let _ = self.editor.find_prev(&q, false);
+                }
+            }
+            "explorer.move_up" => {
+                self.explorer.move_up();
+                return;
+            }
+            "explorer.move_down" => {
+                let h = self.text_area_height();
+                self.explorer.move_down(h);
+                return;
+            }
+            "explorer.page_up" => {
+                for _ in 0..self.text_area_height().max(1) {
+                    self.explorer.move_up();
+                }
+                return;
+            }
+            "explorer.page_down" => {
+                let h = self.text_area_height();
+                for _ in 0..h.max(1) {
+                    self.explorer.move_down(h);
+                }
+                return;
+            }
+            "explorer.collapse" => {
+                self.explorer.collapse_selected();
+                return;
+            }
+            "explorer.expand" => {
+                self.explorer.expand_selected();
+                return;
+            }
+            "explorer.activate" => {
+                if let Some(path) = self.explorer.activate_selected() {
+                    self.open_file_into_editor(&path, "Opened ", "Open error: ");
+                }
+                return;
+            }
+            "explorer.focus_editor" => {
+                self.focus = ActiveFocus::Editor;
+                return;
+            }
+            "motion.left" => self.editor.move_left(false),
+            "motion.right" => self.editor.move_right(false),
+            "motion.up" => self.editor.move_up(false),
+            "motion.down" => self.editor.move_down(false),
+            "motion.word_left" => self.editor.move_word_backward(false),
+            "motion.word_right" => self.editor.move_word_end_forward(false),
+            "motion.word_forward" => self.editor.move_word_forward(false),
+            "motion.home" => self.editor.move_home(false),
+            "motion.end" => self.editor.move_end(false),
+            "motion.page_up" => {
+                let h = self.text_area_height().max(1);
+                self.editor.page_up(h, false);
+            }
+            "motion.page_down" => {
+                let h = self.text_area_height().max(1);
+                self.editor.page_down(h, false);
+            }
+            "motion.document_start" => self.editor.move_to_start(false),
+            "motion.document_end" => self.editor.move_to_end(false),
+            "motion.select_left" => self.editor.move_left(true),
+            "motion.select_right" => self.editor.move_right(true),
+            "motion.select_up" => self.editor.move_up(true),
+            "motion.select_down" => self.editor.move_down(true),
+            "motion.select_word_left" => self.editor.move_word_backward(true),
+            "motion.select_word_right" => self.editor.move_word_end_forward(true),
+            "motion.select_word_forward" => self.editor.move_word_forward(true),
+            "motion.select_home" => self.editor.move_home(true),
+            "motion.select_end" => self.editor.move_end(true),
+            "motion.select_page_up" => {
+                let h = self.text_area_height().max(1);
+                self.editor.page_up(h, true);
+            }
+            "motion.select_page_down" => {
+                let h = self.text_area_height().max(1);
+                self.editor.page_down(h, true);
+            }
+            "motion.select_document_start" => self.editor.move_to_start(true),
+            "motion.select_document_end" => self.editor.move_to_end(true),
+            "vim.normal_mode" => {
+                self.vim_state.clear_pending();
+                self.vim_state.set_mode(VimMode::Normal);
+                let head = self.editor.cursors().primary().head;
+                self.editor.cursors_mut().set_single(head);
+            }
+            "vim.insert_mode" => {
+                self.vim_state.set_mode(VimMode::Insert);
+            }
+            "vim.append_mode" => {
+                self.editor.move_right(false);
+                self.vim_state.set_mode(VimMode::Insert);
+            }
+            "vim.open_line_below" => {
+                self.editor.move_end(false);
+                let _ = self.editor.insert_newline();
+                self.vim_state.set_mode(VimMode::Insert);
+            }
+            "vim.open_line_above" => {
+                self.editor.move_home(false);
+                let _ = self.editor.insert_newline();
+                self.editor.move_up(false);
+                self.vim_state.set_mode(VimMode::Insert);
+            }
+            "vim.visual_mode" => {
+                self.vim_state.set_mode(VimMode::Visual);
+            }
+            "vim.delete_char" => {
+                let cur = *self.editor.cursors().primary();
+                if cur.is_selection() {
+                    let text = self
+                        .editor
+                        .buffer()
+                        .slice_to_cow(cur.min(), cur.max())
+                        .into_owned();
+                    self.vim_state.yank(text, false);
+                } else if cur.head < self.editor.buffer().len_bytes() {
+                    let char_idx = self.editor.buffer().byte_to_char(cur.head);
+                    let next_byte = self.editor.buffer().char_to_byte(char_idx + 1);
+                    let text = self
+                        .editor
+                        .buffer()
+                        .slice_to_cow(cur.head, next_byte)
+                        .into_owned();
+                    self.vim_state.yank(text, false);
+                }
+                let _ = self.editor.delete_forwards();
+            }
+            "vim.delete_line" => {
+                if let Ok(deleted) = self.editor.delete_line() {
+                    self.vim_state.yank(deleted.clone(), true);
+                    self.editor.set_clipboard(deleted.clone());
+                    self.pending_osc52 =
+                        Some(lume_core::clipboard::osc52_sequence_auto(&deleted));
+                }
+            }
+            "vim.yank_line" => {
+                let yanked = self.editor.yank_line();
+                self.vim_state.yank(yanked.clone(), true);
+                self.editor.set_clipboard(yanked.clone());
+                self.pending_osc52 = Some(lume_core::clipboard::osc52_sequence_auto(&yanked));
+                self.set_status("1 line yanked");
+            }
+            "vim.paste" => {
+                if let Some((text, linewise)) = self.vim_state.yank_register.clone() {
+                    let _ = self.editor.paste_yank(&text, linewise);
+                }
+            }
+            "vim.visual_delete" => {
+                let cur = *self.editor.cursors().primary();
+                if cur.is_selection() {
+                    let text = self
+                        .editor
+                        .buffer()
+                        .slice_to_cow(cur.min(), cur.max())
+                        .into_owned();
+                    self.vim_state.yank(text.clone(), false);
+                    self.editor.set_clipboard(text.clone());
+                    self.pending_osc52 = Some(lume_core::clipboard::osc52_sequence_auto(&text));
+                }
+                let _ = self.editor.delete_forwards();
+                self.vim_state.set_mode(VimMode::Normal);
+            }
+            "vim.visual_yank" => {
+                let cur = *self.editor.cursors().primary();
+                if cur.is_selection() {
+                    let text = self
+                        .editor
+                        .buffer()
+                        .slice_to_cow(cur.min(), cur.max())
+                        .into_owned();
+                    self.vim_state.yank(text.clone(), false);
+                    self.editor.set_clipboard(text.clone());
+                    self.pending_osc52 = Some(lume_core::clipboard::osc52_sequence_auto(&text));
+                }
+                let head = self.editor.cursors().primary().head;
+                self.editor.cursors_mut().set_single(head);
+                self.vim_state.set_mode(VimMode::Normal);
+                self.set_status("Yanked selection");
+            }
             "app.quit" => {
                 if self.editor.is_any_dirty() {
                     self.prompt = Some(InputPrompt::confirm_quit());
@@ -558,5 +819,41 @@ impl App {
             _ => {}
         }
         self.adjust_viewport();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::keymap::{KeymapContext, KeymapTable};
+    use crate::config::KeymapPreset;
+
+    #[test]
+    fn all_default_minimal_and_vim_preset_actions_are_registered() {
+        for preset in [
+            KeymapPreset::Default,
+            KeymapPreset::Minimal,
+            KeymapPreset::Vim,
+        ] {
+            let table = KeymapTable::from_preset(preset);
+            for ctx in KeymapContext::ALL {
+                for (_seq, action) in table.entries_for(ctx) {
+                    assert!(
+                        is_valid_action_id(action),
+                        "Unknown action `{action}` in preset {preset:?} ({ctx:?})"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn execute_command_supports_motion_and_vim_action_ids() {
+        let mut app = App::new(None).unwrap();
+        app.execute_command(":set modal");
+        app.execute_command("vim.insert_mode");
+        assert_eq!(app.vim_state.mode, VimMode::Insert);
+        app.execute_command("vim.normal_mode");
+        assert_eq!(app.vim_state.mode, VimMode::Normal);
     }
 }
