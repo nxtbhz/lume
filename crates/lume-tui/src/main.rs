@@ -71,6 +71,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("lume 0.1.0 (M1 functional MVP)");
             return Ok(());
         }
+        CliCommand::PrintDefaultConfig => {
+            print!("{}", config::default_config_toml());
+            return Ok(());
+        }
         CliCommand::BenchStartup(targets) => {
             let start = Instant::now();
             let mut app = App::open_targets(targets)?;

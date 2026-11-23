@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 pub enum CliCommand {
     Help,
     Version,
+    PrintDefaultConfig,
     BenchStartup(CliTargets),
     Run(CliTargets),
 }
@@ -12,6 +13,8 @@ pub enum CliCommand {
 pub struct CliTargets {
     pub workspace: Option<PathBuf>,
     pub files: Vec<PathBuf>,
+    pub config_path: Option<PathBuf>,
+    pub no_config: bool,
 }
 
 /// Matches a simple wildcard pattern containing `*` and `?` against text.
@@ -158,13 +161,46 @@ where
 
     let mut flags = Vec::new();
     let mut raw_targets = Vec::new();
+    let mut config_path: Option<PathBuf> = None;
+    let mut no_config = false;
+    let mut print_default_config = false;
 
-    for arg in all_args.iter().skip(1) {
+    let mut i = 1;
+    while i < all_args.len() {
+        let arg = &all_args[i];
+        if arg == "--config" {
+            if let Some(next_path) = all_args.get(i + 1) {
+                config_path = Some(PathBuf::from(next_path));
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if let Some(path) = arg.strip_prefix("--config=") {
+            if !path.is_empty() {
+                config_path = Some(PathBuf::from(path));
+            }
+            i += 1;
+            continue;
+        }
+        if arg == "--no-config" {
+            no_config = true;
+            i += 1;
+            continue;
+        }
+        if arg == "--print-default-config" {
+            print_default_config = true;
+            i += 1;
+            continue;
+        }
+
         if arg.starts_with('-') && arg != "-" {
             flags.push(arg.as_str());
         } else {
             raw_targets.push(arg.as_str());
         }
+        i += 1;
     }
 
     if flags.contains(&"-h") || flags.contains(&"--help") {
@@ -173,6 +209,10 @@ where
 
     if flags.contains(&"-v") || flags.contains(&"--version") {
         return CliCommand::Version;
+    }
+
+    if print_default_config {
+        return CliCommand::PrintDefaultConfig;
     }
 
     let is_bench = flags.contains(&"--bench-startup");
@@ -207,7 +247,12 @@ where
         }
     }
 
-    let targets = CliTargets { workspace, files };
+    let targets = CliTargets {
+        workspace,
+        files,
+        config_path,
+        no_config,
+    };
 
     if is_bench {
         CliCommand::BenchStartup(targets)
@@ -224,9 +269,12 @@ pub fn print_help() {
     println!("ARGS:");
     println!("    [PATH]...    File(s) or directory to open (e.g. `lume .`, `lume file.txt`, `lume src/*.rs`)\n");
     println!("OPTIONS:");
-    println!("    -h, --help             Print help information");
-    println!("    -v, --version          Print version information");
-    println!("        --bench-startup    Benchmark cold startup time and exit");
+    println!("    -h, --help                     Print help information");
+    println!("    -v, --version                  Print version information");
+    println!("        --config <PATH>            Load configuration from the given TOML file");
+    println!("        --no-config                Ignore any config.toml and use built-in defaults");
+    println!("        --print-default-config     Print the default config.toml template and exit");
+    println!("        --bench-startup            Benchmark cold startup time and exit");
 }
 
 #[cfg(test)]
@@ -300,13 +348,7 @@ mod tests {
     fn test_parse_cli_args() {
         // No args
         let cmd = parse_cli_args(["lume"]);
-        assert_eq!(
-            cmd,
-            CliCommand::Run(CliTargets {
-                workspace: None,
-                files: vec![]
-            })
-        );
+        assert_eq!(cmd, CliCommand::Run(CliTargets::default()));
 
         // Help
         assert_eq!(parse_cli_args(["lume", "--help"]), CliCommand::Help);
@@ -319,10 +361,7 @@ mod tests {
         // Bench startup
         assert_eq!(
             parse_cli_args(["lume", "--bench-startup"]),
-            CliCommand::BenchStartup(CliTargets {
-                workspace: None,
-                files: vec![]
-            })
+            CliCommand::BenchStartup(CliTargets::default())
         );
 
         // Directory path `.`
@@ -428,5 +467,35 @@ mod tests {
 
         let res_dir = expand_glob("s*");
         assert!(res_dir.iter().any(|p| p.ends_with("src")));
+    }
+
+    #[test]
+    fn test_parse_config_flags_without_treating_path_as_file_target() {
+        let cmd = parse_cli_args(["lume", "--config", "my.toml", "src/main.rs"]);
+        assert_eq!(
+            cmd,
+            CliCommand::Run(CliTargets {
+                workspace: None,
+                files: vec![PathBuf::from("src/main.rs")],
+                config_path: Some(PathBuf::from("my.toml")),
+                no_config: false,
+            })
+        );
+
+        let eq_cmd = parse_cli_args(["lume", "--config=/tmp/custom.toml", "--no-config"]);
+        assert_eq!(
+            eq_cmd,
+            CliCommand::Run(CliTargets {
+                workspace: None,
+                files: Vec::new(),
+                config_path: Some(PathBuf::from("/tmp/custom.toml")),
+                no_config: true,
+            })
+        );
+
+        assert_eq!(
+            parse_cli_args(["lume", "--print-default-config"]),
+            CliCommand::PrintDefaultConfig
+        );
     }
 }

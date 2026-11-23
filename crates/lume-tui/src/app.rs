@@ -78,12 +78,12 @@ impl App {
                 if path.is_dir() {
                     CliTargets {
                         workspace: Some(path),
-                        files: Vec::new(),
+                        ..CliTargets::default()
                     }
                 } else {
                     CliTargets {
-                        workspace: None,
                         files: vec![path],
+                        ..CliTargets::default()
                     }
                 }
             }
