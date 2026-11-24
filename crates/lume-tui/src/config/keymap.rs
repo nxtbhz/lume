@@ -853,6 +853,7 @@ fn populate_default_preset(table: &mut KeymapTable) {
     table.bind_one(g, KeyCode::Char('b'), CTRL, "view.toggle_explorer");
     table.bind_one(g, KeyCode::F(2), NONE, "view.toggle_explorer");
     table.bind_one(g, KeyCode::Char('e'), CTRL, "view.toggle_explorer");
+    table.bind_one(g, KeyCode::F(6), NONE, "view.toggle_explorer_focus");
     table.bind_one(g, KeyCode::Char('t'), CTRL, "file.new_tab");
     table.bind_one(g, KeyCode::Char('w'), CTRL, "file.close_tab");
     table.bind_one(g, KeyCode::Tab, CTRL, "file.next_tab");

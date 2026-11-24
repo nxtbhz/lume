@@ -687,6 +687,26 @@ fn test_app_explorer_single_letter_jump_navigation() {
 }
 
 #[test]
+fn test_f6_switches_focus_without_hiding_explorer() {
+    let dir = TestDir::new("lume_focus_explorer");
+    let mut app = App::new(Some(dir.path().to_path_buf())).unwrap();
+    let f6 = KeyEvent::new(KeyCode::F(6), KeyModifiers::NONE);
+
+    for visible in [true, false] {
+        assert_eq!(app.focus, ActiveFocus::Editor);
+        app.explorer.is_visible = visible;
+
+        app.handle_key(f6).unwrap();
+        assert_eq!(app.focus, ActiveFocus::Explorer);
+        assert!(app.explorer.is_visible);
+
+        app.handle_key(f6).unwrap();
+        assert_eq!(app.focus, ActiveFocus::Editor);
+        assert!(app.explorer.is_visible);
+    }
+}
+
+#[test]
 fn test_app_explorer_f2_rename_routing_and_empty_rename() {
     let test_dir = TestDir::new("lume_test_f2_rename");
     std::fs::write(test_dir.path().join("file.txt"), "data").unwrap();

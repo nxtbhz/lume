@@ -35,6 +35,7 @@ Modeless mode is active on startup (`modal_enabled = false`, `crates/lume-tui/sr
 | `Ctrl+Tab` or `Alt+Right` | Next tab | Wraps around tabs and triggers recovery check if needed | [key.rs](../crates/lume-tui/src/input/key.rs#L130-L137) |
 | `Ctrl+Shift+Tab`, `BackTab`, or `Alt+Left` | Previous tab | Wraps around tabs and triggers recovery check if needed | [key.rs](../crates/lume-tui/src/input/key.rs#L138-L141) |
 | `Ctrl+B`, `Ctrl+E`, or `F2` | Toggle File Explorer | `F2` triggers rename when explorer is visible and focused | [key.rs](../crates/lume-tui/src/input/key.rs#L118-L121) |
+| `F6` | Switch focus between the editor and File Explorer | Opens the explorer if hidden; keeps it visible when returning to the editor | [commands.rs](../crates/lume-tui/src/commands.rs) |
 | `Ctrl+A` | Select all | Selects full active buffer | [key.rs](../crates/lume-tui/src/input/key.rs#L142-L145) |
 | `Ctrl+Z` | Undo | Restores cursors and updates dirty/journal state | [key.rs](../crates/lume-tui/src/input/key.rs#L146-L149) |
 | `Ctrl+Y` or `Ctrl+R` | Redo | Reapplies undone entry | [key.rs](../crates/lume-tui/src/input/key.rs#L150-L153) |
@@ -128,7 +129,7 @@ When `FileExplorer` is visible (`26` columns wide by default, `crates/lume-tui/s
 
 ## Command palette actions
 
-`COMMANDS` in `crates/lume-tui/src/commands.rs` defines 39 entries shown in the Command Palette (`Ctrl+Shift+P` or `Alt+P`), displaying the active shortcut from `config.toml` (or blank when unbound). Programmatic calls to `App::execute_command` also accept `:set modal`, `:set nomodal`, `:set modal!`, and all motion, vim, search, and explorer action IDs listed under [Configuration file (`config.toml`)](#configuration-file-configtoml).
+`COMMANDS` in `crates/lume-tui/src/commands.rs` defines the entries shown in the Command Palette (`Ctrl+Shift+P` or `Alt+P`), displaying the active shortcut from `config.toml` (or blank when unbound). Programmatic calls to `App::execute_command` also accept `:set modal`, `:set nomodal`, `:set modal!`, and all motion, vim, search, and explorer action IDs listed under [Configuration file (`config.toml`)](#configuration-file-configtoml).
 
 | Command ID | Palette title | Listed shortcut | Target behavior |
 | :--- | :--- | :--- | :--- |
@@ -138,6 +139,7 @@ When `FileExplorer` is visible (`26` columns wide by default, `crates/lume-tui/s
 | `file.save` | `File: Save` | `Ctrl+S` | Synchronous atomic save or Save As prompt |
 | `file.save_as` | `File: Save As...` | `Ctrl+Shift+S` | Open Save As prompt |
 | `view.toggle_explorer` | `View: Toggle File Explorer` | `Ctrl+B / F2` | Show/hide explorer and shift focus |
+| `view.toggle_explorer_focus` | `View: Switch Focus Between Editor and Explorer` | `F6` | Switch focus, opening the explorer if needed |
 | `explorer.new_file` | `Explorer: New File...` | `a in Explorer` | Prompt to create file inside target folder |
 | `explorer.new_folder` | `Explorer: New Folder...` | `n in Explorer` | Prompt to create folder inside target folder |
 | `explorer.rename` | `Explorer: Rename Selected Item...` | `F2 / m in Explorer` | Prompt to rename selected file or folder |
@@ -224,7 +226,7 @@ To initialize the bindings from a different preset, start with a file containing
 
 ### Additional bindable action IDs
 
-In addition to all 39 Command Palette IDs above (plus `:set modal`, `:set nomodal`, `:set modal!`), keymaps may bind any of these actions:
+In addition to the Command Palette IDs above (plus `:set modal`, `:set nomodal`, `:set modal!`), keymaps may bind any of these actions:
 
 | Group | Action IDs |
 | :--- | :--- |

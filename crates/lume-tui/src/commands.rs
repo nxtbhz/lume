@@ -46,6 +46,11 @@ pub const COMMANDS: &[CommandItem] = &[
         shortcut: "Ctrl+B / F2",
     },
     CommandItem {
+        id: "view.toggle_explorer_focus",
+        title: "View: Switch Focus Between Editor and Explorer",
+        shortcut: "F6",
+    },
+    CommandItem {
         id: "explorer.new_file",
         title: "Explorer: New File...",
         shortcut: "a in Explorer",
@@ -344,6 +349,17 @@ impl App {
                         "CLOSED"
                     }
                 ));
+            }
+            "view.toggle_explorer_focus" => {
+                self.focus = match self.focus {
+                    ActiveFocus::Editor => {
+                        if !self.explorer.is_visible {
+                            self.explorer.toggle_visible();
+                        }
+                        ActiveFocus::Explorer
+                    }
+                    ActiveFocus::Explorer => ActiveFocus::Editor,
+                };
             }
             "explorer.new_file" => {
                 let target = self.explorer.target_folder_for_creation();
