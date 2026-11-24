@@ -5,6 +5,7 @@ mod config;
 mod explorer;
 mod input;
 mod lsp;
+mod navigation;
 mod prompt;
 pub(crate) mod quick_open;
 mod render;
@@ -29,6 +30,11 @@ use terminal::TerminalGuard;
 
 fn run<W: Write>(app: &mut App, writer: &mut W) -> std::io::Result<()> {
     let (tx, rx) = crossbeam_channel::unbounded();
+
+    let lsp_tx = tx.clone();
+    app.set_lsp_client(lsp::LspClient::new(move |reply| {
+        let _ = lsp_tx.send(AppEvent::Definition(reply));
+    }));
 
     let input_tx = tx.clone();
     std::thread::spawn(move || loop {

@@ -792,6 +792,12 @@ fn populate_vim_preset(table: &mut KeymapTable) {
         CTRL_ALT,
         "settings.toggle_modal",
     );
+    table.bind_one(
+        KeymapContext::Global,
+        KeyCode::F(12),
+        NONE,
+        "navigation.goto_definition",
+    );
     populate_vim_modes(table);
     populate_explorer_actions(table);
 
@@ -876,6 +882,7 @@ fn populate_default_preset(table: &mut KeymapTable) {
     table.bind_one(g, KeyCode::Char('m'), CTRL, "navigation.match_bracket");
     table.bind_one(g, KeyCode::Char('g'), CTRL, "navigation.goto_line");
     table.bind_one(g, KeyCode::Char('g'), CTRL_SHIFT, "navigation.goto_line");
+    table.bind_one(g, KeyCode::F(12), NONE, "navigation.goto_definition");
     table.bind_one(g, KeyCode::Char('v'), CTRL_ALT, "settings.toggle_modal");
     table.bind_one(
         g,

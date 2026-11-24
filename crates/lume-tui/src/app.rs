@@ -9,6 +9,8 @@ use crossterm::terminal::size as terminal_size;
 use crate::args::{parse_cli_args, CliCommand, CliTargets};
 use crate::config::{AppConfig, KeyCombo, LoadedConfig};
 use crate::explorer::FileExplorer;
+use crate::lsp::LspClient;
+use crate::navigation::PendingDefinition;
 use crate::prompt::InputPrompt;
 use crate::search::{SearchField, SearchState};
 use crate::vim::VimState;
@@ -73,6 +75,12 @@ pub struct App {
     pub config: AppConfig,
     pub config_path: Option<PathBuf>,
     pub pending_keys: Vec<KeyCombo>,
+
+    // LSP Go to Definition
+    pub(crate) lsp_client: LspClient,
+    pub(crate) pending_definition: Option<PendingDefinition>,
+    pub(crate) next_definition_request_id: u64,
+    pub(crate) definition_recovery_tab_id: Option<usize>,
 }
 
 impl App {
@@ -238,6 +246,11 @@ impl App {
             config: AppConfig::default(),
             config_path: loaded.path,
             pending_keys: Vec::new(),
+
+            lsp_client: LspClient::new(|_| {}),
+            pending_definition: None,
+            next_definition_request_id: 0,
+            definition_recovery_tab_id: None,
         };
 
         app.apply_config(loaded.config);
@@ -304,6 +317,10 @@ impl App {
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
         self.status_message = Some((msg.into(), Instant::now()));
+    }
+
+    pub fn set_lsp_client(&mut self, client: LspClient) {
+        self.lsp_client = client;
     }
 
     pub fn refresh_git_head(&mut self) {
@@ -428,7 +445,12 @@ impl App {
     pub(crate) fn paste_into_overlay(&mut self, text: &str) {
         let line = text.split(LINE_BREAKS).next().unwrap_or("");
         if let Some(prompt) = &mut self.prompt {
-            prompt.insert_str(line);
+            if !matches!(
+                prompt.action,
+                crate::prompt::PromptAction::SelectDefinition { .. }
+            ) {
+                prompt.insert_str(line);
+            }
         } else if let Some(mut state) = self.search_state.take() {
             state.insert_str(line);
             if state.active_field == SearchField::Query {
@@ -774,19 +796,36 @@ impl App {
         self.syntax_worker.drop_buffer(tab_id);
     }
 
+    pub(crate) fn open_file_into_editor_result(
+        &mut self,
+        path: &std::path::Path,
+    ) -> std::io::Result<usize> {
+        let prev_active = self.editor.active_tab_idx();
+        let prev_tab_id = self.editor.active_tab().id;
+        let prev_was_untitled = self.editor.active_tab().file_path.is_none();
+        match self.editor.open_or_load(path) {
+            Ok(idx) => {
+                let new_tab_id = self.editor.tabs()[idx].id;
+                if new_tab_id == prev_tab_id && prev_was_untitled {
+                    self.invalidate_syntax_for_tab(new_tab_id);
+                }
+                Ok(idx)
+            }
+            Err(e) => {
+                self.editor.switch_tab(prev_active);
+                Err(e)
+            }
+        }
+    }
+
     pub(crate) fn open_file_into_editor(
         &mut self,
         path: &std::path::Path,
         status_prefix: &str,
         err_prefix: &str,
     ) {
-        let prev_tab_id = self.editor.active_tab().id;
-        match self.editor.open_or_load(path) {
+        match self.open_file_into_editor_result(path) {
             Ok(idx) => {
-                let new_tab_id = self.editor.tabs()[idx].id;
-                if new_tab_id == prev_tab_id {
-                    self.invalidate_syntax_for_tab(new_tab_id);
-                }
                 self.focus = ActiveFocus::Editor;
                 self.adjust_viewport();
                 self.set_status(format!("{status_prefix}{}", path.display()));

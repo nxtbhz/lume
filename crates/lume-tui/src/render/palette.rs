@@ -232,6 +232,7 @@ fn short_action_label(action: &str) -> &str {
         "search.find_prev" => "Prev Match",
         "navigation.match_bracket" => "Bracket",
         "navigation.goto_line" => "Go to Line",
+        "navigation.goto_definition" => "Go to Def",
         "settings.toggle_modal" => "Modal",
         "view.which_key" => "Help",
         "config.open" => "Open Config",

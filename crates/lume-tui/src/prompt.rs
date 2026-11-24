@@ -4,11 +4,14 @@ use crossterm::{
     style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
 };
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::config::{KeymapContext, KeymapTable};
+use crate::lsp::DefinitionTarget;
+use crate::navigation::DefinitionOrigin;
 use crate::render::text::fit_text;
 use lume_core::buffer::visual;
 
@@ -17,14 +20,32 @@ pub enum PromptAction {
     OpenFile,
     SaveFileAs,
     SetLanguage,
-    CreateFolder { parent_dir: PathBuf },
-    CreateFile { parent_dir: PathBuf },
-    RenameItem { source_path: PathBuf, is_dir: bool },
-    ConfirmDeleteFolder { path: PathBuf },
+    CreateFolder {
+        parent_dir: PathBuf,
+    },
+    CreateFile {
+        parent_dir: PathBuf,
+    },
+    RenameItem {
+        source_path: PathBuf,
+        is_dir: bool,
+    },
+    ConfirmDeleteFolder {
+        path: PathBuf,
+    },
     GoToLine,
     ConfirmQuit,
-    ConfirmCloseTab { tab_idx: usize },
-    ConfirmRecoverJournal { tab_idx: usize },
+    ConfirmCloseTab {
+        tab_idx: usize,
+    },
+    ConfirmRecoverJournal {
+        tab_idx: usize,
+    },
+    SelectDefinition {
+        origin: DefinitionOrigin,
+        doc_revisions: BTreeMap<PathBuf, (usize, u64)>,
+        targets: Vec<DefinitionTarget>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -184,6 +205,26 @@ impl InputPrompt {
         }
     }
 
+    pub fn select_definition(
+        origin: DefinitionOrigin,
+        doc_revisions: BTreeMap<PathBuf, (usize, u64)>,
+        targets: Vec<DefinitionTarget>,
+        labels: Vec<String>,
+    ) -> Self {
+        Self {
+            action: PromptAction::SelectDefinition {
+                origin,
+                doc_revisions,
+                targets,
+            },
+            title: Cow::Borrowed(" Go to Definition "),
+            value: String::new(),
+            cursor_pos: 0,
+            suggestions: labels,
+            selected_suggestion: 0,
+        }
+    }
+
     pub fn update_suggestions(&mut self) {
         match self.action {
             PromptAction::OpenFile | PromptAction::SaveFileAs => {
@@ -239,7 +280,8 @@ impl InputPrompt {
             | PromptAction::GoToLine
             | PromptAction::ConfirmQuit
             | PromptAction::ConfirmCloseTab { .. }
-            | PromptAction::ConfirmRecoverJournal { .. } => {
+            | PromptAction::ConfirmRecoverJournal { .. }
+            | PromptAction::SelectDefinition { .. } => {
                 // Handled in handle_key with filter or no suggestions needed
             }
         }
@@ -316,7 +358,8 @@ impl InputPrompt {
             | PromptAction::GoToLine
             | PromptAction::ConfirmQuit
             | PromptAction::ConfirmCloseTab { .. }
-            | PromptAction::ConfirmRecoverJournal { .. } => {}
+            | PromptAction::ConfirmRecoverJournal { .. }
+            | PromptAction::SelectDefinition { .. } => {}
         }
     }
 
@@ -344,8 +387,19 @@ impl InputPrompt {
         }
         let start_x = (term_width as usize).saturating_sub(box_w) / 2;
         let start_y = (term_height as usize).saturating_sub(box_h) / 3;
+        let is_select_definition = matches!(self.action, PromptAction::SelectDefinition { .. });
         let prompt_prefix = " > ";
-        let input = format!("{prompt_prefix}{}", self.value);
+        let input = if is_select_definition {
+            let total = self.suggestions.len();
+            let current = if total == 0 {
+                0
+            } else {
+                self.selected_suggestion.min(total - 1) + 1
+            };
+            format!(" Select destination ({current}/{total}) ")
+        } else {
+            format!("{prompt_prefix}{}", self.value)
+        };
 
         let ctx = self.keymap_context();
         let actions: &[(&str, &str)] = match ctx {
@@ -359,6 +413,7 @@ impl InputPrompt {
                 ("recovery.discard", "discard"),
                 ("prompt.cancel", "cancel"),
             ],
+            _ if is_select_definition => &[("prompt.submit", "open"), ("prompt.cancel", "cancel")],
             _ if !self.suggestions.is_empty() => &[
                 ("prompt.submit", "confirm"),
                 ("prompt.complete", "complete"),
@@ -372,6 +427,12 @@ impl InputPrompt {
         } else {
             Cow::Owned(format!("{}({hints}) ", self.title))
         };
+
+        let visible_rows = box_h.saturating_sub(3);
+        let selected = self
+            .selected_suggestion
+            .min(self.suggestions.len().saturating_sub(1));
+        let scroll_offset = selected.saturating_sub(visible_rows.saturating_sub(1));
 
         // Header / Box
         for y in 0..box_h {
@@ -406,10 +467,10 @@ impl InputPrompt {
                     Print("─".repeat(box_w))
                 )?;
             } else {
-                let sugg_idx = y - 3;
+                let sugg_idx = scroll_offset + (y - 3);
                 if sugg_idx < self.suggestions.len() {
                     let sugg = &self.suggestions[sugg_idx];
-                    let is_sel = sugg_idx == self.selected_suggestion;
+                    let is_sel = sugg_idx == selected;
                     let prefix = if is_sel { "  ● " } else { "    " };
 
                     if is_sel {
@@ -438,7 +499,7 @@ impl InputPrompt {
         }
 
         // Render input cursor
-        if box_h > 1 {
+        if box_h > 1 && !is_select_definition {
             let cursor_col = visual::column_at_byte(&input, prompt_prefix.len() + self.cursor_pos);
             let cursor_x = (start_x + cursor_col.min(box_w - 1)) as u16;
             queue!(

@@ -17,22 +17,40 @@ impl App {
         key: KeyEvent,
     ) -> std::io::Result<()> {
         if let PromptAction::ConfirmRecoverJournal { tab_idx } = prompt.action {
+            let tab_id = self.editor.tabs().get(tab_idx).map(|t| t.id);
             match action {
                 Some("recovery.recover") => {
+                    let from_definition =
+                        tab_id.is_some() && self.definition_recovery_tab_id == tab_id;
+                    if from_definition {
+                        self.definition_recovery_tab_id = None;
+                    }
                     self.editor.recover_tab_journal(tab_idx);
                     self.adjust_viewport();
                     self.update_syntax_highlights_for_tab(tab_idx);
-                    self.set_status("Recovered changes from journal");
+                    if from_definition {
+                        self.set_status(
+                            "Recovered changes from journal; repeat Go to Definition from source",
+                        );
+                    } else {
+                        self.set_status("Recovered changes from journal");
+                    }
                     self.prompt_next_recovery_if_any();
                     return Ok(());
                 }
                 Some("recovery.discard") => {
+                    if tab_id.is_some() && self.definition_recovery_tab_id == tab_id {
+                        self.definition_recovery_tab_id = None;
+                    }
                     self.editor.discard_tab_changes(tab_idx);
                     self.set_status("Discarded journal recovery");
                     self.prompt_next_recovery_if_any();
                     return Ok(());
                 }
                 Some("prompt.cancel") => {
+                    if tab_id.is_some() && self.definition_recovery_tab_id == tab_id {
+                        self.definition_recovery_tab_id = None;
+                    }
                     if let Some(tab) = self.editor.tabs_mut().get_mut(tab_idx) {
                         tab.pending_recovery = None;
                     }
@@ -318,22 +336,42 @@ impl App {
                         }
                     }
                     PromptAction::ConfirmRecoverJournal { .. } => {}
+                    PromptAction::SelectDefinition {
+                        origin,
+                        doc_revisions,
+                        targets,
+                    } => {
+                        self.accept_definition_selection(
+                            origin,
+                            doc_revisions,
+                            targets,
+                            prompt.selected_suggestion,
+                        );
+                    }
                 }
             }
             Some("prompt.complete") => {
-                prompt.autocomplete();
+                if !matches!(prompt.action, PromptAction::SelectDefinition { .. }) {
+                    prompt.autocomplete();
+                }
                 self.prompt = Some(prompt);
             }
             Some("field.backspace") => {
-                prompt.handle_backspace();
+                if !matches!(prompt.action, PromptAction::SelectDefinition { .. }) {
+                    prompt.handle_backspace();
+                }
                 self.prompt = Some(prompt);
             }
             Some("field.left") => {
-                prompt.move_left();
+                if !matches!(prompt.action, PromptAction::SelectDefinition { .. }) {
+                    prompt.move_left();
+                }
                 self.prompt = Some(prompt);
             }
             Some("field.right") => {
-                prompt.move_right();
+                if !matches!(prompt.action, PromptAction::SelectDefinition { .. }) {
+                    prompt.move_right();
+                }
                 self.prompt = Some(prompt);
             }
             Some("list.up") => {
@@ -351,8 +389,10 @@ impl App {
                 self.prompt = Some(prompt);
             }
             None => {
-                if let Some(c) = typed_character(key) {
-                    prompt.handle_char(c);
+                if !matches!(prompt.action, PromptAction::SelectDefinition { .. }) {
+                    if let Some(c) = typed_character(key) {
+                        prompt.handle_char(c);
+                    }
                 }
                 self.prompt = Some(prompt);
             }

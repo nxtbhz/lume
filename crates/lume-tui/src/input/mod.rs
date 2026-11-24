@@ -8,6 +8,7 @@ use std::io::Write;
 use crossterm::event::{KeyEvent, MouseEvent};
 
 use crate::app::App;
+use crate::lsp::DefinitionReply;
 
 pub enum AppEvent {
     Input(KeyEvent),
@@ -15,6 +16,7 @@ pub enum AppEvent {
     Resize(u16, u16),
     FocusLost,
     Paste(String),
+    Definition(DefinitionReply),
 }
 
 impl App {
@@ -53,6 +55,10 @@ impl App {
             }
             AppEvent::Paste(text) => {
                 self.handle_paste_text(&text);
+                self.render(writer)?;
+            }
+            AppEvent::Definition(reply) => {
+                self.handle_definition_reply(reply);
                 self.render(writer)?;
             }
         }

@@ -146,6 +146,11 @@ pub const COMMANDS: &[CommandItem] = &[
         shortcut: "Ctrl+G",
     },
     CommandItem {
+        id: "navigation.goto_definition",
+        title: "Navigation: Go to Definition",
+        shortcut: "F12",
+    },
+    CommandItem {
         id: "view.which_key",
         title: "View: Which-Key Shortcuts",
         shortcut: "F1",
@@ -559,6 +564,9 @@ impl App {
             }
             "navigation.goto_line" => {
                 self.prompt = Some(InputPrompt::goto_line());
+            }
+            "navigation.goto_definition" => {
+                self.request_definition_at_cursor();
             }
             "view.which_key" => {
                 self.which_key_open = true;

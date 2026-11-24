@@ -51,7 +51,7 @@ pub struct ServerCapabilities {
 pub(crate) enum IncomingMessage {
     Message(Value),
     Eof,
-    IoError(String),
+    ProtocolError(String),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -238,8 +238,12 @@ impl LspSession {
                             let _ = tx.send(IncomingMessage::Eof);
                             break;
                         }
-                        Err(e) => {
-                            let _ = tx.send(IncomingMessage::IoError(e.to_string()));
+                        Err(e) if e.kind() == io::ErrorKind::InvalidData => {
+                            let _ = tx.send(IncomingMessage::ProtocolError(e.to_string()));
+                            break;
+                        }
+                        Err(_) => {
+                            let _ = tx.send(IncomingMessage::Eof);
                             break;
                         }
                     }
@@ -408,9 +412,13 @@ impl LspSession {
 
             let msg = match incoming {
                 IncomingMessage::Message(v) => v,
-                IncomingMessage::Eof | IncomingMessage::IoError(_) => {
+                IncomingMessage::Eof => {
                     self.terminate_fatal();
                     return Err(LspError::Exited);
+                }
+                IncomingMessage::ProtocolError(err) => {
+                    self.terminate_fatal();
+                    return Err(LspError::Protocol(err));
                 }
             };
 
