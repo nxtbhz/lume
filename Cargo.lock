@@ -691,6 +691,7 @@ dependencies = [
  "libc",
  "lume-core",
  "lume-syntax",
+ "ropey",
  "serde_json",
  "thiserror",
  "unicode-width",

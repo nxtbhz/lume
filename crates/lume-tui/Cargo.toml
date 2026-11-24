@@ -10,6 +10,7 @@ name = "lume"
 path = "src/main.rs"
 
 [dependencies]
+ropey.workspace = true
 lume-core = { path = "../lume-core" }
 lume-syntax = { path = "../lume-syntax" }
 crossterm.workspace = true

@@ -5,6 +5,7 @@ mod config;
 mod explorer;
 mod input;
 mod lsp;
+mod markdown;
 mod navigation;
 mod prompt;
 pub(crate) mod quick_open;
