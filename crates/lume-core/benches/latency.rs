@@ -102,10 +102,40 @@ fn bench_indexing_latency_100k(c: &mut Criterion) {
     group.finish();
 }
 
+fn soft_wrap_latency(c: &mut Criterion) {
+    use lume_core::buffer::visual::wrap_segments;
+    let mut group = c.benchmark_group("soft_wrap_latency");
+    let ascii = "word and space  ".repeat(32);
+    let mixed = "界👩‍💻\t ".repeat(32);
+    for (name, mut text) in [
+        ("wrap_ascii_paragraph_512b", ascii),
+        ("wrap_mixed_unicode_tabs_512b", mixed),
+    ] {
+        text.truncate(512);
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                for seg in wrap_segments(black_box(text.as_str()), 80) {
+                    black_box(seg);
+                }
+            })
+        });
+    }
+    let text = "identical content for each logical line\n".repeat(100_000);
+    let mut editor = Editor::from_str(&text);
+    for line in [0, 99_999] {
+        editor.set_cursor_from_line_col(line, 20, false);
+        group.bench_function(format!("cursor_wrapped_pos_100k_line{line}"), |b| {
+            b.iter(|| black_box(editor.cursor_wrapped_pos(80)))
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_buffer_insertion_100k,
     bench_startup_latency,
-    bench_indexing_latency_100k
+    bench_indexing_latency_100k,
+    soft_wrap_latency
 );
 criterion_main!(benches);

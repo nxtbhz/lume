@@ -316,11 +316,7 @@ fn parse_lines<'a>(lines: impl Iterator<Item = Cow<'a, str>>) -> MarkdownDocumen
                 align,
                 rows,
             }
-        } else if trim.len() >= 3
-            && [b'-', b'*', b'_']
-                .iter()
-                .any(|&ch| trim.bytes().all(|b| b == ch))
-        {
+        } else if trim.len() >= 3 && b"-*_".iter().any(|&ch| trim.bytes().all(|b| b == ch)) {
             MarkdownBlock::Rule(line)
         } else if let Some(t) = trim.strip_prefix('>') {
             let t = t.trim_start();

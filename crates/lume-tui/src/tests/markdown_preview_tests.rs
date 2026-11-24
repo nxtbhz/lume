@@ -74,3 +74,28 @@ fn split_live_sync_and_preview_read_only_guards() {
     clean.handle_paste_text("do not edit");
     assert!(!clean.editor.is_dirty());
 }
+
+#[test]
+#[ignore = "release-mode measurement; set LUME_FRAME_COUNT to choose the sample size"]
+fn measure_hot_markdown_frames() {
+    let count: usize = std::env::var("LUME_FRAME_COUNT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    let mut a = app(&MD.repeat(100));
+    a.execute_command("markdown.toggle_preview");
+    let mut bytes = Vec::new();
+    a.render(&mut bytes).unwrap();
+    let start = std::time::Instant::now();
+    for i in 0..count {
+        bytes.clear();
+        a.scroll_pane_visual_rows(None, if i % 2 == 0 { 1 } else { -1 });
+        a.render(&mut bytes).unwrap();
+        std::hint::black_box(&bytes);
+    }
+    eprintln!(
+        "frames={count} elapsed_ns={} bytes_last={}",
+        start.elapsed().as_nanos(),
+        bytes.len()
+    );
+}

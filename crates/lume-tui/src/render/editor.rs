@@ -415,3 +415,46 @@ pub fn render_editor_viewport<W: Write>(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lume_syntax::HighlightToken;
+    #[test]
+    fn monotonic_token_cursor_matches_binary_search() {
+        for line in 0..1000 {
+            let text = "a界 β👩‍💻".repeat(1 + line % 9);
+            let tokens: Vec<_> = visual::graphemes(&text)
+                .enumerate()
+                .filter(|(i, _)| (i + line) % 5 != 0)
+                .map(|(i, g)| {
+                    HighlightToken::new(
+                        g.byte_offset,
+                        g.byte_offset + g.text.len(),
+                        if i % 2 == 0 {
+                            TokenType::Keyword
+                        } else {
+                            TokenType::String
+                        },
+                    )
+                })
+                .collect();
+            let mut index = 0;
+            for byte in 0..=text.len() {
+                let reference = tokens
+                    .binary_search_by(|t| {
+                        if t.end_byte <= byte {
+                            std::cmp::Ordering::Less
+                        } else if t.start_byte > byte {
+                            std::cmp::Ordering::Greater
+                        } else {
+                            std::cmp::Ordering::Equal
+                        }
+                    })
+                    .ok()
+                    .map(|i| tokens[i].token_type);
+                assert_eq!(token_at_byte(&tokens, &mut index, byte), reference);
+            }
+        }
+    }
+}

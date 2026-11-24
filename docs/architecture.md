@@ -1,6 +1,6 @@
 # Lume architecture
 
-This document describes Lume across `crates/lume-core/`, `crates/lume-syntax/`, and `crates/lume-tui/` at commit `a8df968`. Each subsystem separates headless editor state from terminal I/O and background parsing while keeping known implementation limits visible beside verified guarantees.
+This document describes Lume across `crates/lume-core/`, `crates/lume-syntax/`, and `crates/lume-tui/` in the current tree. Historical measurements identify their revision. Each subsystem separates headless editor state from terminal I/O and background parsing while keeping known implementation limits visible beside verified guarantees.
 
 ## Crate boundaries and unsafe isolation
 
@@ -69,10 +69,14 @@ Inside `SyntaxHighlighter::update` (`crates/lume-syntax/src/highlighter.rs:47-76
 
 `lume-tui` runs a single-threaded UI loop (`crates/lume-tui/src/main.rs:28-58`) receiving `AppEvent` items from a `crossterm::event::read()` thread with a `16 ms` poll timeout (`handle_tick`). `TerminalGuard::init` (`crates/lume-tui/src/terminal.rs:59-125`) enables raw mode, the alternate screen, mouse capture, focus events, and bracketed paste, and calls `supports_keyboard_enhancement()` to push Kitty `DISAMBIGUATE_ESCAPE_CODES | REPORT_ALL_KEYS_AS_ESCAPE_CODES` flags when supported. On `handle_tick`, `App` polls `.git/HEAD` synchronously every `1,500 ms` (`crates/lume-tui/src/input/mod.rs:64-68`), applies syntax responses, checks `AutoSaveController`, and drains `poll_async_saves`.
 
-Every frame in `App::render` (`crates/lume-tui/src/render/mod.rs:26-135`) wraps output in DEC Synchronized Update markers (`\x1b[?2026h` and `\x1b[?2026l`) buffered in a `128 KiB` `BufWriter<Stdout>` (`crates/lume-tui/src/main.rs:87`). `render_pane_viewport` (`crates/lume-tui/src/render/editor.rs:18-264`) draws either a single pane or two vertical/horizontal split panes (`SplitState`), painting line numbers, git/dirty markers, syntax tokens, search hits, matching brackets, and selection highlights. Four UI and rendering limits exist at commit `a8df968`:
+Every frame in `App::render` (`crates/lume-tui/src/render/mod.rs:26-135`) wraps output in DEC Synchronized Update markers (`\x1b[?2026h` and `\x1b[?2026l`) buffered in a `128 KiB` `BufWriter<Stdout>` (`crates/lume-tui/src/main.rs:87`). `render_pane_viewport` (`crates/lume-tui/src/render/editor.rs:18-264`) draws either a single pane or two vertical/horizontal split panes (`SplitState`), painting line numbers, git/dirty markers, syntax tokens, search hits, matching brackets, and selection highlights.
 
-- `render_pane_viewport` allocates `line.to_string()` and `Vec<char>` per visible line, loops across every character on the line even past `scroll_col + text_w`, and prints raw `\t` bytes instead of spaces (`crates/lume-tui/src/render/editor.rs:90-131`, `204-215`).
-- Only `cursors.primary()` selection is rendered (`crates/lume-tui/src/render/editor.rs:44-51`), and horizontal scrolling indexes `col_idx` by Unicode scalar count while `App::render` places the terminal cursor via `cursor_visual_line_col` (`unicode_width` columns + 4-column tabs).
+Source panes anchor the viewport by logical line and wrapped subrow. `WrapIter` streams grapheme-aligned byte ranges, measuring four-cell tab stops from each segment start. Each pane reserves a cell for the end-of-line cursor. A distant jump starts from the target logical line and crosses at most one pane of neighboring rows. Work within a long logical line still depends on its byte length. Multi-chunk Rope lines may need a contiguous temporary string. The renderer reuses text and match buffers and advances token and match indices in byte order.
+
+Each pane can display source or Markdown preview. The preview cache retains a parsed document per tab revision and at most two layouts at distinct widths per tab. Resizing can reuse the parsed document. Scrolling reads the visible slice of an existing layout. Source-line tags on rendered rows synchronize split panes. Only the primary cursor selection is painted.
+
+Other frontend limitations include the following.
+
 - Floating overlays (`palette.rs:12`, `quick_open.rs:21`) clamp widths to at least `36` and `50` columns, assuming terminal widths above those floors.
 - The Replace bar (`crates/lume-tui/src/search.rs:252-254`) and replace status notices (`crates/lume-tui/src/input/overlays.rs:391`, `500`) display Portuguese strings (`"Substituir por"`, `"Ocorrência substituída"`, `"Substituídas {} ocorrências"`) inside an otherwise English interface.
 

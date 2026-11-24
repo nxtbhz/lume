@@ -2,13 +2,15 @@
 
 Lume is a terminal text editor written in Rust 2021 across three workspace crates: `lume-core` for rope buffers and crash journaling, `lume-syntax` for background highlighting, and `lume-tui` for the `crossterm` terminal frontend. The editor pairs modeless GUI shortcuts with an optional modal Vim mode, a workspace-confined file explorer, and two-pane splits inside one stripped binary with embedded grammars.
 
-Build measurements, shared library linkage, test suite totals, Criterion microbenchmark intervals, and startup caveats at commit `a8df968` live in [docs/benchmarks.md](docs/benchmarks.md).
+Long lines wrap at the pane edge by default. Press `Alt+Z` to toggle wrapping. For Markdown, press `Ctrl+K` then `P` for a read-only rendered view, or `Ctrl+K` then `V` to keep editing with a live preview beside the source.
+
+Build measurements, shared library linkage, test suite totals, Criterion microbenchmark intervals, and startup caveats live in [docs/benchmarks.md](docs/benchmarks.md).
 
 ## Quickstart
 
 ### Prerequisites
 
-Compiling the workspace requires Rust `1.88.0` or newer because `lume-core` calls `slice::as_chunks` (`crates/lume-core/src/search.rs:13`) and `usize::is_multiple_of` (`crates/lume-core/src/editor/indent.rs:557`). Root `Cargo.toml` does not set `rust-version`, so Cargo accepts older toolchains until compilation fails.
+The locked Tree-sitter dependencies require Rust 1.90 or newer. The soft-wrap and Markdown-preview build was tested with Rust 1.100.0.
 
 Interactive sessions require a terminal emulator supporting ANSI 24-bit color, the alternate screen, and SGR mouse reporting. Keyboard enhancements are optional. If the terminal does not answer the capability probe, Lume uses standard terminal input after the 2-second probe timeout.
 

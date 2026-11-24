@@ -167,6 +167,9 @@ When `FileExplorer` is visible (`26` columns wide by default, `crates/lume-tui/s
 | `view.split_horizontal` | `View: Split Editor Horizontally` | `Ctrl+K -` | Split viewport into top/bottom panes |
 | `view.focus_next_split` | `View: Focus Next Split Pane` | `Ctrl+K W` | Toggle focus between panes `0` and `1` |
 | `view.close_split` | `View: Close Active Split Pane` | `Ctrl+K Q` | Collapse split to remaining pane |
+| `view.toggle_word_wrap` | `View: Toggle Word Wrap` | `Alt+Z` | Toggle soft wrap |
+| `markdown.toggle_preview` | `Markdown: Toggle Preview` | `Ctrl+K P` | Toggle rendered Markdown in the current pane |
+| `markdown.open_preview_split` | `Markdown: Open Preview to the Side` | `Ctrl+K V` | Open a vertical preview and keep source focused |
 | `view.toggle_line_numbers` | `View: Toggle Line Numbers` | `""` | Show or hide line-number/diff gutter |
 | `settings.toggle_auto_pairs` | `Settings: Toggle Auto-Closing Pairs` | `""` | Toggle `() [] {} "" ''` auto-closing and overtype |
 | `settings.toggle_smart_indent` | `Settings: Toggle Smart Indentation` | `""` | Toggle `Enter` indent after `{`, `(`, `[`, `:` |
@@ -190,6 +193,12 @@ Path resolution order (unless `--no-config` is passed):
 
 When no auto-discovered file exists, Lume skips parsing completely and starts with built-in defaults. If an auto-discovered file has syntax or validation errors, Lume opens with defaults and displays the error line in the status bar. Running `config.reload` on a broken file keeps the previously active configuration intact and reports the error.
 
+### Source wrapping and Markdown preview
+
+The Vim normal-mode sequences are `Space u w` for wrap, `Space m p` for preview, and `Space m v` for preview to the side. Source wrapping preserves file bytes. Up, Down, page movement, selections and mouse wheel use visual rows. Home and End move to the edge of the visual row. Press again at that edge to reach the logical line boundary. Clicking and dragging use the wrapped text under the pointer. Ctrl+click on C/C++ symbols still requests their definition.
+
+A preview renders headings, inline styles, task lists, alerts, fenced code and tables. Narrow panes stack table cells under their column labels. Use arrows, `j`/`k`, Page Up/Down or the wheel to read. In modeless mode, `gg` and `G` go to the beginning and end, Space pages down, and `q` or Escape returns to source. Editing in the source pane updates a preview of the same tab. A focused preview displays a read-only notice on edit or paste.
+
 ### `[editor]` settings
 
 | Key | Type | Default | Constraints |
@@ -199,6 +208,7 @@ When no auto-discovered file exists, Lume skips parsing completely and starts wi
 | `smart_unindent` | bool | `true` | Dedent by `tab_size` on `Backspace` |
 | `auto_pairs` | bool | `true` | Auto-close `() [] {} "" ''` |
 | `modal` | bool | `false` (`true` for `preset = "vim"`) | Enable Vim modal editing on startup |
+| `word_wrap` | bool | `true` | Wrap source lines to the pane width |
 | `line_numbers` | bool | `true` | Show line-number/diff gutter |
 | `auto_save` | bool | `false` | Enable debounced background autosave |
 | `auto_save_debounce_ms` | integer | `1000` | `100..=60000` |
