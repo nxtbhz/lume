@@ -806,6 +806,16 @@ fn populate_vim_preset(table: &mut KeymapTable) {
     let norm = KeymapContext::Normal;
     table.bind(
         norm,
+        parse_key_sequence("Space m p").unwrap(),
+        "markdown.toggle_preview",
+    );
+    table.bind(
+        norm,
+        parse_key_sequence("Space m v").unwrap(),
+        "markdown.open_preview_split",
+    );
+    table.bind(
+        norm,
         parse_key_sequence("Space u w").unwrap(),
         "view.toggle_word_wrap",
     );
@@ -855,6 +865,19 @@ fn populate_default_preset(table: &mut KeymapTable) {
         .union(KeyModifiers::SHIFT);
 
     let g = KeymapContext::Global;
+    for (key, id) in [
+        ('p', "markdown.toggle_preview"),
+        ('v', "markdown.open_preview_split"),
+    ] {
+        for mods in [NONE, SHIFT] {
+            table.bind_two(
+                g,
+                (KeyCode::Char('k'), CTRL),
+                (KeyCode::Char(key), mods),
+                id,
+            );
+        }
+    }
     table.bind_one(g, KeyCode::Char('q'), CTRL, "app.quit");
     table.bind_one(g, KeyCode::Char('p'), CTRL_SHIFT, "view.command_palette");
     table.bind_one(g, KeyCode::Char('p'), ALT, "view.command_palette");

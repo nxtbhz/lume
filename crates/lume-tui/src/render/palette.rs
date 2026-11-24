@@ -215,6 +215,8 @@ fn short_action_label(action: &str) -> &str {
         "file.next_tab" => "Next Tab",
         "file.prev_tab" => "Prev Tab",
         "view.toggle_explorer" => "Explorer",
+        "markdown.toggle_preview" => "Preview",
+        "markdown.open_preview_split" => "Preview Split",
         "view.toggle_word_wrap" => "Word Wrap",
         "view.split_vertical" => "V-Split",
         "view.split_horizontal" => "H-Split",

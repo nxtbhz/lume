@@ -31,6 +31,25 @@ fn render_pane_viewport<W: Write>(
         return Ok(());
     }
 
+    let pane = if is_active_pane {
+        app.splits.active_pane
+    } else {
+        1 - app.splits.active_pane
+    };
+    if app.pane_is_preview(pane) {
+        let scroll = if is_active_pane {
+            app.preview_scroll_row
+        } else {
+            app.splits.panes[pane].preview_scroll_row
+        };
+        let top =
+            super::markdown::render_markdown_pane(app, writer, rect, tab_idx, scroll, is_split)?;
+        if is_active_pane {
+            app.preview_scroll_row = top;
+        }
+        app.splits.panes[pane].preview_scroll_row = top;
+        return Ok(());
+    }
     let tab_idx = tab_idx.min(app.editor.tabs().len().saturating_sub(1));
     let tokens = app.update_syntax_highlights_for_tab(tab_idx);
     let diff_markers = app.editor.tabs_mut()[tab_idx].diff_markers();

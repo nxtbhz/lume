@@ -125,6 +125,10 @@ impl App {
                         return Ok(false);
                     };
                     self.switch_active_pane(pane);
+                    if self.pane_is_preview(pane) {
+                        self.mouse_dragging = false;
+                        return Ok(true);
+                    }
                     let (byte, _) = self.mouse_byte(pane, col, row);
                     self.editor.cursors_mut().primary_mut().move_to(byte);
                     let now = Instant::now();
@@ -325,6 +329,9 @@ impl App {
         ) else {
             return false;
         };
+        if self.pane_is_preview(target_pane) {
+            return false;
+        }
         let (head, hit) = self.mouse_byte(target_pane, col, row);
         if !hit {
             return false;

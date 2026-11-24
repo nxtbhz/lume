@@ -176,6 +176,16 @@ pub const COMMANDS: &[CommandItem] = &[
         shortcut: "Ctrl+K Q",
     },
     CommandItem {
+        id: "markdown.toggle_preview",
+        title: "Markdown: Toggle Preview",
+        shortcut: "Ctrl+K P",
+    },
+    CommandItem {
+        id: "markdown.open_preview_split",
+        title: "Markdown: Open Preview to the Side",
+        shortcut: "Ctrl+K V",
+    },
+    CommandItem {
         id: "view.toggle_word_wrap",
         title: "View: Toggle Word Wrap",
         shortcut: "Alt+Z",
@@ -317,6 +327,34 @@ impl App {
     }
 
     pub fn execute_command(&mut self, id: &str) {
+        if self.view_mode == crate::split::PaneViewMode::MarkdownPreview {
+            let page = self.pane_rect(self.splits.active_pane).height.max(1) as isize;
+            let delta = match id {
+                "motion.up" => Some(-1),
+                "motion.down" => Some(1),
+                "motion.page_up" => Some(-page),
+                "motion.page_down" => Some(page),
+                "motion.home" | "motion.document_start" => Some(isize::MIN),
+                "motion.end" | "motion.document_end" => Some(isize::MAX),
+                _ => None,
+            };
+            if let Some(delta) = delta {
+                self.scroll_pane_visual_rows(None, delta);
+                return;
+            }
+            if id.starts_with("edit.") || id.starts_with("vim.") || id.starts_with("motion.") {
+                self.readonly_notice();
+                return;
+            }
+        }
+        if id == "markdown.toggle_preview" {
+            self.toggle_preview();
+            return;
+        }
+        if id == "markdown.open_preview_split" {
+            self.open_preview_split();
+            return;
+        }
         match id {
             "file.quick_open" => {
                 self.open_quick_open();

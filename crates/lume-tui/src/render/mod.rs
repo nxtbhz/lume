@@ -1,6 +1,7 @@
 pub mod editor;
 pub mod explorer;
 pub mod gutter;
+mod markdown;
 pub mod palette;
 pub mod quick_open;
 pub mod status_bar;
@@ -102,7 +103,7 @@ impl App {
             && !self.which_key_open
             && self.quick_open.is_none()
         {
-            if self.focus == ActiveFocus::Editor {
+            if self.focus == ActiveFocus::Editor && !self.pane_is_preview(self.splits.active_pane) {
                 let rect = self.pane_rect(self.splits.active_pane);
                 let gutter = gutter_w.min(rect.width);
                 if let Some((row, col)) = self

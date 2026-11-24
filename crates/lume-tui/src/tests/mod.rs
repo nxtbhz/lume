@@ -38,6 +38,7 @@ pub mod explorer_tests;
 pub mod git_status_tests;
 pub mod goto_line_tests;
 pub mod gutter_diff_tests;
+mod markdown_preview_tests;
 pub mod mouse_tests;
 pub mod palette_tests;
 pub mod quick_open_tests;

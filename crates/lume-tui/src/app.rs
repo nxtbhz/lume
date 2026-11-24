@@ -39,6 +39,10 @@ pub struct App {
     pub terminal_height: u16,
     pub status_message: Option<(String, Instant)>,
     pub running: bool,
+    pub markdown_cache: crate::markdown::MarkdownPreviewCache,
+    pub(crate) preview_g_pending: bool,
+    preview_sync_anchor: Option<(usize, usize, usize)>,
+    preview_tab: Option<usize>,
     pub word_wrap: bool,
     pub show_line_numbers: bool,
 
@@ -216,6 +220,10 @@ impl App {
             scroll_subrow: 0,
             preview_scroll_row: 0,
             view_mode: PaneViewMode::Source,
+            markdown_cache: Default::default(),
+            preview_g_pending: false,
+            preview_sync_anchor: None,
+            preview_tab: None,
             word_wrap: true,
             scroll_row: 0,
             scroll_col: 0,
@@ -442,6 +450,10 @@ impl App {
         if self.has_paste_overlay() {
             self.paste_into_overlay(text);
         } else {
+            if self.view_mode == PaneViewMode::MarkdownPreview {
+                self.readonly_notice();
+                return;
+            }
             self.paste_into_editor(text);
         }
     }
@@ -487,6 +499,7 @@ impl App {
         if single_cursor {
             self.shift_syntax_for_delta(tab_id, cursor.min(), cursor.range().len(), text.len());
         } else {
+            self.markdown_cache.invalidate_tab(tab_id);
             self.syntax_cache.remove(&tab_id);
         }
         if self.modal_enabled && self.vim_state.mode == crate::vim::VimMode::Visual {
@@ -595,6 +608,26 @@ impl App {
     pub fn scroll_pane_visual_rows(&mut self, pane: Option<usize>, delta: isize) {
         let index = pane.unwrap_or(self.splits.active_pane);
         let active = index == self.splits.active_pane;
+        if self.pane_is_preview(index) {
+            let p = &self.splits.panes[index];
+            let (tab, scroll) = if active {
+                (self.editor.active_tab_idx(), self.preview_scroll_row)
+            } else {
+                (p.tab_idx, p.preview_scroll_row)
+            };
+            let rect = self.pane_rect(index);
+            let max = self
+                .preview_layout(tab, rect.width)
+                .rows
+                .len()
+                .saturating_sub(rect.height.max(1));
+            let next = scroll.saturating_add_signed(delta).min(max);
+            if active {
+                self.preview_scroll_row = next;
+            }
+            self.splits.panes[index].preview_scroll_row = next;
+            return;
+        }
         let state = &self.splits.panes[index];
         let (tab_idx, top) = if active {
             (
@@ -628,7 +661,75 @@ impl App {
             self.splits.panes[index].scroll_subrow,
         ) = next;
     }
+    pub fn preview_layout(
+        &mut self,
+        idx: usize,
+        width: usize,
+    ) -> Arc<crate::markdown::layout::RenderedMarkdown> {
+        let tab = &self.editor.tabs()[idx];
+        self.markdown_cache
+            .get_or_compute(tab.id, tab.revision, tab.buffer.rope(), width)
+    }
+    pub fn readonly_notice(&mut self) {
+        let shortcut = self
+            .config
+            .keymaps
+            .primary_shortcut_for("markdown.toggle_preview")
+            .unwrap_or_else(|| "Command Palette → Markdown: Toggle Preview".into());
+        self.set_status(format!("Read-only preview · {shortcut} to edit"));
+    }
+    pub fn toggle_preview(&mut self) {
+        let idx = self.editor.active_tab_idx();
+        let rect = self.pane_rect(self.splits.active_pane);
+        let layout = self.preview_layout(idx, rect.width);
+        if self.view_mode == PaneViewMode::Source {
+            self.preview_scroll_row = layout
+                .preview_row_for_source_line(self.scroll_row)
+                .min(layout.rows.len().saturating_sub(rect.height.max(1)));
+            self.view_mode = PaneViewMode::MarkdownPreview;
+            self.preview_tab = Some(self.editor.active_tab().id);
+        } else {
+            self.scroll_row = layout.source_line_for_preview_row(self.preview_scroll_row);
+            self.scroll_subrow = 0;
+            self.view_mode = PaneViewMode::Source;
+        }
+        self.preview_g_pending = false;
+        self.mouse_dragging = false;
+        self.preview_sync_anchor = None;
+        self.sync_active_pane();
+    }
+    pub fn open_preview_split(&mut self) {
+        let tab = self.editor.active_tab_idx();
+        self.splits.split_vertical(
+            tab,
+            (self.scroll_row, self.scroll_col),
+            self.editor.cursors().clone(),
+        );
+        self.splits.active_pane = 0;
+        self.view_mode = PaneViewMode::Source;
+        self.splits.panes[1] = crate::split::Pane::new(tab, 0, 0, self.editor.cursors().clone());
+        self.splits.panes[1].view_mode = PaneViewMode::MarkdownPreview;
+        self.preview_sync_anchor = None;
+        self.focus = ActiveFocus::Editor;
+        self.adjust_viewport();
+    }
+    pub fn pane_is_preview(&self, index: usize) -> bool {
+        (if index == self.splits.active_pane {
+            self.view_mode
+        } else {
+            self.splits.panes[index].view_mode
+        }) == PaneViewMode::MarkdownPreview
+    }
     pub fn adjust_viewport(&mut self) {
+        if self.view_mode == PaneViewMode::MarkdownPreview
+            && self.preview_tab != Some(self.editor.active_tab().id)
+        {
+            self.preview_scroll_row = 0;
+            if self.current_language() != Some(Language::Markdown) {
+                self.view_mode = PaneViewMode::Source;
+            }
+            self.preview_tab = Some(self.editor.active_tab().id);
+        }
         let rect = self.pane_rect(self.splits.active_pane);
         let height = rect.height.max(1);
         let width = rect.width.saturating_sub(self.gutter_width()).max(1);
@@ -690,6 +791,27 @@ impl App {
 
             let other = if active == 0 { 1 } else { 0 };
             if self.splits.panes[other].tab_idx == active_tab_idx {
+                if self.view_mode == PaneViewMode::Source && self.pane_is_preview(other) {
+                    let cursor = self.editor.cursor_line_col().0;
+                    let anchor = (self.scroll_row, cursor, self.pane_rect(other).width);
+                    if self.preview_sync_anchor != Some(anchor) {
+                        let rect = self.pane_rect(other);
+                        let layout = self.preview_layout(active_tab_idx, rect.width);
+                        let top = layout.preview_row_for_source_line(self.scroll_row);
+                        let cursor_row = layout.preview_row_for_source_line(cursor);
+                        let follow = if self
+                            .preview_sync_anchor
+                            .is_some_and(|p| p.0 == self.scroll_row && p.1 != cursor)
+                        {
+                            top.max(cursor_row.saturating_sub(rect.height.saturating_sub(1)))
+                        } else {
+                            top
+                        };
+                        self.splits.panes[other].preview_scroll_row =
+                            follow.min(layout.rows.len().saturating_sub(rect.height.max(1)));
+                        self.preview_sync_anchor = Some(anchor);
+                    }
+                }
                 if let Some(tab) = self.editor.tabs().get(active_tab_idx) {
                     Self::clamp_cursors_to_buffer(
                         &mut self.splits.panes[other].cursors,
@@ -715,6 +837,9 @@ impl App {
         for pane in &mut self.splits.panes {
             if pane.tab_idx == tab_idx {
                 pane.tab_idx = active_tab_idx.min(max_tab);
+                pane.view_mode = PaneViewMode::Source;
+                pane.preview_scroll_row = 0;
+                pane.scroll_subrow = 0;
                 pane.scroll_row = 0;
                 pane.scroll_subrow = 0;
                 pane.preview_scroll_row = 0;
@@ -837,6 +962,8 @@ impl App {
         self.editor.switch_tab(tab_idx);
         self.scroll_subrow = self.splits.panes[target_pane].scroll_subrow;
         self.preview_scroll_row = self.splits.panes[target_pane].preview_scroll_row;
+        self.preview_g_pending = false;
+        self.preview_tab = Some(self.editor.active_tab().id);
         self.view_mode = self.splits.panes[target_pane].view_mode;
         self.scroll_row = self.splits.panes[target_pane].scroll_row;
         self.scroll_col = self.splits.panes[target_pane].scroll_col;
@@ -922,6 +1049,11 @@ impl App {
         match self.editor.open_or_load(path) {
             Ok(idx) => {
                 let new_tab_id = self.editor.tabs()[idx].id;
+                if self.view_mode == PaneViewMode::MarkdownPreview
+                    && self.language_for_tab(idx) != Some(Language::Markdown)
+                {
+                    self.view_mode = PaneViewMode::Source;
+                }
                 if new_tab_id == prev_tab_id && prev_was_untitled {
                     self.invalidate_syntax_for_tab(new_tab_id);
                 }

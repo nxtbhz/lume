@@ -78,6 +78,24 @@ pub fn render_status_bar<W: Write>(
 
         let width = app.terminal_width as usize;
 
+        if app.view_mode == crate::split::PaneViewMode::MarkdownPreview {
+            let msg = if !app.pending_keys.is_empty()
+                || app
+                    .status_message
+                    .as_ref()
+                    .is_some_and(|(_, t)| t.elapsed() < Duration::from_secs(4))
+            {
+                right_status.as_str()
+            } else {
+                &file_name
+            };
+            queue!(
+                writer,
+                Print(fit_text(&format!("[PREVIEW] │ {msg}"), width)),
+                ResetColor
+            )?;
+            return Ok(());
+        }
         let git_str = if let Some(ref head) = app.git_head {
             format!("⎇ {} │ ", head.display_name())
         } else {

@@ -80,6 +80,12 @@ impl App {
         // 5. Unified keymap dispatch across Global + active context
         let active_ctx = self.active_keymap_context();
         if self.dispatch_keymap(active_ctx, key) == DispatchOutcome::Unmatched {
+            if self.view_mode == crate::split::PaneViewMode::MarkdownPreview
+                && active_ctx != KeymapContext::Explorer
+            {
+                self.handle_preview_key(key);
+                return Ok(());
+            }
             match active_ctx {
                 KeymapContext::Explorer => self.handle_explorer_fallback(key),
                 KeymapContext::Editor | KeymapContext::Insert => {
@@ -214,7 +220,38 @@ impl App {
         }
     }
 
+    fn handle_preview_key(&mut self, key: KeyEvent) {
+        let pending = std::mem::take(&mut self.preview_g_pending);
+        if key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
+            self.readonly_notice();
+            return;
+        }
+        let cmd = match key.code {
+            KeyCode::Char('j') => "motion.down",
+            KeyCode::Char('k') => "motion.up",
+            KeyCode::Char(' ') => "motion.page_down",
+            KeyCode::Char('G') => "motion.document_end",
+            KeyCode::Char('g') if pending => "motion.document_start",
+            KeyCode::Char('g') => {
+                self.preview_g_pending = true;
+                return;
+            }
+            KeyCode::Esc | KeyCode::Char('q') => "markdown.toggle_preview",
+            _ => {
+                self.readonly_notice();
+                return;
+            }
+        };
+        self.execute_command(cmd);
+    }
     pub(crate) fn handle_text_editing_fallback(&mut self, key: KeyEvent) {
+        if self.view_mode == crate::split::PaneViewMode::MarkdownPreview {
+            self.readonly_notice();
+            return;
+        }
         let tab_id = self.editor.active_tab().id;
         let cursor = *self.editor.cursors().primary();
 
