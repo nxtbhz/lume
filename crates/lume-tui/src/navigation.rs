@@ -248,7 +248,10 @@ impl App {
     }
 
     fn origin_matches(&self, origin: &DefinitionOrigin) -> bool {
-        if self.focus != ActiveFocus::Editor || self.splits.active_pane != origin.pane {
+        if self.focus != ActiveFocus::Editor
+            || self.splits.active_pane != origin.pane
+            || !self.pending_keys.is_empty()
+        {
             return false;
         }
         let tab = self.editor.active_tab();

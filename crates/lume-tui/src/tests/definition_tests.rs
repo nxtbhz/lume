@@ -231,6 +231,28 @@ fn definition_ignores_stale_replies() {
     assert_eq!(app.editor.tabs().len(), 2);
     app.execute_command("view.close_split");
 
+    // 5b. Active multi-key chord (e.g. Ctrl+K) invalidates reply and preserves pending chord
+    app.editor.switch_tab(0);
+    app.request_definition_at_cursor();
+    let q_chord = rx.try_recv().unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(!app.pending_keys.is_empty());
+    deliver_reply(
+        &mut app,
+        DefinitionReply {
+            id: q_chord.id,
+            result: Ok(vec![def_target.clone()]),
+        },
+    );
+    assert_eq!(app.editor.tabs().len(), 2);
+    assert_eq!(app.editor.file_path(), Some(src.as_path()));
+    assert!(
+        !app.pending_keys.is_empty(),
+        "stale reply must not clear or corrupt an in-progress chord"
+    );
+    app.clear_pending_keys();
+
     // 6. Out-of-order older reply is ignored while newer request remains active
     app.editor.switch_tab(0);
     app.request_definition_at_cursor();

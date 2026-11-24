@@ -129,13 +129,15 @@ pub struct DefinitionReply {
 }
 
 type DeliverFn = Box<dyn Fn(DefinitionReply) + Send + 'static>;
-type SessionFactory = Box<dyn Fn(&ProjectKey) -> Result<LspSession, LspError> + Send + 'static>;
+type SessionFactory =
+    Box<dyn Fn(&ProjectKey, Receiver<()>) -> Result<LspSession, LspError> + Send + 'static>;
 
 enum ClientMode {
     Lazy {
         deliver: Option<DeliverFn>,
         factory: Option<SessionFactory>,
         sender: Option<Sender<DefinitionQuery>>,
+        cancel_tx: Option<Sender<()>>,
         worker: Option<JoinHandle<()>>,
     },
     #[cfg(test)]
@@ -150,9 +152,15 @@ pub struct LspClient {
 impl Drop for LspClient {
     fn drop(&mut self) {
         match &mut self.mode {
-            ClientMode::Lazy { sender, worker, .. } => {
-                // Closing the channel signals the worker loop to exit and shut down all sessions.
+            ClientMode::Lazy {
+                sender,
+                cancel_tx,
+                worker,
+                ..
+            } => {
+                // Closing both channels wakes any in-flight request immediately and exits the worker.
                 sender.take();
+                cancel_tx.take();
                 if let Some(handle) = worker.take() {
                     let _ = handle.join();
                 }
@@ -169,10 +177,11 @@ impl LspClient {
         Self {
             mode: ClientMode::Lazy {
                 deliver: Some(Box::new(deliver)),
-                factory: Some(Box::new(|key: &ProjectKey| {
-                    LspSession::spawn(key.server, &key.root)
+                factory: Some(Box::new(|key: &ProjectKey, cancel: Receiver<()>| {
+                    LspSession::spawn_with_cancel(key.server, &key.root, cancel)
                 })),
                 sender: None,
+                cancel_tx: None,
                 worker: None,
             },
         }
@@ -188,13 +197,14 @@ impl LspClient {
     #[cfg(test)]
     pub(crate) fn with_session_factory(
         deliver: impl Fn(DefinitionReply) + Send + 'static,
-        factory: impl Fn(&ProjectKey) -> Result<LspSession, LspError> + Send + 'static,
+        factory: impl Fn(&ProjectKey, Receiver<()>) -> Result<LspSession, LspError> + Send + 'static,
     ) -> Self {
         Self {
             mode: ClientMode::Lazy {
                 deliver: Some(Box::new(deliver)),
                 factory: Some(Box::new(factory)),
                 sender: None,
+                cancel_tx: None,
                 worker: None,
             },
         }
@@ -209,19 +219,22 @@ impl LspClient {
                 deliver,
                 factory,
                 sender,
+                cancel_tx,
                 worker,
             } => {
                 if sender.is_none() {
                     let deliver_fn = deliver.take().ok_or(LspError::Exited)?;
                     let factory_fn = factory.take().ok_or(LspError::Exited)?;
                     let (tx, rx) = crossbeam_channel::unbounded();
+                    let (c_tx, c_rx) = crossbeam_channel::bounded::<()>(0);
                     let handle = std::thread::Builder::new()
                         .name("lume-lsp-worker".to_string())
-                        .spawn(move || run_worker(rx, deliver_fn, factory_fn))
+                        .spawn(move || run_worker(rx, c_rx, deliver_fn, factory_fn))
                         .map_err(|e| {
                             LspError::Protocol(format!("failed to start LSP worker thread: {e}"))
                         })?;
                     *sender = Some(tx);
+                    *cancel_tx = Some(c_tx);
                     *worker = Some(handle);
                 }
                 sender
@@ -239,12 +252,30 @@ struct SessionEntry {
     docs: DocumentSyncState,
 }
 
-fn run_worker(rx: Receiver<DefinitionQuery>, deliver: DeliverFn, factory: SessionFactory) {
+fn is_cancelled(cancel_rx: &Receiver<()>) -> bool {
+    !matches!(
+        cancel_rx.try_recv(),
+        Err(crossbeam_channel::TryRecvError::Empty)
+    )
+}
+
+fn run_worker(
+    rx: Receiver<DefinitionQuery>,
+    cancel_rx: Receiver<()>,
+    deliver: DeliverFn,
+    factory: SessionFactory,
+) {
     let mut sessions: HashMap<ProjectKey, SessionEntry> = HashMap::new();
 
     while let Ok(query) = rx.recv() {
+        if is_cancelled(&cancel_rx) {
+            break;
+        }
         let query_id = query.id;
-        let result = handle_query(&mut sessions, &factory, &query);
+        let result = handle_query(&mut sessions, &factory, &cancel_rx, &query);
+        if is_cancelled(&cancel_rx) {
+            break;
+        }
         deliver(DefinitionReply {
             id: query_id,
             result,
@@ -256,6 +287,7 @@ fn run_worker(rx: Receiver<DefinitionQuery>, deliver: DeliverFn, factory: Sessio
 fn handle_query(
     sessions: &mut HashMap<ProjectKey, SessionEntry>,
     factory: &SessionFactory,
+    cancel_rx: &Receiver<()>,
     query: &DefinitionQuery,
 ) -> Result<Vec<DefinitionTarget>, LspError> {
     let source_canonical = canonicalize_best_effort(&query.source_path, &query.explorer_root);
@@ -283,7 +315,7 @@ fn handle_query(
     }
 
     if !sessions.contains_key(&project_key) {
-        let session = factory(&project_key)?;
+        let session = factory(&project_key, cancel_rx.clone())?;
         sessions.insert(
             project_key.clone(),
             SessionEntry {
@@ -347,6 +379,7 @@ mod tests {
             &self,
             rx: &Receiver<IncomingMessage>,
             _deadline: Duration,
+            _cancellable: bool,
         ) -> Result<IncomingMessage, WaitError> {
             rx.recv().map_err(|_| WaitError::Disconnected)
         }
@@ -375,7 +408,7 @@ mod tests {
             move |reply| {
                 let _ = reply_tx.send(reply);
             },
-            move |key: &ProjectKey| {
+            move |key: &ProjectKey, _cancel: Receiver<()>| {
                 spawned_clone.lock().unwrap().push(key.clone());
                 let (tx, rx) = crossbeam_channel::unbounded();
                 tx.send(IncomingMessage::Message(json!({
@@ -460,5 +493,123 @@ mod tests {
         assert_eq!(r1.result.unwrap()[0].path, proj_a.join("target.h"));
         assert_eq!(r2.result.unwrap()[0].path, proj_b.join("target.h"));
         assert_eq!(spawned_keys.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn drop_cancels_inflight_request_promptly() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::time::Instant;
+
+        let dir = TestDir::new("lume_lsp_drop_cancel");
+        std::fs::write(dir.path().join("compile_flags.txt"), "-I.\n").unwrap();
+        let file = dir.path().join("hang.c");
+        std::fs::write(&file, "int hang = 1;\n").unwrap();
+
+        let (sent_def_tx, sent_def_rx) = crossbeam_channel::unbounded();
+        let def_requests = Arc::new(AtomicUsize::new(0));
+        let reaped = Arc::new(AtomicBool::new(false));
+        let def_requests_clone = Arc::clone(&def_requests);
+        let reaped_clone = Arc::clone(&reaped);
+
+        struct NotifyWriter {
+            buf: Vec<u8>,
+            sent_def_tx: crossbeam_channel::Sender<()>,
+            def_requests: Arc<AtomicUsize>,
+        }
+        impl Write for NotifyWriter {
+            fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+                self.buf.extend_from_slice(data);
+                if String::from_utf8_lossy(&self.buf).contains("textDocument/definition") {
+                    self.buf.clear();
+                    self.def_requests.fetch_add(1, Ordering::SeqCst);
+                    let _ = self.sent_def_tx.send(());
+                }
+                Ok(data.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        struct TrackedProcess(Arc<AtomicBool>);
+        impl ProcessHandle for TrackedProcess {
+            fn terminate_and_reap(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        // Hold `keep_tx` alive so the session's `rx` never disconnects on its own
+        let (keep_tx, rx_for_session) = crossbeam_channel::unbounded();
+        keep_tx
+            .send(IncomingMessage::Message(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "capabilities": {
+                        "positionEncoding": "utf-8",
+                        "definitionProvider": true,
+                        "textDocumentSync": 2
+                    }
+                }
+            })))
+            .unwrap();
+        let rx_slot = Arc::new(Mutex::new(Some(rx_for_session)));
+
+        let mut client = LspClient::with_session_factory(
+            |_reply| {},
+            move |key: &ProjectKey, cancel: Receiver<()>| {
+                let rx = rx_slot.lock().unwrap().take().expect("factory called once");
+                LspSession::from_parts(
+                    Box::new(NotifyWriter {
+                        buf: Vec::new(),
+                        sent_def_tx: sent_def_tx.clone(),
+                        def_requests: Arc::clone(&def_requests_clone),
+                    }),
+                    rx,
+                    Box::new(TrackedProcess(Arc::clone(&reaped_clone))),
+                    Box::new(crate::lsp::session::RealClock::with_cancel(cancel)),
+                    &key.root,
+                )
+            },
+        );
+
+        let make_query = |id| DefinitionQuery {
+            id,
+            source_path: file.clone(),
+            source_byte: 4,
+            explorer_root: dir.path().to_path_buf(),
+            documents: vec![OpenDocument {
+                path: file.clone(),
+                language: Language::C,
+                tab_id: 1,
+                revision: 0,
+                text: RopeBuffer::from_str("int hang = 1;\n"),
+            }],
+        };
+
+        client.request_definition(make_query(1)).unwrap();
+        client.request_definition(make_query(2)).unwrap();
+
+        // Wait until the first request is genuinely blocked inside request_with_timeout
+        sent_def_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("worker should send first definition request");
+
+        let start = Instant::now();
+        drop(client);
+        let elapsed = start.elapsed();
+        drop(keep_tx);
+
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "LspClient::drop blocked for {:?} instead of cancelling in-flight request promptly",
+            elapsed
+        );
+        assert!(reaped.load(Ordering::SeqCst));
+        assert_eq!(
+            def_requests.load(Ordering::SeqCst),
+            1,
+            "queued second query must not run during cancellation"
+        );
     }
 }

@@ -15,12 +15,16 @@ struct SyncedDocument {
     language_id: &'static str,
     lsp_version: i32,
     last_text: RopeBuffer,
+    last_sync_epoch: u64,
+    preamble_epoch: u64,
 }
 
 /// Per-session synchronization ledger tracking open URIs, revisions, and last sent snapshots.
 #[derive(Default)]
 pub struct DocumentSyncState {
     synced: BTreeMap<String, SyncedDocument>,
+    sync_epoch: u64,
+    last_closed_epoch: u64,
 }
 
 impl DocumentSyncState {
@@ -86,12 +90,10 @@ impl DocumentSyncState {
             })
             .collect();
 
-        let mut other_doc_mutated = false;
         for uri in to_close {
             self.synced.remove(&uri);
-            if uri != source_uri {
-                other_doc_mutated = true;
-            }
+            self.sync_epoch = self.sync_epoch.saturating_add(1);
+            self.last_closed_epoch = self.sync_epoch;
             if caps.open_close {
                 session.notify(
                     "textDocument/didClose",
@@ -104,17 +106,20 @@ impl DocumentSyncState {
         //    has updated header contents before the source TU is opened or refreshed.
         let source_entry = desired.remove(&source_uri);
         for (uri, (doc, language_id)) in desired {
-            if self.sync_one(session, caps, uri, doc, language_id, false)? {
-                other_doc_mutated = true;
-            }
+            let _ = self.sync_one(session, caps, uri, doc, language_id, false)?;
         }
 
         // 3. Sync the source document last. If any other project document (e.g. a header)
-        //    was opened, changed, or closed while the source TU was already open, force a
-        //    didClose + didOpen cycle so clangd rebuilds the source TU's preamble synchronously
-        //    against the updated dirty headers before textDocument/definition runs.
+        //    was opened, changed, or closed after the source TU's preamble was last opened—
+        //    even during an earlier query from another file—force a didClose + didOpen cycle
+        //    so clangd rebuilds the source TU's preamble synchronously against dirty headers.
         if let Some((doc, language_id)) = source_entry {
-            let force_reopen = other_doc_mutated && self.synced.contains_key(&source_uri);
+            let force_reopen = self.synced.get(&source_uri).is_some_and(|source| {
+                self.last_closed_epoch > source.preamble_epoch
+                    || self.synced.iter().any(|(uri, other)| {
+                        uri != &source_uri && other.last_sync_epoch > source.preamble_epoch
+                    })
+            });
             let _ = self.sync_one(
                 session,
                 caps,
@@ -183,9 +188,12 @@ impl DocumentSyncState {
                         }),
                     )?;
                 }
+                self.sync_epoch = self.sync_epoch.saturating_add(1);
                 tracked.tab_id = doc.tab_id;
                 tracked.revision = doc.revision;
                 tracked.last_text = doc.text.clone();
+                tracked.last_sync_epoch = self.sync_epoch;
+                tracked.preamble_epoch = self.sync_epoch;
                 return Ok(true);
             }
         }
@@ -206,6 +214,7 @@ impl DocumentSyncState {
                         }),
                     )?;
                 }
+                self.sync_epoch = self.sync_epoch.saturating_add(1);
                 self.synced.insert(
                     uri,
                     SyncedDocument {
@@ -214,6 +223,8 @@ impl DocumentSyncState {
                         language_id,
                         lsp_version: 1,
                         last_text: doc.text.clone(),
+                        last_sync_epoch: self.sync_epoch,
+                        preamble_epoch: self.sync_epoch,
                     },
                 );
                 Ok(true)
@@ -223,6 +234,7 @@ impl DocumentSyncState {
                     return Ok(false);
                 }
                 let full_text = doc.text.rope().to_string();
+                let mut reopened = false;
                 match caps.sync_kind {
                     TextDocumentSyncKind::Full => {
                         tracked.lsp_version = tracked.lsp_version.saturating_add(1);
@@ -286,12 +298,18 @@ impl DocumentSyncState {
                                     }
                                 }),
                             )?;
+                            reopened = true;
                         }
                     }
                 }
+                self.sync_epoch = self.sync_epoch.saturating_add(1);
                 tracked.tab_id = doc.tab_id;
                 tracked.revision = doc.revision;
                 tracked.last_text = doc.text.clone();
+                tracked.last_sync_epoch = self.sync_epoch;
+                if reopened {
+                    tracked.preamble_epoch = self.sync_epoch;
+                }
                 Ok(true)
             }
         }
@@ -338,6 +356,7 @@ mod tests {
             &self,
             rx: &Receiver<IncomingMessage>,
             _deadline: Duration,
+            _cancellable: bool,
         ) -> Result<IncomingMessage, WaitError> {
             rx.recv().map_err(|_| WaitError::Disconnected)
         }
@@ -667,5 +686,135 @@ mod tests {
         );
         assert_eq!(change["range"]["end"], json!({ "line": 1, "character": 6 }));
         assert_eq!(change["text"], "int z;");
+    }
+
+    #[test]
+    fn reopens_source_preamble_after_intermediate_query_in_header() {
+        let dir = TestDir::new("lume_lsp_inter_query_preamble");
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::create_dir_all(dir.path().join("include")).unwrap();
+        std::fs::write(dir.path().join("compile_flags.txt"), "-Iinclude\n").unwrap();
+
+        let source_path = dir.path().join("src/t.c");
+        let header_path = dir.path().join("include/arch.h");
+        let source_text = "#include \"arch.h\"\nstruct Arch item;\n";
+        let header_v0 = "struct Arch { int v; };\n";
+        let header_v1 = "\n\nstruct Arch { int v; };\n";
+        std::fs::write(&source_path, source_text).unwrap();
+        std::fs::write(&header_path, header_v0).unwrap();
+
+        let source_uri = path_to_uri(&source_path).unwrap();
+        let project = ProjectKey {
+            server: ServerKind::Clangd,
+            root: dir.path().to_path_buf(),
+        };
+
+        let (mut session, tx, sent) = make_session(dir.path(), 2, "utf-16");
+        let mut sync = DocumentSyncState::new();
+
+        // 1. Query from t.c opens both arch.h and t.c
+        tx.send(IncomingMessage::Message(
+            json!({ "jsonrpc": "2.0", "id": 2, "result": null }),
+        ))
+        .unwrap();
+        let q1 = DefinitionQuery {
+            id: 1,
+            source_path: source_path.clone(),
+            source_byte: source_text.find("Arch").unwrap(),
+            explorer_root: dir.path().to_path_buf(),
+            documents: vec![
+                OpenDocument {
+                    path: source_path.clone(),
+                    language: Language::C,
+                    tab_id: 1,
+                    revision: 0,
+                    text: RopeBuffer::from_str(source_text),
+                },
+                OpenDocument {
+                    path: header_path.clone(),
+                    language: Language::C,
+                    tab_id: 2,
+                    revision: 0,
+                    text: RopeBuffer::from_str(header_v0),
+                },
+            ],
+        };
+        sync.query_definition(&mut session, &project, &q1, "c", &source_path)
+            .unwrap();
+        let _ = take_sent_messages(&sent);
+
+        // 2. User edits arch.h and queries FROM arch.h first (flushes arch.h didChange!)
+        tx.send(IncomingMessage::Message(
+            json!({ "jsonrpc": "2.0", "id": 3, "result": null }),
+        ))
+        .unwrap();
+        let q2 = DefinitionQuery {
+            id: 2,
+            source_path: header_path.clone(),
+            source_byte: header_v1.find("Arch").unwrap(),
+            explorer_root: dir.path().to_path_buf(),
+            documents: vec![
+                OpenDocument {
+                    path: source_path.clone(),
+                    language: Language::C,
+                    tab_id: 1,
+                    revision: 0,
+                    text: RopeBuffer::from_str(source_text),
+                },
+                OpenDocument {
+                    path: header_path.clone(),
+                    language: Language::C,
+                    tab_id: 2,
+                    revision: 1,
+                    text: RopeBuffer::from_str(header_v1),
+                },
+            ],
+        };
+        sync.query_definition(&mut session, &project, &q2, "c", &header_path)
+            .unwrap();
+        let _ = take_sent_messages(&sent);
+
+        // 3. User switches back to t.c and queries again: t.c must STILL cycle didClose+didOpen
+        //    because arch.h changed after t.c's preamble was last opened!
+        tx.send(IncomingMessage::Message(
+            json!({ "jsonrpc": "2.0", "id": 4, "result": null }),
+        ))
+        .unwrap();
+        let q3 = DefinitionQuery {
+            id: 3,
+            source_path: source_path.clone(),
+            source_byte: source_text.find("Arch").unwrap(),
+            explorer_root: dir.path().to_path_buf(),
+            documents: vec![
+                OpenDocument {
+                    path: source_path.clone(),
+                    language: Language::C,
+                    tab_id: 1,
+                    revision: 0,
+                    text: RopeBuffer::from_str(source_text),
+                },
+                OpenDocument {
+                    path: header_path.clone(),
+                    language: Language::C,
+                    tab_id: 2,
+                    revision: 1,
+                    text: RopeBuffer::from_str(header_v1),
+                },
+            ],
+        };
+        sync.query_definition(&mut session, &project, &q3, "c", &source_path)
+            .unwrap();
+        let msgs = take_sent_messages(&sent);
+        assert_eq!(
+            msgs.len(),
+            3,
+            "expected didClose, didOpen, definition; got {msgs:?}"
+        );
+        assert_eq!(msgs[0]["method"], "textDocument/didClose");
+        assert_eq!(msgs[0]["params"]["textDocument"]["uri"], source_uri);
+        assert_eq!(msgs[1]["method"], "textDocument/didOpen");
+        assert_eq!(msgs[1]["params"]["textDocument"]["uri"], source_uri);
+        assert_eq!(msgs[2]["method"], "textDocument/definition");
+        assert_eq!(msgs[2]["params"]["textDocument"]["uri"], source_uri);
     }
 }

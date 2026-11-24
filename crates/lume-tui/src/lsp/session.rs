@@ -58,6 +58,7 @@ pub(crate) enum IncomingMessage {
 pub(crate) enum WaitError {
     Timeout,
     Disconnected,
+    Cancelled,
 }
 
 pub(crate) trait SessionClock: Send {
@@ -66,18 +67,27 @@ pub(crate) trait SessionClock: Send {
         &self,
         rx: &Receiver<IncomingMessage>,
         deadline: Duration,
+        cancellable: bool,
     ) -> Result<IncomingMessage, WaitError>;
 }
 
-struct RealClock {
+pub(crate) struct RealClock {
     origin: Instant,
+    cancel: Option<Receiver<()>>,
 }
 
 impl RealClock {
-    fn new() -> Self {
+    pub(crate) fn with_cancel(cancel: Receiver<()>) -> Self {
         Self {
             origin: Instant::now(),
+            cancel: Some(cancel),
         }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(|c| !matches!(c.try_recv(), Err(crossbeam_channel::TryRecvError::Empty)))
     }
 }
 
@@ -90,7 +100,12 @@ impl SessionClock for RealClock {
         &self,
         rx: &Receiver<IncomingMessage>,
         deadline: Duration,
+        cancellable: bool,
     ) -> Result<IncomingMessage, WaitError> {
+        if cancellable && self.is_cancelled() {
+            return Err(WaitError::Cancelled);
+        }
+
         let now = self.now();
         if now >= deadline {
             return match rx.try_recv() {
@@ -99,7 +114,22 @@ impl SessionClock for RealClock {
                 Err(crossbeam_channel::TryRecvError::Disconnected) => Err(WaitError::Disconnected),
             };
         }
-        match rx.recv_timeout(deadline - now) {
+
+        let remaining = deadline - now;
+        if cancellable {
+            if let Some(ref cancel_rx) = self.cancel {
+                let timer = crossbeam_channel::after(remaining);
+                crossbeam_channel::select! {
+                    recv(cancel_rx) -> _ => return Err(WaitError::Cancelled),
+                    recv(rx) -> res => {
+                        return res.map_err(|_| WaitError::Disconnected);
+                    }
+                    recv(timer) -> _ => return Err(WaitError::Timeout),
+                }
+            }
+        }
+
+        match rx.recv_timeout(remaining) {
             Ok(msg) => Ok(msg),
             Err(RecvTimeoutError::Timeout) => Err(WaitError::Timeout),
             Err(RecvTimeoutError::Disconnected) => Err(WaitError::Disconnected),
@@ -187,8 +217,12 @@ impl Drop for LspSession {
 }
 
 impl LspSession {
-    /// Spawns `kind` in `root` with piped stdio and completes the LSP `initialize` handshake.
-    pub fn spawn(kind: ServerKind, root: &Path) -> Result<Self, LspError> {
+    /// Spawns `kind` in `root` with piped stdio, cooperative cancellation, and `initialize`.
+    pub(crate) fn spawn_with_cancel(
+        kind: ServerKind,
+        root: &Path,
+        cancel: Receiver<()>,
+    ) -> Result<Self, LspError> {
         let mut child = Command::new(kind.executable_name())
             .args(kind.args())
             .current_dir(root)
@@ -255,7 +289,7 @@ impl LspSession {
             Box::new(BufWriter::new(stdin)),
             rx,
             Box::new(ChildProcessHandle::new(child)),
-            Box::new(RealClock::new()),
+            Box::new(RealClock::with_cancel(cancel)),
             root,
         )
     }
@@ -320,7 +354,8 @@ impl LspSession {
         });
 
         let init_result =
-            match session.request_with_timeout("initialize", init_params, INITIALIZE_TIMEOUT) {
+            match session.request_with_timeout("initialize", init_params, INITIALIZE_TIMEOUT, true)
+            {
                 Ok(res) => res,
                 Err(err) => {
                     session.terminate_fatal();
@@ -371,7 +406,7 @@ impl LspSession {
 
     /// Sends a JSON-RPC request and waits up to [`REQUEST_TIMEOUT`] for its response.
     pub fn request(&mut self, method: &str, params: Value) -> Result<Value, LspError> {
-        self.request_with_timeout(method, params, REQUEST_TIMEOUT)
+        self.request_with_timeout(method, params, REQUEST_TIMEOUT, true)
     }
 
     fn request_with_timeout(
@@ -379,6 +414,7 @@ impl LspSession {
         method: &str,
         params: Value,
         timeout: Duration,
+        cancellable: bool,
     ) -> Result<Value, LspError> {
         if !self.alive {
             return Err(LspError::Exited);
@@ -399,13 +435,13 @@ impl LspSession {
 
         let deadline = self.clock.now().saturating_add(timeout);
         loop {
-            let incoming = match self.clock.recv_until(&self.incoming, deadline) {
+            let incoming = match self.clock.recv_until(&self.incoming, deadline, cancellable) {
                 Ok(m) => m,
                 Err(WaitError::Timeout) => {
                     self.terminate_fatal();
                     return Err(LspError::Timeout);
                 }
-                Err(WaitError::Disconnected) => {
+                Err(WaitError::Disconnected | WaitError::Cancelled) => {
                     self.terminate_fatal();
                     return Err(LspError::Exited);
                 }
@@ -480,7 +516,7 @@ impl LspSession {
             return;
         }
         let shutdown_ok = self
-            .request_with_timeout("shutdown", Value::Null, SHUTDOWN_TIMEOUT)
+            .request_with_timeout("shutdown", Value::Null, SHUTDOWN_TIMEOUT, false)
             .is_ok();
         if shutdown_ok {
             let _ = self.notify("exit", Value::Null);
@@ -650,6 +686,7 @@ mod tests {
             &self,
             rx: &Receiver<IncomingMessage>,
             deadline: Duration,
+            _cancellable: bool,
         ) -> Result<IncomingMessage, WaitError> {
             match rx.try_recv() {
                 Ok(msg) => Ok(msg),
