@@ -12,6 +12,8 @@ Compiling the workspace requires Rust `1.88.0` or newer because `lume-core` call
 
 Interactive sessions require a terminal emulator supporting ANSI 24-bit color, the alternate screen, and SGR mouse reporting. Keyboard enhancements are optional. If the terminal does not answer the capability probe, Lume uses standard terminal input after the 2-second probe timeout.
 
+Go to Definition for C and C++ (`F12`, `Ctrl+click`, or **Navigation: Go to Definition**) uses `clangd` on `PATH` when invoked; startup does not require `clangd`. Provide `compile_commands.json` (in the project root or `build/`) or `compile_flags.txt` so `clangd` resolves project include paths and compiler flags.
+
 ### Build and run
 
 Clone the repository, compile the release binary with locked dependencies, and launch the editor on a file, directory, or wildcard glob:
@@ -75,7 +77,7 @@ Several subsystems implemented in `lume-core` or sketched in earlier plans remai
 - Multi-cursor batches work in `lume-core`, yet `lume-tui` provides no binding to add secondary cursors and renders only the primary selection (`crates/lume-tui/src/render/editor.rs:44`).
 - `Language::TypeScript` reuses `tree_sitter_javascript::LANGUAGE` (`crates/lume-syntax/src/language.rs:132`), and `Language::Css` routes to `lex_html_css` (`crates/lume-syntax/src/highlighter.rs:167`), which only highlights `<...>` tags.
 - `Journal` snapshots and V1-to-V2 upgrades open the live journal file with `.truncate(true)` instead of staging a temp rename, records lack CRC checksums, and unrecognized headers fall back to `String::from_utf8_lossy` (`crates/lume-core/src/journal.rs:362`, `398`, `476`).
-- Lume has no LSP client, debugger (DAP), embedded terminal, workspace-wide text search, plugin runtime, or `-` standard input pipe reader.
+- `lume-tui` includes an on-demand stdio LSP client for C and C++ Go to Definition via `clangd` (`crates/lume-tui/src/lsp/`, `crates/lume-tui/src/navigation.rs`); diagnostics, completion, references, jump history, other language servers, debugger (DAP), embedded terminal, workspace-wide text search, plugin runtime, and `-` standard input pipe reading remain out of scope.
 
 ## Documentation
 

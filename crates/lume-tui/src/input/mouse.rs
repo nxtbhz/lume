@@ -2,8 +2,8 @@ use crate::app::{ActiveFocus, App};
 use crate::quick_open::{self, HEADER_ROWS};
 use crate::render::tab_bar::tab_label;
 use crate::split::HitTarget;
-use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use lume_core::buffer::visual;
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use lume_core::buffer::{visual, LINE_BREAKS};
 use lume_core::TextBuffer;
 use std::time::{Duration, Instant};
 
@@ -11,6 +11,12 @@ impl App {
     pub fn handle_mouse(&mut self, mouse: MouseEvent) -> std::io::Result<bool> {
         let col = mouse.column as usize;
         let row = mouse.row as usize;
+
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && mouse.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            return Ok(self.handle_ctrl_left_click(col, row));
+        }
 
         if let Some(mut state) = self.quick_open.take() {
             let rect =
@@ -330,5 +336,109 @@ impl App {
             self.editor.new_tab();
             self.adjust_viewport();
         }
+    }
+
+    fn handle_ctrl_left_click(&mut self, col: usize, row: usize) -> bool {
+        if self.quick_open.is_some()
+            || self.prompt.is_some()
+            || self.palette_open
+            || self.which_key_open
+            || self.search_state.is_some()
+        {
+            return false;
+        }
+
+        let exp_w = self.explorer_width();
+        let status_row = self.terminal_height.saturating_sub(1) as usize;
+        let text_left = self.text_area_left();
+        let text_top = self.text_area_top();
+        let area_w = (self.terminal_width as usize).saturating_sub(text_left);
+        let text_h = self.text_area_height();
+
+        if row < text_top || row >= status_row {
+            return false;
+        }
+        if col < exp_w && self.explorer.is_visible {
+            return false;
+        }
+
+        let (target_pane, tab_idx, buffer_line, buffer_col) = if self.splits.is_split {
+            match self
+                .splits
+                .hit_test(col, row, text_left, text_top, area_w, text_h)
+            {
+                HitTarget::Pane(pane) => {
+                    let (p0_rect, _, p1_rect) =
+                        self.splits.layout(text_left, text_top, area_w, text_h);
+                    let pane_rect = if pane == 0 {
+                        p0_rect
+                    } else {
+                        p1_rect.unwrap_or(p0_rect)
+                    };
+                    let (tab_idx, pane_scroll_row, pane_scroll_col) =
+                        if pane == self.splits.active_pane {
+                            (
+                                self.editor.active_tab_idx(),
+                                self.scroll_row,
+                                self.scroll_col,
+                            )
+                        } else {
+                            let pane_state = &self.splits.panes[pane];
+                            (
+                                pane_state
+                                    .tab_idx
+                                    .min(self.editor.tabs().len().saturating_sub(1)),
+                                pane_state.scroll_row,
+                                pane_state.scroll_col,
+                            )
+                        };
+                    let pane_gutter_w = self.gutter_width_for_tab(tab_idx).min(pane_rect.width);
+                    let text_start_col = pane_rect.left + pane_gutter_w;
+                    if col < text_start_col {
+                        return false;
+                    }
+                    let b_line = pane_scroll_row + row.saturating_sub(pane_rect.top);
+                    let b_col = pane_scroll_col.saturating_add(col - text_start_col);
+                    (pane, tab_idx, b_line, b_col)
+                }
+                HitTarget::Separator | HitTarget::Outside => return false,
+            }
+        } else {
+            let tab_idx = self.editor.active_tab_idx();
+            let text_start_col = text_left + self.gutter_width();
+            if col < text_start_col {
+                return false;
+            }
+            let b_line = self.scroll_row + (row - text_top);
+            let b_col = self.scroll_col.saturating_add(col - text_start_col);
+            (0, tab_idx, b_line, b_col)
+        };
+
+        let Some(tab) = self.editor.tabs().get(tab_idx) else {
+            return false;
+        };
+        if buffer_line >= tab.buffer.len_lines() {
+            return false;
+        }
+        let line_cow = std::borrow::Cow::from(tab.buffer.rope().line(buffer_line));
+        let content = line_cow.trim_end_matches(LINE_BREAKS);
+        let line_visual_width = visual::column_at_byte(content, content.len());
+        if buffer_col >= line_visual_width {
+            return false;
+        }
+
+        self.clear_pending_keys();
+        self.focus = ActiveFocus::Editor;
+        if self.splits.is_split && target_pane != self.splits.active_pane {
+            self.switch_active_pane(target_pane);
+        }
+        self.editor
+            .set_cursor_from_visual_line_col(buffer_line, buffer_col, false);
+        let head = self.editor.cursors().primary().head;
+        self.editor.cursors_mut().set_single(head);
+        self.mouse_dragging = false;
+        self.sync_active_pane();
+        self.request_definition_at_cursor();
+        true
     }
 }

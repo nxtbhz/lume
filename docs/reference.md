@@ -47,6 +47,7 @@ Modeless mode is active on startup (`modal_enabled = false`, `crates/lume-tui/sr
 | `F3` / `Shift+F3` | Find next / previous | Reuses last search query | [key.rs](../crates/lume-tui/src/input/key.rs#L206-L216) |
 | `Ctrl+M` | Jump to matching bracket | Matches `()`, `[]`, `{}` | [key.rs](../crates/lume-tui/src/input/key.rs#L174-L177) |
 | `Ctrl+G` | Open Go to Line prompt | Accepts `line`, `line:col`, `:col`, or `line:` | [key.rs](../crates/lume-tui/src/input/key.rs#L178-L181) |
+| `F12` | Go to Definition (C/C++) | Bound in `default` and `vim` presets; invokes `clangd` on demand (`minimal` uses Command Palette or `config.toml`) | [navigation.rs](../crates/lume-tui/src/navigation.rs) |
 | `Ctrl+K` | Enter chord state | Waits for second key (`\`, `-`, `w`, `q`, `m`) | [key.rs](../crates/lume-tui/src/input/key.rs#L182-L188) |
 | `Ctrl+Alt+V` | Toggle modal Vim mode | Enters Normal mode when enabled | [key.rs](../crates/lume-tui/src/input/key.rs#L74-L77) |
 | `F1` | Open Which-Key sheet | Any key or `Esc` dismisses the overlay | [key.rs](../crates/lume-tui/src/input/key.rs#L194-L197) |
@@ -121,6 +122,7 @@ When `FileExplorer` is visible (`26` columns wide by default, `crates/lume-tui/s
 | Confirm close / quit | `S` / `D` / `C` or `Esc` | Save dirty tabs, discard changes and unlink journal, or cancel | [overlays.rs](../crates/lume-tui/src/input/overlays.rs#L51-L126) |
 | Recovery prompt | `R` / `D` / `C` or `Esc` | Restore `.journal` text into tab, unlink journal, or defer without applying | [overlays.rs](../crates/lume-tui/src/input/overlays.rs#L20-L49) |
 | Mouse | Single / double / triple left click in editor | Place cursor / select word / select line (`400 ms` click window) | [mouse.rs](../crates/lume-tui/src/input/mouse.rs#L151-L176) |
+| Mouse | `Ctrl+left click` on text in editor | Move cursor to clicked text position in that pane and run Go to Definition (when terminal reports `CONTROL`) | [mouse.rs](../crates/lume-tui/src/input/mouse.rs) |
 | Mouse | Left drag in editor | Extend selection while dragging | [mouse.rs](../crates/lume-tui/src/input/mouse.rs#L182-L215) |
 | Mouse | Wheel up / down / left / right | Scroll hovered explorer (`1` item), split pane (`3` lines/cols), or editor | [mouse.rs](../crates/lume-tui/src/input/mouse.rs#L220-L298) |
 | Mouse | Click tab header, `x`, or `[ + ]` | Switch tab, close tab (`request_close_tab`), or open untitled tab | [mouse.rs](../crates/lume-tui/src/input/mouse.rs#L304-L338) |
@@ -159,6 +161,7 @@ When `FileExplorer` is visible (`26` columns wide by default, `crates/lume-tui/s
 | `edit.replace` | `Edit: Replace in Buffer...` | `Ctrl+H` | Open Find & Replace footer bar |
 | `navigation.match_bracket` | `Navigation: Jump to Matching Bracket` | `Ctrl+M` | Jump between matching `()`, `[]`, `{}` |
 | `navigation.goto_line` | `Navigation: Go to Line...` | `Ctrl+G` | Open `line[:col]` navigation prompt |
+| `navigation.goto_definition` | `Navigation: Go to Definition` | `F12` | Jump to symbol or `#include` definition in C/C++ via `clangd` |
 | `view.which_key` | `View: Which-Key Shortcuts` | `F1` | Show shortcut summary overlay |
 | `view.split_vertical` | `View: Split Editor Vertically` | `Ctrl+K \` | Split viewport into left/right panes |
 | `view.split_horizontal` | `View: Split Editor Horizontally` | `Ctrl+K -` | Split viewport into top/bottom panes |
@@ -235,6 +238,23 @@ In addition to the Command Palette IDs above (plus `:set modal`, `:set nomodal`,
 | Cursor motions | `motion.left`, `motion.right`, `motion.up`, `motion.down`, `motion.word_left`, `motion.word_right`, `motion.word_forward`, `motion.home`, `motion.end`, `motion.page_up`, `motion.page_down`, `motion.document_start`, `motion.document_end` |
 | Selecting motions | `motion.select_left`, `motion.select_right`, `motion.select_up`, `motion.select_down`, `motion.select_word_left`, `motion.select_word_right`, `motion.select_word_forward`, `motion.select_home`, `motion.select_end`, `motion.select_page_up`, `motion.select_page_down`, `motion.select_document_start`, `motion.select_document_end` |
 | Vim modal actions | `vim.normal_mode`, `vim.insert_mode`, `vim.append_mode`, `vim.open_line_below`, `vim.open_line_above`, `vim.visual_mode`, `vim.delete_char`, `vim.delete_line`, `vim.yank_line`, `vim.paste`, `vim.visual_delete`, `vim.visual_yank` |
+
+## Go to Definition (C/C++ via `clangd`)
+
+Lume resolves symbol definitions and `#include` targets in C and C++ files by starting `clangd` on demand over stdio LSP 3.17 (`crates/lume-tui/src/lsp/` and `crates/lume-tui/src/navigation.rs`). Editor startup never requires `clangd`.
+
+- **Installation**: Install `clangd` so it is discoverable on `PATH` (for example `apt install clangd` on Debian/Ubuntu or via LLVM packages).
+- **Project setup**: Place `compile_commands.json` (in the project root or `build/compile_commands.json`) or `compile_flags.txt` (for example `-Iinclude`) in an ancestor directory. When no marker exists, Lume uses the Explorer root if it contains the source file, then the nearest `.git` ancestor, and finally the source file's directory. `.h` headers follow Lume's C mode while `clangd` applies project flags; CUDA files (`.cu`, `.cuh`) are excluded.
+- **Triggering**: Press `F12` (bound in `default` and `vim` presets; `g d` in `vim` remains Go to Line), `Ctrl+left click` on text when the terminal reports `CONTROL` on mouse events, or run **Navigation: Go to Definition** (`navigation.goto_definition`) from the Command Palette. In `minimal`, bind `navigation.goto_definition` in `config.toml` or invoke it from the Command Palette.
+- **Unsaved buffers & external files**: Open tabs belonging to the same C/C++ project are synchronized in memory before querying so unsaved edits (including modified headers) take effect immediately. Jumps open or reuse existing tabs in the active split pane and can open local files outside the Explorer workspace (such as system headers) without changing the Explorer root.
+- **Multiple targets**: When `clangd` returns more than one target, Lume opens a selection list (`path:line`); navigate with `Up`/`Down`, press `Enter` to jump, or `Esc` to stay at the origin.
+- **Status and error messages**:
+  - `Looking up definition…` — query in progress off the UI thread.
+  - `No definition found` — server returned no local file target.
+  - `Language server 'clangd' not found in PATH` — `clangd` is not installed or not on `PATH`.
+  - `Language server request timed out` / `Language server exited unexpectedly` — fatal session error; the process is reaped and the next lookup starts a fresh session.
+  - `Go to Definition requires a saved file path` / `Go to Definition is only supported for C/C++ files` — active buffer has no path or is outside C/C++ scope (no server is spawned).
+  - `Document changed during definition lookup; please retry` / `Target file changed since lookup; repeat Go to Definition` / `Recovered changes from journal; repeat Go to Definition from source` — content changed before applying the jump.
 
 ## Supported syntax languages
 

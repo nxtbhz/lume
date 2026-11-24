@@ -86,8 +86,12 @@ impl DocumentSyncState {
             })
             .collect();
 
+        let mut other_doc_mutated = false;
         for uri in to_close {
             self.synced.remove(&uri);
+            if uri != source_uri {
+                other_doc_mutated = true;
+            }
             if caps.open_close {
                 session.notify(
                     "textDocument/didClose",
@@ -96,111 +100,29 @@ impl DocumentSyncState {
             }
         }
 
-        // 2. Open new URIs or flush changed revisions before the definition request.
+        // 2. Sync all non-source project documents first so clangd's dirty-header overlay
+        //    has updated header contents before the source TU is opened or refreshed.
+        let source_entry = desired.remove(&source_uri);
         for (uri, (doc, language_id)) in desired {
-            match self.synced.get_mut(&uri) {
-                None => {
-                    let full_text = doc.text.rope().to_string();
-                    if caps.open_close {
-                        session.notify(
-                            "textDocument/didOpen",
-                            json!({
-                                "textDocument": {
-                                    "uri": uri,
-                                    "languageId": language_id,
-                                    "version": 1,
-                                    "text": full_text,
-                                }
-                            }),
-                        )?;
-                    }
-                    self.synced.insert(
-                        uri,
-                        SyncedDocument {
-                            tab_id: doc.tab_id,
-                            revision: doc.revision,
-                            language_id,
-                            lsp_version: 1,
-                            last_text: doc.text.clone(),
-                        },
-                    );
-                }
-                Some(tracked) => {
-                    if tracked.tab_id == doc.tab_id && tracked.revision == doc.revision {
-                        continue;
-                    }
-                    let full_text = doc.text.rope().to_string();
-                    match caps.sync_kind {
-                        TextDocumentSyncKind::Full => {
-                            tracked.lsp_version = tracked.lsp_version.saturating_add(1);
-                            session.notify(
-                                "textDocument/didChange",
-                                json!({
-                                    "textDocument": {
-                                        "uri": uri,
-                                        "version": tracked.lsp_version,
-                                    },
-                                    "contentChanges": [{
-                                        "text": full_text,
-                                    }]
-                                }),
-                            )?;
-                        }
-                        TextDocumentSyncKind::Incremental => {
-                            let end_pos = position_at_byte(
-                                &tracked.last_text,
-                                tracked.last_text.len_bytes(),
-                                caps.position_encoding,
-                            )
-                            .ok_or_else(|| {
-                                LspError::Protocol(
-                                    "failed to compute previous snapshot end position".to_string(),
-                                )
-                            })?;
-                            tracked.lsp_version = tracked.lsp_version.saturating_add(1);
-                            session.notify(
-                                "textDocument/didChange",
-                                json!({
-                                    "textDocument": {
-                                        "uri": uri,
-                                        "version": tracked.lsp_version,
-                                    },
-                                    "contentChanges": [{
-                                        "range": {
-                                            "start": { "line": 0, "character": 0 },
-                                            "end": { "line": end_pos.line, "character": end_pos.character }
-                                        },
-                                        "text": full_text,
-                                    }]
-                                }),
-                            )?;
-                        }
-                        TextDocumentSyncKind::None => {
-                            if caps.open_close {
-                                session.notify(
-                                    "textDocument/didClose",
-                                    json!({ "textDocument": { "uri": uri } }),
-                                )?;
-                                tracked.lsp_version = 1;
-                                session.notify(
-                                    "textDocument/didOpen",
-                                    json!({
-                                        "textDocument": {
-                                            "uri": uri,
-                                            "languageId": language_id,
-                                            "version": 1,
-                                            "text": full_text,
-                                        }
-                                    }),
-                                )?;
-                            }
-                        }
-                    }
-                    tracked.tab_id = doc.tab_id;
-                    tracked.revision = doc.revision;
-                    tracked.last_text = doc.text.clone();
-                }
+            if self.sync_one(session, caps, uri, doc, language_id, false)? {
+                other_doc_mutated = true;
             }
+        }
+
+        // 3. Sync the source document last. If any other project document (e.g. a header)
+        //    was opened, changed, or closed while the source TU was already open, force a
+        //    didClose + didOpen cycle so clangd rebuilds the source TU's preamble synchronously
+        //    against the updated dirty headers before textDocument/definition runs.
+        if let Some((doc, language_id)) = source_entry {
+            let force_reopen = other_doc_mutated && self.synced.contains_key(&source_uri);
+            let _ = self.sync_one(
+                session,
+                caps,
+                source_uri.clone(),
+                doc,
+                language_id,
+                force_reopen,
+            )?;
         }
 
         // 3. Issue textDocument/definition on the same session after sync notifications.
@@ -229,6 +151,150 @@ impl DocumentSyncState {
         )?;
 
         parse_definition(raw_result, caps.position_encoding)
+    }
+
+    fn sync_one(
+        &mut self,
+        session: &mut LspSession,
+        caps: crate::lsp::session::ServerCapabilities,
+        uri: String,
+        doc: &OpenDocument,
+        language_id: &'static str,
+        force_reopen: bool,
+    ) -> Result<bool, LspError> {
+        if force_reopen {
+            if let Some(tracked) = self.synced.get_mut(&uri) {
+                let full_text = doc.text.rope().to_string();
+                if caps.open_close {
+                    session.notify(
+                        "textDocument/didClose",
+                        json!({ "textDocument": { "uri": uri } }),
+                    )?;
+                    tracked.lsp_version = 1;
+                    session.notify(
+                        "textDocument/didOpen",
+                        json!({
+                            "textDocument": {
+                                "uri": uri,
+                                "languageId": language_id,
+                                "version": 1,
+                                "text": full_text,
+                            }
+                        }),
+                    )?;
+                }
+                tracked.tab_id = doc.tab_id;
+                tracked.revision = doc.revision;
+                tracked.last_text = doc.text.clone();
+                return Ok(true);
+            }
+        }
+
+        match self.synced.get_mut(&uri) {
+            None => {
+                let full_text = doc.text.rope().to_string();
+                if caps.open_close {
+                    session.notify(
+                        "textDocument/didOpen",
+                        json!({
+                            "textDocument": {
+                                "uri": uri,
+                                "languageId": language_id,
+                                "version": 1,
+                                "text": full_text,
+                            }
+                        }),
+                    )?;
+                }
+                self.synced.insert(
+                    uri,
+                    SyncedDocument {
+                        tab_id: doc.tab_id,
+                        revision: doc.revision,
+                        language_id,
+                        lsp_version: 1,
+                        last_text: doc.text.clone(),
+                    },
+                );
+                Ok(true)
+            }
+            Some(tracked) => {
+                if tracked.tab_id == doc.tab_id && tracked.revision == doc.revision {
+                    return Ok(false);
+                }
+                let full_text = doc.text.rope().to_string();
+                match caps.sync_kind {
+                    TextDocumentSyncKind::Full => {
+                        tracked.lsp_version = tracked.lsp_version.saturating_add(1);
+                        session.notify(
+                            "textDocument/didChange",
+                            json!({
+                                "textDocument": {
+                                    "uri": uri,
+                                    "version": tracked.lsp_version,
+                                },
+                                "contentChanges": [{
+                                    "text": full_text,
+                                }]
+                            }),
+                        )?;
+                    }
+                    TextDocumentSyncKind::Incremental => {
+                        let end_pos = position_at_byte(
+                            &tracked.last_text,
+                            tracked.last_text.len_bytes(),
+                            caps.position_encoding,
+                        )
+                        .ok_or_else(|| {
+                            LspError::Protocol(
+                                "failed to compute previous snapshot end position".to_string(),
+                            )
+                        })?;
+                        tracked.lsp_version = tracked.lsp_version.saturating_add(1);
+                        session.notify(
+                            "textDocument/didChange",
+                            json!({
+                                "textDocument": {
+                                    "uri": uri,
+                                    "version": tracked.lsp_version,
+                                },
+                                "contentChanges": [{
+                                    "range": {
+                                        "start": { "line": 0, "character": 0 },
+                                        "end": { "line": end_pos.line, "character": end_pos.character }
+                                    },
+                                    "text": full_text,
+                                }]
+                            }),
+                        )?;
+                    }
+                    TextDocumentSyncKind::None => {
+                        if caps.open_close {
+                            session.notify(
+                                "textDocument/didClose",
+                                json!({ "textDocument": { "uri": uri } }),
+                            )?;
+                            tracked.lsp_version = 1;
+                            session.notify(
+                                "textDocument/didOpen",
+                                json!({
+                                    "textDocument": {
+                                        "uri": uri,
+                                        "languageId": language_id,
+                                        "version": 1,
+                                        "text": full_text,
+                                    }
+                                }),
+                            )?;
+                        }
+                    }
+                }
+                tracked.tab_id = doc.tab_id;
+                tracked.revision = doc.revision;
+                tracked.last_text = doc.text.clone();
+                Ok(true)
+            }
+        }
     }
 }
 
@@ -417,11 +483,15 @@ mod tests {
         sync.query_definition(&mut session, &project, &q2, "c", &source_path)
             .unwrap();
         let messages = take_sent_messages(&sent);
-        assert_eq!(messages.len(), 2);
+        assert_eq!(messages.len(), 4);
         assert_eq!(messages[0]["method"], "textDocument/didChange");
         assert_eq!(messages[0]["params"]["textDocument"]["uri"], header_uri);
-        assert_eq!(messages[1]["method"], "textDocument/definition");
+        assert_eq!(messages[1]["method"], "textDocument/didClose");
         assert_eq!(messages[1]["params"]["textDocument"]["uri"], source_uri);
+        assert_eq!(messages[2]["method"], "textDocument/didOpen");
+        assert_eq!(messages[2]["params"]["textDocument"]["uri"], source_uri);
+        assert_eq!(messages[3]["method"], "textDocument/definition");
+        assert_eq!(messages[3]["params"]["textDocument"]["uri"], source_uri);
     }
 
     #[test]

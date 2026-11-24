@@ -190,6 +190,7 @@ impl LspSession {
     /// Spawns `kind` in `root` with piped stdio and completes the LSP `initialize` handshake.
     pub fn spawn(kind: ServerKind, root: &Path) -> Result<Self, LspError> {
         let mut child = Command::new(kind.executable_name())
+            .args(kind.args())
             .current_dir(root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

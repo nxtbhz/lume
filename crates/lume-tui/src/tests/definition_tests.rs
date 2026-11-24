@@ -1,7 +1,7 @@
 use std::io::sink;
 use std::path::PathBuf;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use lume_core::{Journal, TextBuffer};
 
 use crate::app::{ActiveFocus, App};
@@ -658,4 +658,482 @@ fn definition_keymap_and_palette_dispatch() {
         .handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL))
         .unwrap();
     assert!(remap_rx.try_recv().is_ok());
+}
+
+#[test]
+fn definition_ctrl_click_uses_clicked_pane_and_text_position() {
+    let dir = TestDir::new("lume_def_ctrl_click_pane");
+    let left_file = dir.path().join("left.c");
+    let right_file = dir.path().join("right.c");
+    std::fs::write(&left_file, "int left_val = 0;\n").unwrap();
+    // Line 0, Line 1, then Line 2 has tab (4 cols) + emoji (2 cols) + " struct Arch item;"
+    // Visual columns on line 2:
+    //   '\t' -> 0..4 (1 byte)
+    //   '😀' -> 4..6 (4 bytes)
+    //   ' '  -> 6..7 (1 byte)
+    //   "struct " -> 7..14 (7 bytes)
+    //   'A' of "Arch" -> col 14 (byte 13 from start of line 2)
+    let right_content = "int l0;\nint l1;\n\t😀 struct Arch item;\n";
+    std::fs::write(&right_file, right_content).unwrap();
+
+    let mut app = App::open_targets(CliTargets {
+        workspace: Some(dir.path().to_path_buf()),
+        files: vec![left_file.clone(), right_file.clone()],
+        no_config: true,
+        ..CliTargets::default()
+    })
+    .unwrap();
+    app.explorer.is_visible = false;
+    app.terminal_width = 100;
+    app.terminal_height = 24;
+    let rx = attach_test_lsp(&mut app);
+
+    // Tab 0 = left_file, Tab 1 = right_file.
+    // Create vertical split: pane 0 shows left_file, pane 1 shows right_file scrolled to (row=2, col=4).
+    app.editor.switch_tab(0);
+    app.execute_command("view.split_vertical");
+    // Now active_pane is 1; load right_file into pane 1 and scroll it
+    app.editor.switch_tab(1);
+    app.scroll_row = 2;
+    app.scroll_col = 4;
+    app.sync_active_pane();
+
+    // Switch back to pane 0 so pane 1 (right_file) is INACTIVE
+    app.switch_active_pane(0);
+    assert_eq!(app.splits.active_pane, 0);
+    assert_eq!(app.editor.active_tab_idx(), 0);
+
+    let clicked_pane = 1usize;
+    let clicked_file = right_file.clone();
+    let clicked_tab_id = app.editor.tabs()[1].id;
+    let expected_symbol_byte = right_content.find("Arch").unwrap();
+
+    // Compute exact screen coordinates of 'A' in pane 1 (visual line 2, visual col 14, scroll=(2, 4))
+    let text_left = app.text_area_left();
+    let text_top = app.text_area_top();
+    let area_w = (app.terminal_width as usize).saturating_sub(text_left);
+    let text_h = app.text_area_height();
+    let (_, _, p1_rect) = app.splits.layout(text_left, text_top, area_w, text_h);
+    let p1 = p1_rect.unwrap();
+    let p1_gutter = app.gutter_width_for_tab(1).min(p1.width);
+    let click_row = p1.top; // line 2 with scroll_row = 2
+    let click_col = p1.left + p1_gutter + (14 - 4); // visual col 14, scroll_col = 4
+
+    let handled = app
+        .handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: click_col as u16,
+            row: click_row as u16,
+            modifiers: KeyModifiers::CONTROL,
+        })
+        .unwrap();
+    assert!(handled);
+
+    let query = rx
+        .try_recv()
+        .expect("Ctrl+click on text in inactive pane must emit definition query");
+    assert_eq!(query.source_path, clicked_file);
+    assert_eq!(query.source_byte, expected_symbol_byte);
+    assert_eq!(app.splits.active_pane, clicked_pane);
+    assert_eq!(app.editor.active_tab().id, clicked_tab_id);
+    assert!(!app.mouse_dragging);
+}
+
+#[test]
+fn definition_ctrl_click_ignores_non_text_areas() {
+    let dir = TestDir::new("lume_def_ctrl_click_ignore");
+    let src = dir.path().join("sample.c");
+    std::fs::write(&src, "int foo = 1;\nint bar = 2;\n").unwrap();
+
+    let mut app = App::open_targets(CliTargets {
+        workspace: Some(dir.path().to_path_buf()),
+        files: vec![src.clone()],
+        no_config: true,
+        ..CliTargets::default()
+    })
+    .unwrap();
+    app.explorer.is_visible = true;
+    app.terminal_width = 100;
+    app.terminal_height = 24;
+    let rx = attach_test_lsp(&mut app);
+
+    let ctrl_click = |app: &mut App, col: usize, row: usize| {
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: col as u16,
+            row: row as u16,
+            modifiers: KeyModifiers::CONTROL,
+        })
+        .unwrap()
+    };
+
+    let exp_w = app.explorer_width();
+    let text_left = app.text_area_left();
+    let text_top = app.text_area_top();
+    let gutter_w = app.gutter_width();
+
+    // 1. Explorer area
+    assert!(!ctrl_click(&mut app, 2, text_top));
+    assert!(rx.try_recv().is_err());
+
+    // 2. Gutter area
+    assert!(!ctrl_click(&mut app, text_left, text_top));
+    assert!(rx.try_recv().is_err());
+
+    // 3. Space past end of line ("int foo = 1;" is 12 cols)
+    assert!(!ctrl_click(&mut app, text_left + gutter_w + 25, text_top));
+    assert!(rx.try_recv().is_err());
+
+    // 4. Row past end of file
+    assert!(!ctrl_click(
+        &mut app,
+        text_left + gutter_w + 1,
+        text_top + 10
+    ));
+    assert!(rx.try_recv().is_err());
+
+    // 5. Split separator
+    app.execute_command("view.split_vertical");
+    let area_w = (app.terminal_width as usize).saturating_sub(text_left);
+    let (_, sep_rect, _) = app
+        .splits
+        .layout(text_left, text_top, area_w, app.text_area_height());
+    let sep = sep_rect.unwrap();
+    assert!(!ctrl_click(&mut app, sep.left, sep.top));
+    assert!(rx.try_recv().is_err());
+    app.execute_command("view.close_split");
+
+    // 6. Overlays (palette, prompt, which-key, search)
+    let valid_text_col = text_left + gutter_w + 4;
+    app.palette_open = true;
+    assert!(!ctrl_click(&mut app, valid_text_col, text_top));
+    assert!(rx.try_recv().is_err());
+    app.palette_open = false;
+
+    app.execute_command("navigation.goto_line");
+    assert!(!ctrl_click(&mut app, valid_text_col, text_top));
+    assert!(rx.try_recv().is_err());
+    app.prompt = None;
+
+    app.which_key_open = true;
+    assert!(!ctrl_click(&mut app, valid_text_col, text_top));
+    assert!(rx.try_recv().is_err());
+    app.which_key_open = false;
+
+    app.execute_command("edit.find");
+    assert!(!ctrl_click(&mut app, valid_text_col, text_top));
+    assert!(rx.try_recv().is_err());
+    app.search_state = None;
+
+    // 7. Plain click, double-click word selection, and drag continue working without LSP queries
+    assert!(exp_w > 0);
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: valid_text_col as u16,
+        row: text_top as u16,
+        modifiers: KeyModifiers::NONE,
+    })
+    .unwrap();
+    assert!(app.mouse_dragging);
+    assert_eq!(app.editor.cursors().primary().head, 4);
+    assert!(rx.try_recv().is_err());
+
+    // Drag right 3 columns selects "foo"
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Drag(MouseButton::Left),
+        column: (valid_text_col + 3) as u16,
+        row: text_top as u16,
+        modifiers: KeyModifiers::NONE,
+    })
+    .unwrap();
+    assert_eq!(app.editor.cursors().primary().range(), 4..7);
+
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Up(MouseButton::Left),
+        column: (valid_text_col + 3) as u16,
+        row: text_top as u16,
+        modifiers: KeyModifiers::NONE,
+    })
+    .unwrap();
+    assert!(!app.mouse_dragging);
+
+    // Double-click at same position selects word "foo"
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: valid_text_col as u16,
+        row: text_top as u16,
+        modifiers: KeyModifiers::NONE,
+    })
+    .unwrap();
+    assert_eq!(app.editor.cursors().primary().range(), 4..7);
+    assert!(rx.try_recv().is_err());
+}
+
+#[test]
+#[ignore = "requires clangd installed on PATH"]
+fn real_clangd_acceptance_matrix() {
+    use std::time::Duration;
+
+    fn wait_and_apply_reply(
+        app: &mut App,
+        reply_rx: &crossbeam_channel::Receiver<DefinitionReply>,
+    ) {
+        let reply = reply_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("timed out waiting for real clangd reply");
+        deliver_reply(app, reply);
+    }
+
+    // --- 1. C project: struct forward decl vs full def + #include jump + tab reuse ---
+    let c_dir = TestDir::new("lume_real_clangd_c");
+    let c_src_dir = c_dir.path().join("src");
+    let c_inc_dir = c_dir.path().join("include/arq/aaa");
+    std::fs::create_dir_all(&c_src_dir).unwrap();
+    std::fs::create_dir_all(&c_inc_dir).unwrap();
+    std::fs::write(c_dir.path().join("compile_flags.txt"), "-Iinclude\n").unwrap();
+
+    let t_c = c_src_dir.join("t.c");
+    let arch_h = c_inc_dir.join("arch.h");
+    let t_c_text = "#include \"arq/aaa/arch.h\"\n#include <stdio.h>\nint main(void) {\n    struct Arch item;\n    return item.value;\n}\n";
+    let arch_h_text =
+        "struct Arch;\n\n/* full definition below */\nstruct Arch {\n    int value;\n};\n";
+    std::fs::write(&t_c, t_c_text).unwrap();
+    std::fs::write(&arch_h, arch_h_text).unwrap();
+
+    let (reply_tx, reply_rx) = crossbeam_channel::unbounded();
+    let mut app = App::open_targets(CliTargets {
+        workspace: Some(c_dir.path().to_path_buf()),
+        files: vec![t_c.clone()],
+        no_config: true,
+        ..CliTargets::default()
+    })
+    .unwrap();
+    app.explorer.is_visible = false;
+    app.terminal_width = 100;
+    app.terminal_height = 24;
+    app.set_lsp_client(LspClient::new(move |reply| {
+        let _ = reply_tx.send(reply);
+    }));
+
+    // F12 on `Arch` in `struct Arch item;` -> jumps to full definition on line 4 (0-based 3)
+    let arch_use = t_c_text.find("struct Arch").unwrap() + "struct ".len();
+    app.editor.cursors_mut().set_single(arch_use);
+    app.handle_key(KeyEvent::new(KeyCode::F(12), KeyModifiers::NONE))
+        .unwrap();
+    wait_and_apply_reply(&mut app, &reply_rx);
+    let c_sym_path = app.editor.file_path().unwrap().to_path_buf();
+    let c_sym_line = app.editor.cursor_line_col().0 + 1;
+    println!(
+        "[REAL CLANGD C symbol] -> {}:{}",
+        c_sym_path.display(),
+        c_sym_line
+    );
+    assert_eq!(
+        c_sym_path.canonicalize().unwrap(),
+        arch_h.canonicalize().unwrap()
+    );
+    assert_eq!(c_sym_line, 4);
+    assert_eq!(app.editor.tabs().len(), 2);
+
+    // Repeat F12 on `#include "arq/aaa/arch.h"` -> reuses existing header tab (still 2 tabs)
+    app.editor.switch_tab(0);
+    let inc_byte = t_c_text.find("arq/aaa/arch.h").unwrap() + 4;
+    app.editor.cursors_mut().set_single(inc_byte);
+    app.handle_key(KeyEvent::new(KeyCode::F(12), KeyModifiers::NONE))
+        .unwrap();
+    wait_and_apply_reply(&mut app, &reply_rx);
+    println!(
+        "[REAL CLANGD C #include] -> {}:{} (tabs={})",
+        app.editor.file_path().unwrap().display(),
+        app.editor.cursor_line_col().0 + 1,
+        app.editor.tabs().len()
+    );
+    assert_eq!(
+        app.editor.file_path().unwrap().canonicalize().unwrap(),
+        arch_h.canonicalize().unwrap()
+    );
+    assert_eq!(app.editor.tabs().len(), 2);
+
+    // --- 2. Unsaved edits + split focus preservation ---
+    // Edit arch.h in memory: insert 3 blank lines at top (moves `struct Arch {` from line 4 to line 7)
+    app.editor.cursors_mut().set_single(0);
+    app.editor.insert_str("\n\n\n").unwrap();
+    assert!(app.editor.is_dirty());
+
+    // Open vertical split: pane 1 holds arch.h with cursor at byte 0; pane 0 holds t.c
+    app.editor.cursors_mut().set_single(0);
+    app.execute_command("view.split_vertical");
+    app.switch_active_pane(0);
+    app.editor.switch_tab(0);
+    app.editor.cursors_mut().set_single(arch_use);
+    app.sync_active_pane();
+
+    app.handle_key(KeyEvent::new(KeyCode::F(12), KeyModifiers::NONE))
+        .unwrap();
+    wait_and_apply_reply(&mut app, &reply_rx);
+    let moved_line = app.editor.cursor_line_col().0 + 1;
+    println!(
+        "[REAL CLANGD unsaved+split] -> {}:{} (tabs={}, active_pane={}, other_pane_cursor={})",
+        app.editor.file_path().unwrap().display(),
+        moved_line,
+        app.editor.tabs().len(),
+        app.splits.active_pane,
+        app.splits.panes[1].cursors.primary().head
+    );
+    assert_eq!(moved_line, 7);
+    assert_eq!(app.editor.tabs().len(), 2);
+    assert_eq!(app.splits.active_pane, 0);
+    assert_eq!(app.splits.panes[1].cursors.primary().head, 0);
+    app.execute_command("view.close_split");
+
+    // --- 3. External system header (<stdio.h>) without changing Explorer root ---
+    let orig_explorer_root = app.explorer.root.clone();
+    app.editor.switch_tab(0);
+    let stdio_byte = t_c_text.find("stdio.h").unwrap() + 1;
+    app.editor.cursors_mut().set_single(stdio_byte);
+    app.handle_key(KeyEvent::new(KeyCode::F(12), KeyModifiers::NONE))
+        .unwrap();
+    wait_and_apply_reply(&mut app, &reply_rx);
+    let sys_path = app.editor.file_path().unwrap().to_path_buf();
+    println!(
+        "[REAL CLANGD system header] -> {} (explorer_root unchanged: {})",
+        sys_path.display(),
+        app.explorer.root == orig_explorer_root
+    );
+    assert!(sys_path.is_file());
+    assert!(sys_path
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .contains("stdio"));
+    assert_eq!(app.explorer.root, orig_explorer_root);
+
+    // --- 4. Ctrl+click produces identical destination to F12 ---
+    app.editor.switch_tab(0);
+    app.scroll_row = 0;
+    app.scroll_col = 0;
+    // Line 3 (`    struct Arch item;`), `Arch` starts at col 11
+    let click_col = app.text_area_left() + app.gutter_width() + 11;
+    let click_row = app.text_area_top() + 3;
+    let handled = app
+        .handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: click_col as u16,
+            row: click_row as u16,
+            modifiers: KeyModifiers::CONTROL,
+        })
+        .unwrap();
+    assert!(handled);
+    wait_and_apply_reply(&mut app, &reply_rx);
+    let ctrl_click_line = app.editor.cursor_line_col().0 + 1;
+    println!(
+        "[REAL CLANGD Ctrl+click] -> {}:{}",
+        app.editor.file_path().unwrap().display(),
+        ctrl_click_line
+    );
+    assert_eq!(
+        app.editor.file_path().unwrap().canonicalize().unwrap(),
+        arch_h.canonicalize().unwrap()
+    );
+    assert_eq!(ctrl_click_line, 7);
+
+    // --- 5. C++ project with compile_commands.json, competing header dir, and cross-file method def ---
+    let cpp_dir = TestDir::new("lume_real_clangd_cpp");
+    let cpp_src = cpp_dir.path().join("src");
+    let cpp_inc = cpp_dir.path().join("include");
+    let cpp_other = cpp_dir.path().join("other");
+    std::fs::create_dir_all(&cpp_src).unwrap();
+    std::fs::create_dir_all(&cpp_inc).unwrap();
+    std::fs::create_dir_all(&cpp_other).unwrap();
+
+    let use_cpp = cpp_src.join("use.cpp");
+    let impl_cpp = cpp_src.join("arch.cpp");
+    let good_hpp = cpp_inc.join("arch.hpp");
+    let decoy_hpp = cpp_other.join("arch.hpp");
+
+    let good_hpp_text = "#pragma once\nstruct Engine {\n    int compute() const;\n};\n";
+    let decoy_hpp_text = "#pragma once\nstruct WrongEngine {};\n";
+    let impl_cpp_text = "#include <arch.hpp>\n\nint Engine::compute() const {\n    return 42;\n}\n";
+    let use_cpp_text =
+        "#include <arch.hpp>\nint run(const Engine& e) {\n    return e.compute();\n}\n";
+
+    std::fs::write(&good_hpp, good_hpp_text).unwrap();
+    std::fs::write(&decoy_hpp, decoy_hpp_text).unwrap();
+    std::fs::write(&impl_cpp, impl_cpp_text).unwrap();
+    std::fs::write(&use_cpp, use_cpp_text).unwrap();
+
+    let compile_db = serde_json::json!([
+        {
+            "directory": cpp_dir.path().to_string_lossy(),
+            "command": format!("clang++ -std=c++17 -Iinclude -c {}", use_cpp.display()),
+            "file": use_cpp.to_string_lossy()
+        },
+        {
+            "directory": cpp_dir.path().to_string_lossy(),
+            "command": format!("clang++ -std=c++17 -Iinclude -c {}", impl_cpp.display()),
+            "file": impl_cpp.to_string_lossy()
+        }
+    ]);
+    std::fs::write(
+        cpp_dir.path().join("compile_commands.json"),
+        serde_json::to_string_pretty(&compile_db).unwrap(),
+    )
+    .unwrap();
+
+    let (cpp_tx, cpp_rx) = crossbeam_channel::unbounded();
+    let mut cpp_app = App::open_targets(CliTargets {
+        workspace: Some(cpp_dir.path().to_path_buf()),
+        files: vec![use_cpp.clone()],
+        no_config: true,
+        ..CliTargets::default()
+    })
+    .unwrap();
+    cpp_app.set_lsp_client(LspClient::new(move |reply| {
+        let _ = cpp_tx.send(reply);
+    }));
+
+    // Jump on `#include <arch.hpp>` -> opens include/arch.hpp, NOT other/arch.hpp
+    let hpp_byte = use_cpp_text.find("arch.hpp").unwrap() + 2;
+    cpp_app.editor.cursors_mut().set_single(hpp_byte);
+    cpp_app
+        .handle_key(KeyEvent::new(KeyCode::F(12), KeyModifiers::NONE))
+        .unwrap();
+    wait_and_apply_reply(&mut cpp_app, &cpp_rx);
+    let resolved_hpp = cpp_app.editor.file_path().unwrap().to_path_buf();
+    println!("[REAL CLANGD C++ #include] -> {}", resolved_hpp.display());
+    assert_eq!(
+        resolved_hpp.canonicalize().unwrap(),
+        good_hpp.canonicalize().unwrap()
+    );
+
+    // Jump on `e.compute()` -> wait briefly if background index is still warming up, then verify arch.cpp:3
+    cpp_app.editor.switch_tab(0);
+    let compute_byte = use_cpp_text.find("compute").unwrap() + 1;
+    cpp_app.editor.cursors_mut().set_single(compute_byte);
+    let mut jumped_to_impl = false;
+    for attempt in 0..10 {
+        cpp_app.editor.switch_tab(0);
+        cpp_app.editor.cursors_mut().set_single(compute_byte);
+        cpp_app
+            .handle_key(KeyEvent::new(KeyCode::F(12), KeyModifiers::NONE))
+            .unwrap();
+        wait_and_apply_reply(&mut cpp_app, &cpp_rx);
+        let dest = cpp_app.editor.file_path().unwrap().canonicalize().unwrap();
+        let line = cpp_app.editor.cursor_line_col().0 + 1;
+        println!(
+            "[REAL CLANGD C++ method attempt {}] -> {}:{}",
+            attempt + 1,
+            dest.display(),
+            line
+        );
+        if dest == impl_cpp.canonicalize().unwrap() && line == 3 {
+            jumped_to_impl = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(
+        jumped_to_impl,
+        "expected C++ method jump to reach src/arch.cpp:3"
+    );
 }

@@ -29,6 +29,12 @@ impl ServerKind {
         }
     }
 
+    pub fn args(self) -> &'static [&'static str] {
+        match self {
+            Self::Clangd => &["--use-dirty-headers"],
+        }
+    }
+
     pub fn display_name(self) -> &'static str {
         match self {
             Self::Clangd => "clangd",
@@ -143,12 +149,16 @@ pub struct LspClient {
 
 impl Drop for LspClient {
     fn drop(&mut self) {
-        if let ClientMode::Lazy { sender, worker, .. } = &mut self.mode {
-            // Closing the channel signals the worker loop to exit and shut down all sessions.
-            sender.take();
-            if let Some(handle) = worker.take() {
-                let _ = handle.join();
+        match &mut self.mode {
+            ClientMode::Lazy { sender, worker, .. } => {
+                // Closing the channel signals the worker loop to exit and shut down all sessions.
+                sender.take();
+                if let Some(handle) = worker.take() {
+                    let _ = handle.join();
+                }
             }
+            #[cfg(test)]
+            ClientMode::TestSender(_) => {}
         }
     }
 }
