@@ -4,6 +4,7 @@ mod commands;
 mod config;
 mod explorer;
 mod input;
+mod lsp;
 mod prompt;
 pub(crate) mod quick_open;
 mod render;

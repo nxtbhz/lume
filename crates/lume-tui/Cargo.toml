@@ -16,6 +16,8 @@ crossterm.workspace = true
 crossbeam-channel.workspace = true
 thiserror.workspace = true
 unicode-width.workspace = true
+serde_json.workspace = true
+url.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
