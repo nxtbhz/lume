@@ -60,3 +60,21 @@ fn test_ctrl_right_without_shift_collapses_selection_at_end() {
     editor.insert_char('x').unwrap();
     assert_eq!(editor.buffer().rope().to_string(), "wordx");
 }
+
+#[test]
+fn wrapped_vertical_and_home_end_motions_step_within_logical_line() {
+    let mut e = Editor::from_str("hello world");
+    e.move_right(false);
+    e.move_down_wrapped(6, true);
+    assert_eq!(e.cursor_wrapped_pos(6), (0, 1, 1));
+    assert_eq!(e.cursors().primary().anchor, 1);
+    e.move_home_wrapped(6, false);
+    assert_eq!(e.cursor_wrapped_pos(6), (0, 1, 0));
+    e.move_home_wrapped(6, false);
+    assert_eq!(e.cursors().primary().head, 0);
+    e.move_end_wrapped(6, false);
+    assert_eq!(e.cursors().primary().head, 5);
+    e.move_down_wrapped(6, false);
+    e.move_up_wrapped(6, false);
+    assert_eq!(e.cursors().primary().head, 5);
+}

@@ -135,6 +135,67 @@ impl Tab {
         (line, col)
     }
 
+    pub fn cursor_wrapped_pos(&self, width: usize) -> (usize, usize, usize) {
+        self.cursor_wrapped_pos_for(&self.cursors, width)
+    }
+
+    pub fn cursor_wrapped_pos_for(
+        &self,
+        cursors: &CursorSet,
+        width: usize,
+    ) -> (usize, usize, usize) {
+        let byte = cursors.primary().head.min(self.buffer.len_bytes());
+        let line = self.buffer.byte_to_line(byte);
+        let text = std::borrow::Cow::from(self.buffer.rope().line(line));
+        let (sub, col) = visual::cursor_subrow_and_col(
+            text.trim_end_matches(LINE_BREAKS),
+            byte - self.buffer.line_to_byte(line),
+            width,
+        );
+        (line, sub, col)
+    }
+
+    /// Move a viewport anchor across visual rows, visiting only crossed logical lines.
+    pub fn offset_visual_rows(
+        &self,
+        (mut line, mut sub): (usize, usize),
+        delta: isize,
+        width: usize,
+    ) -> (usize, usize) {
+        let last = self.buffer.len_lines() - 1;
+        line = line.min(last);
+        let mut steps = delta.unsigned_abs();
+        loop {
+            if delta < 0 && steps <= sub {
+                return (line, sub - steps);
+            }
+            if delta < 0 {
+                if line == 0 {
+                    return (0, 0);
+                }
+                steps -= sub + 1;
+                line -= 1;
+            }
+            let text = std::borrow::Cow::from(self.buffer.rope().line(line));
+            let segments = visual::wrap_segments(text.trim_end_matches(LINE_BREAKS), width);
+            if delta < 0 {
+                sub = segments.count() - 1;
+            } else {
+                let target = sub.saturating_add(steps);
+                let count = segments.take(target.saturating_add(1)).count();
+                if count > target {
+                    return (line, target);
+                }
+                if line == last {
+                    return (line, count - 1);
+                }
+                steps = target - count;
+                sub = 0;
+                line += 1;
+            }
+        }
+    }
+
     pub fn cursor_visual_line_col(&self) -> (usize, usize) {
         self.cursor_visual_line_col_for(&self.cursors)
     }

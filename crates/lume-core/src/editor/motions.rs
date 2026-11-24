@@ -22,6 +22,54 @@ impl Editor {
         self.tabs[self.active_tab].cursor_line_col()
     }
 
+    pub fn cursor_wrapped_pos(&self, width: usize) -> (usize, usize, usize) {
+        self.tabs[self.active_tab].cursor_wrapped_pos(width)
+    }
+    pub fn set_cursor_from_wrapped_pos(
+        &mut self,
+        line: usize,
+        sub: usize,
+        col: usize,
+        width: usize,
+        select: bool,
+    ) {
+        self.set_cursor_from_column(line, select, |text| {
+            visual::byte_at_subrow_col(&std::borrow::Cow::from(text), sub, col, width)
+        });
+    }
+    pub fn move_visual_rows(&mut self, delta: isize, width: usize, select: bool) {
+        let (line, sub, col) = self.cursor_wrapped_pos(width);
+        let target = self.tabs[self.active_tab].offset_visual_rows((line, sub), delta, width);
+        let col = if target == (line, sub) && delta != 0 {
+            if delta < 0 {
+                0
+            } else {
+                usize::MAX
+            }
+        } else {
+            col
+        };
+        self.set_cursor_from_wrapped_pos(target.0, target.1, col, width, select);
+    }
+    pub fn move_up_wrapped(&mut self, width: usize, select: bool) {
+        self.move_visual_rows(-1, width, select);
+    }
+    pub fn move_down_wrapped(&mut self, width: usize, select: bool) {
+        self.move_visual_rows(1, width, select);
+    }
+    pub fn move_home_wrapped(&mut self, width: usize, select: bool) {
+        let (line, sub, col) = self.cursor_wrapped_pos(width);
+        self.set_cursor_from_wrapped_pos(line, if col == 0 { 0 } else { sub }, 0, width, select);
+    }
+    pub fn move_end_wrapped(&mut self, width: usize, select: bool) {
+        let (line, sub, _) = self.cursor_wrapped_pos(width);
+        let head = self.cursors().primary().head;
+        self.set_cursor_from_wrapped_pos(line, sub, usize::MAX, width, select);
+        if self.cursors().primary().head == head {
+            self.move_end(select);
+        }
+    }
+
     pub fn cursor_visual_line_col(&self) -> (usize, usize) {
         self.tabs[self.active_tab].cursor_visual_line_col()
     }
