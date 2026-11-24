@@ -4,7 +4,7 @@ Lume is a terminal text editor written in Rust 2021 across three workspace crate
 
 Long lines wrap at the pane edge by default. Press `Alt+Z` to toggle wrapping. For Markdown, press `Ctrl+K` then `P` for a read-only rendered view, or `Ctrl+K` then `V` to keep editing with a live preview beside the source.
 
-Build measurements, shared library linkage, test suite totals, Criterion microbenchmark intervals, and startup caveats live in [docs/benchmarks.md](docs/benchmarks.md).
+The feature passed 611 default tests and 680 all-features tests. Build measurements, Criterion intervals, preview frame timings and startup caveats live in [docs/benchmarks.md](docs/benchmarks.md).
 
 ## Quickstart
 

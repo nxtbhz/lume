@@ -409,6 +409,16 @@ impl App {
         action: Option<&str>,
         key: KeyEvent,
     ) -> std::io::Result<()> {
+        if self.view_mode == crate::split::PaneViewMode::MarkdownPreview
+            && (matches!(
+                action,
+                Some("search.redo" | "search.undo" | "search.replace_mode" | "search.replace_all")
+            ) || (state.mode == SearchMode::Replace && action == Some("search.accept")))
+        {
+            self.readonly_notice();
+            self.search_state = Some(state);
+            return Ok(());
+        }
         if action == Some("search.replace_all") {
             if state.mode == SearchMode::Replace && !state.query.is_empty() {
                 let count = self
@@ -497,7 +507,7 @@ impl App {
                             false,
                         )
                         .len();
-                        self.adjust_viewport();
+                        self.reveal_search_match();
                     }
                 }
                 self.search_state = Some(state);
@@ -523,7 +533,7 @@ impl App {
                         false,
                     )
                     .len();
-                    self.adjust_viewport();
+                    self.reveal_search_match();
                 } else if !state.query.is_empty() {
                     if let Some((s, _e)) = self.editor.find_next(&state.query, false) {
                         state.active_match_idx = lume_core::search::find_matches_in_range(
@@ -534,7 +544,7 @@ impl App {
                             false,
                         )
                         .len();
-                        self.adjust_viewport();
+                        self.reveal_search_match();
                     }
                 }
                 self.search_state = Some(state);

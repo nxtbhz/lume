@@ -155,6 +155,29 @@ impl Tab {
         (line, sub, col)
     }
 
+    /// Returns None for the blank area below the final visual row.
+    pub fn visual_row_at(
+        &self,
+        (mut line, mut sub): (usize, usize),
+        mut forward: usize,
+        width: usize,
+    ) -> Option<(usize, usize)> {
+        while let Some(slice) = self.buffer.line(line) {
+            let text = std::borrow::Cow::from(slice);
+            let target = sub.saturating_add(forward);
+            let count = visual::wrap_segments(text.trim_end_matches(LINE_BREAKS), width)
+                .take(target.saturating_add(1))
+                .count();
+            if count > target {
+                return Some((line, target));
+            }
+            forward = target - count;
+            line += 1;
+            sub = 0;
+        }
+        None
+    }
+
     /// Move a viewport anchor across visual rows, visiting only crossed logical lines.
     pub fn offset_visual_rows(
         &self,
@@ -165,35 +188,27 @@ impl Tab {
         let last = self.buffer.len_lines() - 1;
         line = line.min(last);
         let mut steps = delta.unsigned_abs();
-        loop {
-            if delta < 0 && steps <= sub {
-                return (line, sub - steps);
-            }
-            if delta < 0 {
-                if line == 0 {
-                    return (0, 0);
-                }
-                steps -= sub + 1;
-                line -= 1;
-            }
-            let text = std::borrow::Cow::from(self.buffer.rope().line(line));
-            let segments = visual::wrap_segments(text.trim_end_matches(LINE_BREAKS), width);
-            if delta < 0 {
-                sub = segments.count() - 1;
-            } else {
-                let target = sub.saturating_add(steps);
-                let count = segments.take(target.saturating_add(1)).count();
-                if count > target {
-                    return (line, target);
-                }
-                if line == last {
-                    return (line, count - 1);
-                }
-                steps = target - count;
-                sub = 0;
-                line += 1;
-            }
+        if delta >= 0 {
+            return self
+                .visual_row_at((line, sub), steps, width)
+                .unwrap_or_else(|| {
+                    let text = std::borrow::Cow::from(self.buffer.rope().line(last));
+                    (
+                        last,
+                        visual::wrap_subrow_count(text.trim_end_matches(LINE_BREAKS), width) - 1,
+                    )
+                });
         }
+        while steps > sub {
+            if line == 0 {
+                return (0, 0);
+            }
+            steps -= sub + 1;
+            line -= 1;
+            let text = std::borrow::Cow::from(self.buffer.rope().line(line));
+            sub = visual::wrap_subrow_count(text.trim_end_matches(LINE_BREAKS), width) - 1;
+        }
+        (line, sub - steps)
     }
 
     pub fn cursor_visual_line_col(&self) -> (usize, usize) {

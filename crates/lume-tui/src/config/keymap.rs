@@ -770,8 +770,6 @@ fn populate_minimal_preset(table: &mut KeymapTable) {
     const ALT_SHIFT: KeyModifiers = KeyModifiers::ALT.union(KeyModifiers::SHIFT);
 
     let g = KeymapContext::Global;
-    table.bind_one(g, KeyCode::Char('z'), ALT, "view.toggle_word_wrap");
-    table.bind_one(g, KeyCode::Char('z'), ALT_SHIFT, "view.toggle_word_wrap");
     table.bind_one(g, KeyCode::Char('q'), CTRL, "app.quit");
     table.bind_one(g, KeyCode::Char('p'), ALT, "view.command_palette");
     table.bind_one(g, KeyCode::Char('p'), ALT_SHIFT, "view.command_palette");
@@ -865,6 +863,8 @@ fn populate_default_preset(table: &mut KeymapTable) {
         .union(KeyModifiers::SHIFT);
 
     let g = KeymapContext::Global;
+    table.bind_one(g, KeyCode::Char('z'), ALT, "view.toggle_word_wrap");
+    table.bind_one(g, KeyCode::Char('z'), ALT_SHIFT, "view.toggle_word_wrap");
     for (key, id) in [
         ('p', "markdown.toggle_preview"),
         ('v', "markdown.open_preview_split"),

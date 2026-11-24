@@ -205,7 +205,35 @@ fn table(
     let natural_widths: Vec<_> = (0..headers.len())
         .map(|col| data.iter().map(|r| natural(&r[col])).max().unwrap_or(1))
         .collect();
-    let Some(widths) = solve_table_column_widths(&natural_widths, width) else {
+    // Each grid column must accommodate its widest indivisible grapheme.
+    let minimum: Vec<_> = (0..headers.len())
+        .map(|i| {
+            data.iter()
+                .flat_map(|r| &r[i])
+                .flat_map(|span| visual::graphemes(&span.text))
+                .map(|g| g.width)
+                .max()
+                .unwrap_or(1)
+                .max(1)
+        })
+        .collect();
+    let widths = solve_table_column_widths(&natural_widths, width).and_then(|mut widths| {
+        if minimum.iter().sum::<usize>() + 3 * headers.len() + 1 > width {
+            return None;
+        }
+        let mut deficit = 0;
+        for (w, &min) in widths.iter_mut().zip(&minimum) {
+            deficit += min.saturating_sub(*w);
+            *w = (*w).max(min);
+        }
+        for (w, min) in widths.iter_mut().zip(minimum).rev() {
+            let shrink = deficit.min(*w - min);
+            *w -= shrink;
+            deficit -= shrink;
+        }
+        Some(widths)
+    });
+    let Some(widths) = widths else {
         if rows.is_empty() {
             for cell in &data[0] {
                 out.extend(wrap(line, cell, width));

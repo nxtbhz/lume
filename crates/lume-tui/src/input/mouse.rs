@@ -129,6 +129,7 @@ impl App {
                         self.mouse_dragging = false;
                         return Ok(true);
                     }
+                    self.editor.break_undo_group();
                     let (byte, _) = self.mouse_byte(pane, col, row);
                     self.editor.cursors_mut().primary_mut().move_to(byte);
                     let now = Instant::now();
@@ -158,6 +159,7 @@ impl App {
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 if self.mouse_dragging && row >= text_top && row < status_row && col >= text_left {
+                    self.editor.break_undo_group();
                     let (byte, _) = self.mouse_byte(self.splits.active_pane, col, row);
                     self.editor.cursors_mut().primary_mut().select_to(byte);
                     self.sync_active_pane();
@@ -282,7 +284,12 @@ impl App {
             .min(rect.height.saturating_sub(1));
         let cols = visual::wrap_cols_for_viewport(rect.width - gutter);
         let (line, sub) = if self.word_wrap {
-            tab.offset_visual_rows(top, y as isize, cols)
+            {
+                let Some(pos) = tab.visual_row_at(top, y, cols) else {
+                    return (tab.buffer.len_bytes(), false);
+                };
+                pos
+            }
         } else {
             (top.0.saturating_add(y), 0)
         };
@@ -293,10 +300,7 @@ impl App {
         let content = text.trim_end_matches(LINE_BREAKS);
         let (byte, inside) = if self.word_wrap {
             let seg = visual::wrap_segments(content, cols).nth(sub);
-            let beyond = line == tab.buffer.len_lines() - 1
-                && top.0.saturating_add(y) >= line
-                && tab.offset_visual_rows((line, sub), -(y as isize), cols) != top;
-            let inside = seg.is_some_and(|s| x < s.col_width) && !beyond;
+            let inside = seg.is_some_and(|s| x < s.col_width);
             (visual::byte_at_subrow_col(content, sub, x, cols), inside)
         } else {
             let byte = visual::byte_at_column(content, x + side);

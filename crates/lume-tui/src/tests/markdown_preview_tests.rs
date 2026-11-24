@@ -99,3 +99,63 @@ fn measure_hot_markdown_frames() {
         bytes.len()
     );
 }
+
+#[test]
+fn replacing_and_closing_tabs_releases_cached_markdown() {
+    let dir = super::TestDir::new("lume-preview-reuse");
+    let path = dir.path().join("loaded.md");
+    std::fs::write(&path, "# Loaded file").unwrap();
+    let mut a = App::new(None).unwrap();
+    a.execute_command("markdown.toggle_preview");
+    let width = a.pane_rect(0).width;
+    let old = std::sync::Arc::downgrade(&a.preview_layout(0, width));
+    a.open_file_into_editor_result(&path).unwrap();
+    assert!(old.upgrade().is_none());
+    assert!(frame(&mut a).contains("Loaded file"));
+    let layout = std::sync::Arc::downgrade(&a.preview_layout(0, width));
+    a.close_tab_and_sync_splits(0);
+    assert!(layout.upgrade().is_none());
+}
+
+#[test]
+fn preview_follows_source_wheel_inside_single_long_paragraph() {
+    let mut a = app(&"sample text ".repeat(6000));
+    a.execute_command("markdown.open_preview_split");
+    for _ in 0..4 {
+        a.handle_event(
+            crate::input::AppEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 4,
+                row: 3,
+                modifiers: KeyModifiers::NONE,
+            }),
+            &mut Vec::new(),
+        )
+        .unwrap();
+    }
+    assert_eq!(a.scroll_row, 0);
+    assert!(a.scroll_subrow >= 10);
+    assert!(a.splits.panes[1].preview_scroll_row >= 8);
+}
+#[test]
+fn preview_allows_find_and_copy_and_blocks_replace_in_search() {
+    let mut a = app(&format!("{}needle", "other\n".repeat(40)));
+    a.execute_command("markdown.toggle_preview");
+    a.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(a.search_state.is_some());
+    for c in "needle".chars() {
+        a.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+            .unwrap();
+    }
+    assert!(a.preview_scroll_row > 0);
+    a.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert!(matches!(
+        a.search_state.as_ref().unwrap().mode,
+        crate::search::SearchMode::Find
+    ));
+    a.search_state = None;
+    a.execute_command("edit.copy");
+    assert_eq!(a.editor.clipboard(), Some("needle"));
+}

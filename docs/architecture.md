@@ -1,6 +1,6 @@
 # Lume architecture
 
-This document describes Lume across `crates/lume-core/`, `crates/lume-syntax/`, and `crates/lume-tui/` in the current tree. Historical measurements identify their revision. Each subsystem separates headless editor state from terminal I/O and background parsing while keeping known implementation limits visible beside verified guarantees.
+This document describes Lume across `crates/lume-core/`, `crates/lume-syntax/`, and `crates/lume-tui/` at the original architecture review (`a8df968`), with subsequent updates to navigation and rendering. Each subsystem separates headless editor state from terminal I/O and background parsing while keeping known implementation limits visible beside verified guarantees.
 
 ## Crate boundaries and unsafe isolation
 
@@ -73,7 +73,7 @@ Every frame in `App::render` (`crates/lume-tui/src/render/mod.rs:26-135`) wraps 
 
 Source panes anchor the viewport by logical line and wrapped subrow. `WrapIter` streams grapheme-aligned byte ranges, measuring four-cell tab stops from each segment start. Each pane reserves a cell for the end-of-line cursor. A distant jump starts from the target logical line and crosses at most one pane of neighboring rows. Work within a long logical line still depends on its byte length. Multi-chunk Rope lines may need a contiguous temporary string. The renderer reuses text and match buffers and advances token and match indices in byte order.
 
-Each pane can display source or Markdown preview. The preview cache retains a parsed document per tab revision and at most two layouts at distinct widths per tab. Resizing can reuse the parsed document. Scrolling reads the visible slice of an existing layout. Source-line tags on rendered rows synchronize split panes. Only the primary cursor selection is painted.
+Each pane can display source or Markdown preview. The preview cache retains a parsed document per tab revision and at most two layouts at distinct widths per tab. Resizing can reuse the parsed document. Scrolling reads the visible slice of an existing layout. Source-line tags on rendered rows synchronize split panes. Within a wrapped line, the preview estimates the subrow from the relative pane widths and clamps it to the rows belonging to that source line. Only the primary cursor selection is painted.
 
 Other frontend limitations include the following.
 

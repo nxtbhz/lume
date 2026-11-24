@@ -69,3 +69,61 @@ fn toggle_word_wrap_command_and_config_roundtrip() {
     a.execute_command("view.toggle_word_wrap");
     assert!(!a.word_wrap);
 }
+
+#[test]
+fn default_wrap_shortcuts_toggle_in_the_editor() {
+    use crossterm::event::{KeyCode, KeyEvent};
+    let mut a = narrow();
+    for (mods, expected) in [
+        (KeyModifiers::ALT, false),
+        (KeyModifiers::ALT | KeyModifiers::SHIFT, true),
+    ] {
+        a.handle_key(KeyEvent::new(KeyCode::Char('z'), mods))
+            .unwrap();
+        assert_eq!(a.word_wrap, expected);
+    }
+}
+#[test]
+fn wrapped_ctrl_click_below_eof_misses_visible_text() {
+    let mut a = narrow();
+    a.show_line_numbers = false;
+    a.editor = lume_core::Editor::from_str("symbol");
+    let clicked = a
+        .handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 5,
+            modifiers: KeyModifiers::CONTROL,
+        })
+        .unwrap();
+    assert!(!clicked);
+    assert_eq!(a.editor.cursors().primary().head, 0);
+}
+
+#[test]
+#[ignore = "release-mode measurement; set LUME_JUMP_COUNT to choose the batch size"]
+fn measure_document_end_from_start() {
+    let count: usize = std::env::var("LUME_JUMP_COUNT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    for size in [1000, 100_000] {
+        let mut a = narrow();
+        let line = "one two three four five six seven eight nine ten\n";
+        a.editor = lume_core::Editor::from_str(line.repeat(size).trim_end());
+        a.execute_command("motion.document_end");
+        let mut elapsed = std::time::Duration::ZERO;
+        for _ in 0..count {
+            a.execute_command("motion.document_start");
+            let start = std::time::Instant::now();
+            a.execute_command("motion.document_end");
+            std::hint::black_box((a.scroll_row, a.scroll_subrow));
+            elapsed += start.elapsed();
+        }
+        assert_eq!(a.editor.cursor_line_col().0, size - 1);
+        eprintln!(
+            "document_lines={size} jumps={count} elapsed_ns={}",
+            elapsed.as_nanos()
+        );
+    }
+}

@@ -26,6 +26,16 @@ pub enum ActiveFocus {
     Explorer,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+struct PreviewAnchor {
+    tab_id: usize,
+    revision: u64,
+    top: (usize, usize),
+    cursor: usize,
+    source_width: usize,
+    preview_rect: PaneRect,
+}
+
 pub struct App {
     pub editor: Editor,
     pub explorer: FileExplorer,
@@ -41,7 +51,7 @@ pub struct App {
     pub running: bool,
     pub markdown_cache: crate::markdown::MarkdownPreviewCache,
     pub(crate) preview_g_pending: bool,
-    preview_sync_anchor: Option<(usize, usize, usize)>,
+    preview_sync_anchor: Option<PreviewAnchor>,
     preview_tab: Option<usize>,
     pub word_wrap: bool,
     pub show_line_numbers: bool,
@@ -438,7 +448,7 @@ impl App {
                     false,
                 )
                 .len();
-                self.adjust_viewport();
+                self.reveal_search_match();
             } else {
                 state.active_match_idx = 0;
             }
@@ -499,7 +509,6 @@ impl App {
         if single_cursor {
             self.shift_syntax_for_delta(tab_id, cursor.min(), cursor.range().len(), text.len());
         } else {
-            self.markdown_cache.invalidate_tab(tab_id);
             self.syntax_cache.remove(&tab_id);
         }
         if self.modal_enabled && self.vim_state.mode == crate::vim::VimMode::Visual {
@@ -777,6 +786,59 @@ impl App {
         }
     }
 
+    fn follow_source_in_preview(&mut self, tab_idx: usize, other: usize) {
+        let tab = self.editor.active_tab();
+        let anchor = PreviewAnchor {
+            tab_id: tab.id,
+            revision: tab.revision,
+            top: (self.scroll_row, self.scroll_subrow),
+            cursor: tab.cursors.primary().head,
+            source_width: self.active_wrap_cols(),
+            preview_rect: self.pane_rect(other),
+        };
+        if self.preview_sync_anchor == Some(anchor) {
+            return;
+        }
+        let cursor = if self.word_wrap {
+            tab.cursor_wrapped_pos(anchor.source_width)
+        } else {
+            let (line, col) = tab.cursor_visual_line_col();
+            (line, 0, col)
+        };
+        let rect = anchor.preview_rect;
+        let layout = self.preview_layout(tab_idx, rect.width);
+        let project = |(line, sub): (usize, usize)| {
+            let start = layout.preview_row_for_source_line(line);
+            let end = layout.rows.partition_point(|r| r.source_line <= line);
+            let extra = sub.saturating_mul(anchor.source_width) / rect.width.max(1);
+            start + extra.min(end.saturating_sub(start + 1))
+        };
+        let mut follow = project(anchor.top);
+        if self
+            .preview_sync_anchor
+            .is_some_and(|prev| prev.top == anchor.top && prev.cursor != anchor.cursor)
+        {
+            follow = follow
+                .max(project((cursor.0, cursor.1)).saturating_sub(rect.height.saturating_sub(1)));
+        }
+        self.splits.panes[other].preview_scroll_row =
+            follow.min(layout.rows.len().saturating_sub(rect.height.max(1)));
+        self.preview_sync_anchor = Some(anchor);
+    }
+
+    pub(crate) fn reveal_search_match(&mut self) {
+        if self.view_mode == PaneViewMode::MarkdownPreview {
+            let rect = self.pane_rect(self.splits.active_pane);
+            let idx = self.editor.active_tab_idx();
+            let (line, sub, _) = self.editor.cursor_wrapped_pos(rect.width);
+            let layout = self.preview_layout(idx, rect.width);
+            let first = layout.preview_row_for_source_line(line);
+            let end = layout.rows.partition_point(|r| r.source_line <= line);
+            self.preview_scroll_row = (first + sub.min(end.saturating_sub(first + 1)))
+                .min(layout.rows.len().saturating_sub(rect.height.max(1)));
+        }
+        self.adjust_viewport();
+    }
     pub fn sync_active_pane(&mut self) {
         if self.splits.is_split {
             let active = self.splits.active_pane;
@@ -792,25 +854,7 @@ impl App {
             let other = if active == 0 { 1 } else { 0 };
             if self.splits.panes[other].tab_idx == active_tab_idx {
                 if self.view_mode == PaneViewMode::Source && self.pane_is_preview(other) {
-                    let cursor = self.editor.cursor_line_col().0;
-                    let anchor = (self.scroll_row, cursor, self.pane_rect(other).width);
-                    if self.preview_sync_anchor != Some(anchor) {
-                        let rect = self.pane_rect(other);
-                        let layout = self.preview_layout(active_tab_idx, rect.width);
-                        let top = layout.preview_row_for_source_line(self.scroll_row);
-                        let cursor_row = layout.preview_row_for_source_line(cursor);
-                        let follow = if self
-                            .preview_sync_anchor
-                            .is_some_and(|p| p.0 == self.scroll_row && p.1 != cursor)
-                        {
-                            top.max(cursor_row.saturating_sub(rect.height.saturating_sub(1)))
-                        } else {
-                            top
-                        };
-                        self.splits.panes[other].preview_scroll_row =
-                            follow.min(layout.rows.len().saturating_sub(rect.height.max(1)));
-                        self.preview_sync_anchor = Some(anchor);
-                    }
+                    self.follow_source_in_preview(active_tab_idx, other);
                 }
                 if let Some(tab) = self.editor.tabs().get(active_tab_idx) {
                     Self::clamp_cursors_to_buffer(
@@ -1034,6 +1078,7 @@ impl App {
 
     /// Clears cached and in-flight syntax highlights for `tab_id` and drops its worker tree.
     pub fn invalidate_syntax_for_tab(&mut self, tab_id: usize) {
+        self.markdown_cache.invalidate_tab(tab_id);
         self.syntax_cache.remove(&tab_id);
         self.syntax_in_flight.remove(&tab_id);
         self.syntax_worker.drop_buffer(tab_id);

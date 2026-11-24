@@ -342,7 +342,11 @@ impl App {
                 self.scroll_pane_visual_rows(None, delta);
                 return;
             }
-            if id.starts_with("edit.") || id.starts_with("vim.") || id.starts_with("motion.") {
+            if (id.starts_with("edit.")
+                && !matches!(id, "edit.find" | "edit.copy" | "edit.select_all"))
+                || id.starts_with("vim.")
+                || id.starts_with("motion.")
+            {
                 self.readonly_notice();
                 return;
             }
@@ -562,7 +566,7 @@ impl App {
                         )
                         .len();
                     }
-                    self.adjust_viewport();
+                    self.reveal_search_match();
                 }
                 self.search_state = Some(state);
             }

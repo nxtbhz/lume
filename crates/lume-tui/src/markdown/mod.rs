@@ -98,9 +98,73 @@ fn push(spans: &mut Cell, text: &str, style: InlineStyle) {
     }
 }
 
+/// For each run of backticks, index the next run of exactly the same length.
+fn backtick_pairs(s: &str) -> HashMap<usize, usize> {
+    let mut pairs = HashMap::new();
+    let mut next = HashMap::new();
+    let mut runs = s.as_bytes().rchunks(1).enumerate().peekable();
+    while let Some((end, b)) = runs.next() {
+        if b != b"`" {
+            continue;
+        }
+        let mut len = 1;
+        while runs.next_if(|(_, b)| *b == b"`").is_some() {
+            len += 1;
+        }
+        let start = s.len() - end - len;
+        if let Some(close) = next.insert(len, start) {
+            pairs.insert(start, close);
+        }
+    }
+    pairs
+}
+
+/// Match labels and balanced destinations once, including ordinary unmatched brackets.
+fn link_ranges(s: &str, ticks: &HashMap<usize, usize>) -> HashMap<usize, (usize, usize)> {
+    let mut links = HashMap::new();
+    if !s.contains("](") {
+        return links;
+    }
+    let mut brackets = Vec::new();
+    let mut parens = Vec::new();
+    let mut label = None;
+    let mut i = 0;
+    while i < s.len() {
+        let byte = s.as_bytes()[i];
+        if byte != b'(' {
+            label = None;
+        }
+        match byte {
+            b'\\' => {
+                i = (i + 2).min(s.len());
+                continue;
+            }
+            b'`' => {
+                let n = s.as_bytes()[i..].iter().take_while(|&&b| b == b'`').count();
+                i = ticks.get(&i).copied().unwrap_or(i) + n;
+                continue;
+            }
+            b'[' => brackets.push(i),
+            b']' => label = brackets.pop().map(|open| (open, i)),
+            b'(' => parens.push(label.take()),
+            b')' => {
+                if let Some(Some((open, end))) = parens.pop() {
+                    links.insert(open, (end, i + 1));
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    links
+}
+
 fn inline(mut s: &str) -> Cell {
     let mut out = Vec::new();
     let mut style = InlineStyle::default();
+    let length = s.len();
+    let ticks = backtick_pairs(s);
+    let links = link_ranges(s, &ticks);
     while !s.is_empty() {
         if let Some(rest) = s.strip_prefix('\\') {
             if let Some(c) = rest.chars().next().filter(char::is_ascii_punctuation) {
@@ -109,42 +173,44 @@ fn inline(mut s: &str) -> Cell {
                 continue;
             }
         }
+        let pos = length - s.len();
         if s.starts_with('`') {
-            let ticks = s.bytes().take_while(|&b| b == b'`').count();
-            let marker = &s[..ticks];
-            if let Some((code, rest)) = s[ticks..].split_once(marker) {
+            let n = s.bytes().take_while(|&b| b == b'`').count();
+            if let Some(&end) = ticks.get(&pos) {
                 push(
                     &mut out,
-                    code,
+                    &s[n..end - pos],
                     InlineStyle {
                         code: true,
                         ..style
                     },
                 );
-                s = rest;
-                continue;
+                s = &s[end - pos + n..];
+            } else {
+                push(&mut out, &s[..n], style);
+                s = &s[n..];
             }
+            continue;
         }
         let image = s.starts_with("![");
         if image || s.starts_with('[') {
-            let label = &s[if image { 2 } else { 1 }..];
-            if let Some((label, tail)) = label.split_once("](") {
-                if let Some((_, rest)) = tail.split_once(')') {
-                    if image {
-                        push(&mut out, &format!("[img: {label}]"), style);
-                    } else {
-                        push(
-                            &mut out,
-                            label,
-                            InlineStyle {
-                                link: true,
-                                ..style
-                            },
-                        );
-                    }
-                    s = rest;
-                    continue;
+            let open = pos + usize::from(image);
+            if let Some(&(end, after)) = links.get(&open) {
+                let label = &s[open + 1 - pos..end - pos];
+                if image {
+                    push(&mut out, &format!("[img: {label}]"), style);
+                } else {
+                    push(
+                        &mut out,
+                        label,
+                        InlineStyle {
+                            link: true,
+                            ..style
+                        },
+                    );
                 }
+                s = &s[after - pos..];
+                continue;
             }
         }
         let mut consumed = false;
@@ -182,7 +248,7 @@ fn split_table_row(line: &str) -> Vec<&str> {
     let s = line.trim();
     let mut cells = Vec::new();
     let mut start = 0;
-    let mut ticks = 0;
+    let ticks = backtick_pairs(s);
     let mut i = 0;
     while i < s.len() {
         match s.as_bytes()[i] {
@@ -194,14 +260,9 @@ fn split_table_row(line: &str) -> Vec<&str> {
             }
             b'`' => {
                 let n = s.as_bytes()[i..].iter().take_while(|&&b| b == b'`').count();
-                if ticks == 0 {
-                    ticks = n;
-                } else if n == ticks {
-                    ticks = 0;
-                }
-                i += n;
+                i = ticks.get(&i).copied().unwrap_or(i) + n;
             }
-            b'|' if ticks == 0 => {
+            b'|' => {
                 if i > 0 {
                     cells.push(s[start..i].trim());
                 }

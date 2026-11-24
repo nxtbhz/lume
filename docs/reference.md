@@ -48,7 +48,7 @@ Modeless mode is active on startup (`modal_enabled = false`, `crates/lume-tui/sr
 | `Ctrl+M` | Jump to matching bracket | Matches `()`, `[]`, `{}` | [key.rs](../crates/lume-tui/src/input/key.rs#L174-L177) |
 | `Ctrl+G` | Open Go to Line prompt | Accepts `line`, `line:col`, `:col`, or `line:` | [key.rs](../crates/lume-tui/src/input/key.rs#L178-L181) |
 | `F12` | Go to Definition (C/C++) | Bound in `default` and `vim` presets; invokes `clangd` on demand (`minimal` uses Command Palette or `config.toml`) | [navigation.rs](../crates/lume-tui/src/navigation.rs) |
-| `Ctrl+K` | Enter chord state | Waits for second key (`\`, `-`, `w`, `q`, `m`) | [key.rs](../crates/lume-tui/src/input/key.rs#L182-L188) |
+| `Ctrl+K` | Enter chord state | Waits for second key (`\`, `-`, `w`, `q`, `m`, `p`, `v`) | [key.rs](../crates/lume-tui/src/input/key.rs#L182-L188) |
 | `Ctrl+Alt+V` | Toggle modal Vim mode | Enters Normal mode when enabled | [key.rs](../crates/lume-tui/src/input/key.rs#L74-L77) |
 | `F1` | Open Which-Key sheet | Any key or `Esc` dismisses the overlay | [key.rs](../crates/lume-tui/src/input/key.rs#L194-L197) |
 | `Arrows`, `Home`, `End`, `PageUp`, `PageDown` | Move cursor | Hold `Shift` to extend selection | [key.rs](../crates/lume-tui/src/input/key.rs#L242-L255) |
@@ -72,6 +72,8 @@ Pressing `Ctrl+K` sets `pending_chord = Some('k')` until the next key (`crates/l
 | `w` or `W` | `view.focus_next_split` | Switch focus between pane `0` and pane `1` | [key.rs](../crates/lume-tui/src/input/key.rs#L54-L56) |
 | `q` or `Q` | `view.close_split` | Close active split pane | [key.rs](../crates/lume-tui/src/input/key.rs#L57-L59) |
 | `m` or `M` | `language.set_mode` | Open language override selector for active tab | [key.rs](../crates/lume-tui/src/input/key.rs#L60-L62) |
+| `p` or `P` | `markdown.toggle_preview` | Toggle preview in the active pane | [keymap.rs](../crates/lume-tui/src/config/keymap.rs) |
+| `v` or `V` | `markdown.open_preview_split` | Keep the source editor focused beside a live preview | [keymap.rs](../crates/lume-tui/src/config/keymap.rs) |
 | `Esc` or any other key | None | Cancel pending chord | [key.rs](../crates/lume-tui/src/input/key.rs#L63-L68) |
 
 Modal mode (`Ctrl+Alt+V`) routes non-global editor keys through `handle_modal_key` across `Normal`, `Insert`, and `Visual` states (`crates/lume-tui/src/input/modal.rs:7-304`). Pressing `:` in Normal mode opens the Go to Line prompt (`crates/lume-tui/src/input/modal.rs:294-296`), not an ex command line.
