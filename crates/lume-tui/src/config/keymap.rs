@@ -770,6 +770,8 @@ fn populate_minimal_preset(table: &mut KeymapTable) {
     const ALT_SHIFT: KeyModifiers = KeyModifiers::ALT.union(KeyModifiers::SHIFT);
 
     let g = KeymapContext::Global;
+    table.bind_one(g, KeyCode::Char('z'), ALT, "view.toggle_word_wrap");
+    table.bind_one(g, KeyCode::Char('z'), ALT_SHIFT, "view.toggle_word_wrap");
     table.bind_one(g, KeyCode::Char('q'), CTRL, "app.quit");
     table.bind_one(g, KeyCode::Char('p'), ALT, "view.command_palette");
     table.bind_one(g, KeyCode::Char('p'), ALT_SHIFT, "view.command_palette");
@@ -802,6 +804,11 @@ fn populate_vim_preset(table: &mut KeymapTable) {
     populate_explorer_actions(table);
 
     let norm = KeymapContext::Normal;
+    table.bind(
+        norm,
+        parse_key_sequence("Space u w").unwrap(),
+        "view.toggle_word_wrap",
+    );
     table.bind_one(norm, KeyCode::Char(':'), NONE, "view.command_palette");
     table.bind_two(
         norm,

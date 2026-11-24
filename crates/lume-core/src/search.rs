@@ -53,7 +53,7 @@ fn match_unicode_at(slice: &str, needle_folded: &[char]) -> Option<usize> {
     None
 }
 
-fn for_each_match_in_str(
+pub fn for_each_match_in_str(
     haystack: &str,
     needle: &str,
     case_sensitive: bool,

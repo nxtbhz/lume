@@ -13,7 +13,9 @@ use crate::lsp::LspClient;
 use crate::navigation::PendingDefinition;
 use crate::prompt::InputPrompt;
 use crate::search::{SearchField, SearchState};
+use crate::split::{PaneRect, PaneViewMode};
 use crate::vim::VimState;
+use lume_core::buffer::visual;
 use lume_core::buffer::LINE_BREAKS;
 use lume_core::{Editor, TextBuffer};
 use lume_syntax::{ByteDelta, HighlightToken, Language, SyntaxRequest, SyntaxWorker};
@@ -28,12 +30,16 @@ pub struct App {
     pub editor: Editor,
     pub explorer: FileExplorer,
     pub focus: ActiveFocus,
+    pub scroll_subrow: usize,
+    pub preview_scroll_row: usize,
+    pub view_mode: PaneViewMode,
     pub scroll_row: usize,
     pub scroll_col: usize,
     pub terminal_width: u16,
     pub terminal_height: u16,
     pub status_message: Option<(String, Instant)>,
     pub running: bool,
+    pub word_wrap: bool,
     pub show_line_numbers: bool,
 
     // Mouse interaction
@@ -207,6 +213,10 @@ impl App {
             editor,
             explorer,
             focus: ActiveFocus::Editor,
+            scroll_subrow: 0,
+            preview_scroll_row: 0,
+            view_mode: PaneViewMode::Source,
+            word_wrap: true,
             scroll_row: 0,
             scroll_col: 0,
             terminal_width: width,
@@ -298,6 +308,7 @@ impl App {
         if !self.modal_enabled || !was_modal {
             self.vim_state.set_mode(crate::vim::VimMode::Normal);
         }
+        self.word_wrap = config.editor.word_wrap;
         self.show_line_numbers = config.editor.line_numbers;
         self.explorer.is_visible = config.explorer.visible_on_startup;
         self.explorer.width = config.explorer.width;
@@ -530,31 +541,124 @@ impl App {
         (self.terminal_width as usize).saturating_sub(gutter + exp_w)
     }
 
-    pub fn adjust_viewport(&mut self) {
-        let (cursor_row, cursor_col) = self.editor.cursor_visual_line_col();
-        let (height, width) = if self.splits.is_split {
-            let area_w = (self.terminal_width as usize).saturating_sub(self.explorer_width());
-            let (p0, _, p1) = self.splits.layout(
-                self.text_area_left(),
-                self.text_area_top(),
-                area_w,
-                self.text_area_height(),
-            );
-            let active_rect = if self.splits.active_pane == 0 {
-                p0
-            } else {
-                p1.unwrap_or(p0)
-            };
-            let h = active_rect.height.max(1);
-            let w = active_rect.width.saturating_sub(self.gutter_width()).max(1);
-            (h, w)
+    pub fn pane_rect(&self, pane: usize) -> PaneRect {
+        let left = self.text_area_left();
+        let (first, _, second) = self.splits.layout(
+            left,
+            self.text_area_top(),
+            (self.terminal_width as usize).saturating_sub(left),
+            self.text_area_height(),
+        );
+        if pane == 1 {
+            second.unwrap_or(first)
+        } else {
+            first
+        }
+    }
+    pub fn active_wrap_cols(&self) -> usize {
+        visual::wrap_cols_for_viewport(
+            self.pane_rect(self.splits.active_pane)
+                .width
+                .saturating_sub(self.gutter_width()),
+        )
+    }
+    pub fn cursor_screen_pos(&self) -> Option<(usize, usize)> {
+        let rect = self.pane_rect(self.splits.active_pane);
+        if !self.word_wrap {
+            let (line, col) = self.editor.cursor_visual_line_col();
+            return Some((
+                line.checked_sub(self.scroll_row)?,
+                col.checked_sub(self.scroll_col)?,
+            ));
+        }
+        let width = self.active_wrap_cols();
+        let (line, sub, col) = self.editor.cursor_wrapped_pos(width);
+        let distance = line.checked_sub(self.scroll_row)?;
+        if distance >= rect.height {
+            return None;
+        }
+        let mut rows = 0;
+        let mut skip = self.scroll_subrow;
+        for i in self.scroll_row..line {
+            let text = std::borrow::Cow::from(self.editor.buffer().rope().line(i));
+            rows += visual::wrap_segments(text.trim_end_matches(LINE_BREAKS), width)
+                .skip(skip)
+                .take(rect.height - rows)
+                .count();
+            if rows >= rect.height {
+                return None;
+            }
+            skip = 0;
+        }
+        Some((rows + sub.checked_sub(skip)?, col))
+    }
+    pub fn scroll_pane_visual_rows(&mut self, pane: Option<usize>, delta: isize) {
+        let index = pane.unwrap_or(self.splits.active_pane);
+        let active = index == self.splits.active_pane;
+        let state = &self.splits.panes[index];
+        let (tab_idx, top) = if active {
+            (
+                self.editor.active_tab_idx(),
+                (self.scroll_row, self.scroll_subrow),
+            )
+        } else {
+            (state.tab_idx, (state.scroll_row, state.scroll_subrow))
+        };
+        let tab = &self.editor.tabs()[tab_idx];
+        let width = visual::wrap_cols_for_viewport(
+            self.pane_rect(index)
+                .width
+                .saturating_sub(self.gutter_width_for_tab(tab_idx)),
+        );
+        let next = if self.word_wrap {
+            tab.offset_visual_rows(top, delta, width)
         } else {
             (
-                self.text_area_height().max(1),
-                self.text_area_width().max(1),
+                top.0
+                    .saturating_add_signed(delta)
+                    .min(tab.buffer.len_lines() - 1),
+                0,
             )
         };
-
+        if active {
+            (self.scroll_row, self.scroll_subrow) = next;
+        }
+        (
+            self.splits.panes[index].scroll_row,
+            self.splits.panes[index].scroll_subrow,
+        ) = next;
+    }
+    pub fn adjust_viewport(&mut self) {
+        let rect = self.pane_rect(self.splits.active_pane);
+        let height = rect.height.max(1);
+        let width = rect.width.saturating_sub(self.gutter_width()).max(1);
+        if self.view_mode == PaneViewMode::MarkdownPreview {
+            self.sync_active_pane();
+            return;
+        }
+        if self.word_wrap {
+            self.scroll_col = 0;
+            if !self
+                .cursor_screen_pos()
+                .is_some_and(|(row, _)| row < height)
+            {
+                let cols = self.active_wrap_cols();
+                let (line, sub, _) = self.editor.cursor_wrapped_pos(cols);
+                let cursor = (line, sub);
+                let delta = if cursor < (self.scroll_row, self.scroll_subrow) {
+                    0
+                } else {
+                    -((height - 1) as isize)
+                };
+                (self.scroll_row, self.scroll_subrow) = self.editor.tabs()
+                    [self.editor.active_tab_idx()]
+                .offset_visual_rows(cursor, delta, cols);
+            }
+            self.sync_active_pane();
+            return;
+        }
+        self.scroll_subrow = 0;
+        let (cursor_row, cursor_col) = self.editor.cursor_visual_line_col();
         if cursor_row < self.scroll_row {
             self.scroll_row = cursor_row;
         } else if cursor_row >= self.scroll_row + height {
@@ -577,6 +681,9 @@ impl App {
             let active = self.splits.active_pane;
             let active_tab_idx = self.editor.active_tab_idx();
             self.splits.panes[active].tab_idx = active_tab_idx;
+            self.splits.panes[active].scroll_subrow = self.scroll_subrow;
+            self.splits.panes[active].preview_scroll_row = self.preview_scroll_row;
+            self.splits.panes[active].view_mode = self.view_mode;
             self.splits.panes[active].scroll_row = self.scroll_row;
             self.splits.panes[active].scroll_col = self.scroll_col;
             self.splits.panes[active].cursors = self.editor.cursors().clone();
@@ -609,6 +716,9 @@ impl App {
             if pane.tab_idx == tab_idx {
                 pane.tab_idx = active_tab_idx.min(max_tab);
                 pane.scroll_row = 0;
+                pane.scroll_subrow = 0;
+                pane.preview_scroll_row = 0;
+                pane.view_mode = PaneViewMode::Source;
                 pane.scroll_col = 0;
             } else if pane.tab_idx > tab_idx {
                 pane.tab_idx = (pane.tab_idx - 1).min(max_tab);
@@ -624,6 +734,9 @@ impl App {
             let active = self.splits.active_pane;
             let target_tab = self.splits.panes[active].tab_idx;
             self.editor.switch_tab(target_tab);
+            self.scroll_subrow = self.splits.panes[active].scroll_subrow;
+            self.preview_scroll_row = self.splits.panes[active].preview_scroll_row;
+            self.view_mode = self.splits.panes[active].view_mode;
             self.scroll_row = self.splits.panes[active].scroll_row;
             self.scroll_col = self.splits.panes[active].scroll_col;
         }
@@ -722,6 +835,9 @@ impl App {
             .min(self.editor.tabs().len().saturating_sub(1));
         self.splits.panes[target_pane].tab_idx = tab_idx;
         self.editor.switch_tab(tab_idx);
+        self.scroll_subrow = self.splits.panes[target_pane].scroll_subrow;
+        self.preview_scroll_row = self.splits.panes[target_pane].preview_scroll_row;
+        self.view_mode = self.splits.panes[target_pane].view_mode;
         self.scroll_row = self.splits.panes[target_pane].scroll_row;
         self.scroll_col = self.splits.panes[target_pane].scroll_col;
 

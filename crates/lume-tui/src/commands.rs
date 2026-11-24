@@ -176,6 +176,11 @@ pub const COMMANDS: &[CommandItem] = &[
         shortcut: "Ctrl+K Q",
     },
     CommandItem {
+        id: "view.toggle_word_wrap",
+        title: "View: Toggle Word Wrap",
+        shortcut: "Alt+Z",
+    },
+    CommandItem {
         id: "view.toggle_line_numbers",
         title: "View: Toggle Line Numbers",
         shortcut: "",
@@ -604,6 +609,9 @@ impl App {
                         .tab_idx
                         .min(self.editor.tabs().len().saturating_sub(1));
                     self.editor.switch_tab(tab_idx);
+                    self.scroll_subrow = remaining.scroll_subrow;
+                    self.preview_scroll_row = remaining.preview_scroll_row;
+                    self.view_mode = remaining.view_mode;
                     self.scroll_row = remaining.scroll_row;
                     self.scroll_col = remaining.scroll_col;
                     let mut cursors = remaining.cursors;
@@ -612,6 +620,15 @@ impl App {
                     self.set_status("Closed split pane");
                 }
                 return;
+            }
+            "view.toggle_word_wrap" => {
+                self.word_wrap = !self.word_wrap;
+                self.scroll_subrow = 0;
+                self.scroll_col = 0;
+                for p in &mut self.splits.panes {
+                    p.scroll_subrow = 0;
+                    p.scroll_col = 0;
+                }
             }
             "view.toggle_line_numbers" => {
                 self.show_line_numbers = !self.show_line_numbers;
@@ -765,17 +782,39 @@ impl App {
             }
             "motion.left" => self.editor.move_left(false),
             "motion.right" => self.editor.move_right(false),
+            "motion.up" if self.word_wrap => {
+                self.editor.move_up_wrapped(self.active_wrap_cols(), false)
+            }
             "motion.up" => self.editor.move_up(false),
+            "motion.down" if self.word_wrap => self
+                .editor
+                .move_down_wrapped(self.active_wrap_cols(), false),
             "motion.down" => self.editor.move_down(false),
             "motion.word_left" => self.editor.move_word_backward(false),
             "motion.word_right" => self.editor.move_word_end_forward(false),
             "motion.word_forward" => self.editor.move_word_forward(false),
+            "motion.home" if self.word_wrap => self
+                .editor
+                .move_home_wrapped(self.active_wrap_cols(), false),
             "motion.home" => self.editor.move_home(false),
+            "motion.end" if self.word_wrap => {
+                self.editor.move_end_wrapped(self.active_wrap_cols(), false)
+            }
             "motion.end" => self.editor.move_end(false),
+            "motion.page_up" if self.word_wrap => self.editor.move_visual_rows(
+                -(self.pane_rect(self.splits.active_pane).height.max(1) as isize),
+                self.active_wrap_cols(),
+                false,
+            ),
             "motion.page_up" => {
                 let h = self.text_area_height().max(1);
                 self.editor.page_up(h, false);
             }
+            "motion.page_down" if self.word_wrap => self.editor.move_visual_rows(
+                self.pane_rect(self.splits.active_pane).height.max(1) as isize,
+                self.active_wrap_cols(),
+                false,
+            ),
             "motion.page_down" => {
                 let h = self.text_area_height().max(1);
                 self.editor.page_down(h, false);
@@ -784,17 +823,39 @@ impl App {
             "motion.document_end" => self.editor.move_to_end(false),
             "motion.select_left" => self.editor.move_left(true),
             "motion.select_right" => self.editor.move_right(true),
+            "motion.select_up" if self.word_wrap => {
+                self.editor.move_up_wrapped(self.active_wrap_cols(), true)
+            }
             "motion.select_up" => self.editor.move_up(true),
+            "motion.select_down" if self.word_wrap => {
+                self.editor.move_down_wrapped(self.active_wrap_cols(), true)
+            }
             "motion.select_down" => self.editor.move_down(true),
             "motion.select_word_left" => self.editor.move_word_backward(true),
             "motion.select_word_right" => self.editor.move_word_end_forward(true),
             "motion.select_word_forward" => self.editor.move_word_forward(true),
+            "motion.select_home" if self.word_wrap => {
+                self.editor.move_home_wrapped(self.active_wrap_cols(), true)
+            }
             "motion.select_home" => self.editor.move_home(true),
+            "motion.select_end" if self.word_wrap => {
+                self.editor.move_end_wrapped(self.active_wrap_cols(), true)
+            }
             "motion.select_end" => self.editor.move_end(true),
+            "motion.select_page_up" if self.word_wrap => self.editor.move_visual_rows(
+                -(self.pane_rect(self.splits.active_pane).height.max(1) as isize),
+                self.active_wrap_cols(),
+                true,
+            ),
             "motion.select_page_up" => {
                 let h = self.text_area_height().max(1);
                 self.editor.page_up(h, true);
             }
+            "motion.select_page_down" if self.word_wrap => self.editor.move_visual_rows(
+                self.pane_rect(self.splits.active_pane).height.max(1) as isize,
+                self.active_wrap_cols(),
+                true,
+            ),
             "motion.select_page_down" => {
                 let h = self.text_area_height().max(1);
                 self.editor.page_down(h, true);

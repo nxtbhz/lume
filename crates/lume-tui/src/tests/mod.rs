@@ -48,3 +48,4 @@ pub mod split_mouse_tests;
 pub mod split_render_tests;
 pub mod split_sync_tests;
 pub mod vim_tests;
+mod wrap_tests;

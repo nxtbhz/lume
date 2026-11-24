@@ -56,6 +56,7 @@ fn test_mouse_click_switches_split_focus() {
 #[test]
 fn test_mouse_scroll_targets_hovered_pane() {
     let mut app = App::new(None).unwrap();
+    app.word_wrap = false;
     app.explorer.is_visible = false;
     app.terminal_width = 80;
     app.terminal_height = 24;

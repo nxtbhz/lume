@@ -6,9 +6,19 @@ pub enum SplitDirection {
     Horizontal, // Stacked (-)
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PaneViewMode {
+    #[default]
+    Source,
+    MarkdownPreview,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pane {
     pub tab_idx: usize,
+    pub scroll_subrow: usize,
+    pub preview_scroll_row: usize,
+    pub view_mode: PaneViewMode,
     pub scroll_row: usize,
     pub scroll_col: usize,
     pub cursors: CursorSet,
@@ -18,6 +28,9 @@ impl Pane {
     pub fn new(tab_idx: usize, scroll_row: usize, scroll_col: usize, cursors: CursorSet) -> Self {
         Self {
             tab_idx,
+            scroll_subrow: 0,
+            preview_scroll_row: 0,
+            view_mode: PaneViewMode::Source,
             scroll_row,
             scroll_col,
             cursors,

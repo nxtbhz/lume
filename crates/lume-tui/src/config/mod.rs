@@ -52,6 +52,7 @@ pub struct EditorSettings {
     pub smart_unindent: bool,
     pub auto_pairs: bool,
     pub modal: bool,
+    pub word_wrap: bool,
     pub line_numbers: bool,
     pub auto_save: bool,
     pub auto_save_debounce_ms: u64,
@@ -65,6 +66,7 @@ impl Default for EditorSettings {
             smart_unindent: true,
             auto_pairs: true,
             modal: false,
+            word_wrap: true,
             line_numbers: true,
             auto_save: false,
             auto_save_debounce_ms: 1000,
@@ -161,6 +163,7 @@ smart_indent = true
 smart_unindent = true
 auto_pairs = true
 modal = false
+word_wrap = true
 line_numbers = true
 auto_save = false
 auto_save_debounce_ms = 1000
@@ -386,6 +389,7 @@ impl AppConfig {
                         editor.modal = expect_bool(entry, "editor.modal")?;
                         explicit_modal = true;
                     }
+                    "word_wrap" => editor.word_wrap = expect_bool(entry, "editor.word_wrap")?,
                     "line_numbers" => {
                         editor.line_numbers = expect_bool(entry, "editor.line_numbers")?;
                     }

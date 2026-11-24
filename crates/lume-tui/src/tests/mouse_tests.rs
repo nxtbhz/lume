@@ -57,6 +57,7 @@ fn test_app_mouse_tab_name_containing_x_does_not_close() {
 #[test]
 fn test_app_mouse_scroll_preserves_viewport_across_renders() {
     let mut app = App::new(None).unwrap();
+    app.word_wrap = false;
     let content = (1..=100)
         .map(|i| format!("line {}", i))
         .collect::<Vec<_>>()

@@ -341,6 +341,7 @@ fn test_bracketed_paste_renders_tabs_and_controls_as_text() {
 #[test]
 fn test_internal_paste_scrolls_in_terminal_columns() {
     let mut app = App::new(None).unwrap();
+    app.word_wrap = false;
     app.explorer.is_visible = false;
     app.show_line_numbers = false;
     app.terminal_width = 5;

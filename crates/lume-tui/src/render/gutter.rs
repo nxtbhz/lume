@@ -79,3 +79,13 @@ pub fn render_gutter<W: Write>(
     }
     Ok(())
 }
+
+pub fn render_continuation_gutter<W: Write>(writer: &mut W, width: usize) -> std::io::Result<()> {
+    let gutter = format!("{:>width$}", "│ ", width = width);
+    queue!(
+        writer,
+        SetForegroundColor(Color::DarkGrey),
+        Print(fit_text(&gutter, width)),
+        ResetColor
+    )
+}

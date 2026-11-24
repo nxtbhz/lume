@@ -22,6 +22,7 @@ fn render_pane_viewport<W: Write>(
     tab_idx: usize,
     scroll_row: usize,
     scroll_col: usize,
+    scroll_subrow: usize,
     cursors: &CursorSet,
     is_split: bool,
     is_active_pane: bool,
@@ -67,162 +68,151 @@ fn render_pane_viewport<W: Write>(
             None
         };
 
-    for screen_row in 0..rect.height {
-        let buffer_line = scroll_row + screen_row;
-        let term_row = (rect.top + screen_row) as u16;
-        queue!(writer, MoveTo(rect.left as u16, term_row))?;
-
-        let mut printed_cols = 0usize;
-
-        if buffer_line < total_lines {
-            if app.show_line_numbers && gutter_w > 0 {
-                let diff_status = diff_markers
-                    .as_ref()
-                    .and_then(|m| m.get(buffer_line).copied());
-                render_gutter(writer, buffer_line, total_lines, gutter_w, diff_status)?;
-                printed_cols += gutter_w;
-            }
-
-            if text_w > 0 {
-                let tab_buffer = &app.editor.tabs()[tab_idx].buffer;
-                if let Some(line) = tab_buffer.line(buffer_line) {
-                    let line_start_byte = tab_buffer.line_to_byte(buffer_line);
-                    let line_text = std::borrow::Cow::from(line);
-                    let line_str = line_text.trim_end_matches(LINE_BREAKS);
-
-                    let line_end_byte = line_start_byte + line_str.len();
-                    let start_tok = tokens.partition_point(|t| t.end_byte <= line_start_byte);
-                    let rest_tokens = &tokens[start_tok..];
-                    let end_tok = rest_tokens.partition_point(|t| t.start_byte < line_end_byte);
-                    let line_tokens = &rest_tokens[..end_tok];
-
-                    let line_matches: Vec<(usize, usize)> = if let Some(ref search) =
-                        app.search_state
-                    {
-                        if !search.query.is_empty() {
-                            lume_core::search::find_matches_in_str(line_str, &search.query, false)
-                                .into_iter()
-                                .map(|(s, e)| (line_start_byte + s, line_start_byte + e))
-                                .collect()
-                        } else {
-                            Vec::new()
-                        }
-                    } else {
-                        Vec::new()
-                    };
-
-                    let viewport_end = scroll_col.saturating_add(text_w);
-                    let mut run_text = String::new();
-                    let mut run_style: Option<(Option<Color>, Color)> = None;
-
-                    for grapheme in visual::graphemes(line_str) {
-                        let start_col = grapheme.column;
-                        if start_col >= viewport_end {
-                            break;
-                        }
-                        let visible_cols = (start_col + grapheme.width)
-                            .min(viewport_end)
-                            .saturating_sub(start_col.max(scroll_col));
-                        if visible_cols == 0 {
-                            continue;
-                        }
-                        let char_byte = line_start_byte + grapheme.byte_offset;
-                        let char_end = char_byte + grapheme.text.len();
-
-                        let is_selected = selection_range
+    let mut run_text = String::with_capacity(text_w);
+    let mut line_matches = Vec::new();
+    let mut token_index = tokens.partition_point(|t| {
+        t.end_byte
+            <= app.editor.tabs()[tab_idx]
+                .buffer
+                .line_to_byte(scroll_row.min(total_lines))
+    });
+    let mut screen_row = 0;
+    let buffer = &app.editor.tabs()[tab_idx].buffer;
+    for buffer_line in scroll_row..total_lines {
+        let line_text = std::borrow::Cow::from(buffer.rope().line(buffer_line));
+        let line_str = line_text.trim_end_matches(LINE_BREAKS);
+        let line_start_byte = buffer.line_to_byte(buffer_line);
+        line_matches.clear();
+        if let Some(search) = &app.search_state {
+            lume_core::search::for_each_match_in_str(line_str, &search.query, false, |a, b| {
+                line_matches.push((line_start_byte + a, line_start_byte + b))
+            });
+        }
+        let mut match_index = 0;
+        let mut wrapped = visual::wrap_segments(line_str, visual::wrap_cols_for_viewport(text_w))
+            .enumerate()
+            .skip(if buffer_line == scroll_row {
+                scroll_subrow
+            } else {
+                0
+            });
+        let mut whole = Some((
+            0,
+            visual::WrapSegment {
+                start_byte: 0,
+                end_byte: line_str.len(),
+                col_width: 0,
+            },
+        ));
+        while let Some((sub, seg)) = if app.word_wrap {
+            wrapped.next()
+        } else {
+            whole.take()
+        } {
+            queue!(
+                writer,
+                MoveTo(rect.left as u16, (rect.top + screen_row) as u16)
+            )?;
+            let mut printed_cols = gutter_w;
+            if gutter_w > 0 {
+                if sub == 0 {
+                    render_gutter(
+                        writer,
+                        buffer_line,
+                        total_lines,
+                        gutter_w,
+                        diff_markers
                             .as_ref()
-                            .is_some_and(|r| r.start < char_end && char_byte < r.end);
-                        let search_match = line_matches
-                            .iter()
-                            .find(|(s, e)| *s < char_end && char_byte < *e);
-                        let is_bracket_match =
-                            bracket_pair.is_some_and(|(b1, b2)| char_byte == b1 || char_byte == b2);
+                            .and_then(|m| m.get(buffer_line).copied()),
+                    )?;
+                } else {
+                    super::gutter::render_continuation_gutter(writer, gutter_w)?;
+                }
+            }
+            run_text.clear();
+            let viewport_end = scroll_col.saturating_add(text_w);
 
-                        let style: (Option<Color>, Color) =
-                            if let (Some(ref _search), Some(&(ms, me))) =
-                                (&app.search_state, search_match)
-                            {
-                                let is_active = primary_cursor.range() == (ms..me);
-                                if is_active {
-                                    (
-                                        Some(Color::Rgb {
-                                            r: 215,
-                                            g: 155,
-                                            b: 0,
-                                        }),
-                                        Color::Black,
-                                    )
-                                } else {
-                                    (
-                                        Some(Color::Rgb {
-                                            r: 120,
-                                            g: 90,
-                                            b: 20,
-                                        }),
-                                        Color::White,
-                                    )
-                                }
-                            } else if is_selected {
-                                (Some(Color::DarkBlue), Color::White)
-                            } else if is_bracket_match {
-                                (
-                                    Some(Color::Rgb {
-                                        r: 70,
-                                        g: 70,
-                                        b: 110,
-                                    }),
-                                    Color::White,
-                                )
-                            } else {
-                                let token_type = line_tokens
-                                    .binary_search_by(|t| {
-                                        if char_byte < t.start_byte {
-                                            std::cmp::Ordering::Greater
-                                        } else if char_byte >= t.end_byte {
-                                            std::cmp::Ordering::Less
-                                        } else {
-                                            std::cmp::Ordering::Equal
-                                        }
-                                    })
-                                    .ok()
-                                    .map(|idx| line_tokens[idx].token_type);
+            let mut run_style: Option<(Option<Color>, Color)> = None;
 
-                                let fg = match token_type {
-                                    Some(TokenType::Keyword) => Color::Cyan,
-                                    Some(TokenType::Function) => Color::Blue,
-                                    Some(TokenType::Type) => Color::Yellow,
-                                    Some(TokenType::String) => Color::Green,
-                                    Some(TokenType::Number) => Color::Magenta,
-                                    Some(TokenType::Comment) => Color::DarkGrey,
-                                    Some(TokenType::Macro) => Color::Red,
-                                    _ => Color::Reset,
-                                };
-                                (None, fg)
-                            };
+            for grapheme in visual::graphemes(&line_str[seg.start_byte..seg.end_byte]) {
+                let start_col = grapheme.column;
+                if start_col >= viewport_end {
+                    break;
+                }
+                let visible_cols = (start_col + grapheme.width)
+                    .min(viewport_end)
+                    .saturating_sub(start_col.max(scroll_col));
+                if visible_cols == 0 {
+                    continue;
+                }
+                let char_byte = line_start_byte + seg.start_byte + grapheme.byte_offset;
+                let char_end = char_byte + grapheme.text.len();
 
-                        if run_style != Some(style) {
-                            if let Some((prev_bg, prev_fg)) = run_style {
-                                if let Some(bg) = prev_bg {
-                                    queue!(writer, SetBackgroundColor(bg))?;
-                                }
-                                queue!(
-                                    writer,
-                                    SetForegroundColor(prev_fg),
-                                    Print(&run_text),
-                                    ResetColor
-                                )?;
-                                run_text.clear();
-                            }
-                            run_style = Some(style);
-                        }
-                        if visible_cols == grapheme.width {
-                            run_text.push_str(grapheme.display_text());
-                        } else {
-                            run_text.extend(std::iter::repeat_n(' ', visible_cols));
-                        }
-                        printed_cols += visible_cols;
+                let is_selected = selection_range
+                    .as_ref()
+                    .is_some_and(|r| r.start < char_end && char_byte < r.end);
+                while line_matches
+                    .get(match_index)
+                    .is_some_and(|&(_, end)| end <= char_byte)
+                {
+                    match_index += 1;
+                }
+                let search_match = line_matches
+                    .get(match_index)
+                    .filter(|&&(start, _)| start < char_end);
+                let is_bracket_match =
+                    bracket_pair.is_some_and(|(b1, b2)| char_byte == b1 || char_byte == b2);
+
+                let style: (Option<Color>, Color) = if let (Some(ref _search), Some(&(ms, me))) =
+                    (&app.search_state, search_match)
+                {
+                    let is_active = primary_cursor.range() == (ms..me);
+                    if is_active {
+                        (
+                            Some(Color::Rgb {
+                                r: 215,
+                                g: 155,
+                                b: 0,
+                            }),
+                            Color::Black,
+                        )
+                    } else {
+                        (
+                            Some(Color::Rgb {
+                                r: 120,
+                                g: 90,
+                                b: 20,
+                            }),
+                            Color::White,
+                        )
                     }
+                } else if is_selected {
+                    (Some(Color::DarkBlue), Color::White)
+                } else if is_bracket_match {
+                    (
+                        Some(Color::Rgb {
+                            r: 70,
+                            g: 70,
+                            b: 110,
+                        }),
+                        Color::White,
+                    )
+                } else {
+                    let token_type = token_at_byte(&tokens, &mut token_index, char_byte);
+                    let fg = match token_type {
+                        Some(TokenType::Keyword) => Color::Cyan,
+                        Some(TokenType::Function) => Color::Blue,
+                        Some(TokenType::Type) => Color::Yellow,
+                        Some(TokenType::String) => Color::Green,
+                        Some(TokenType::Number) => Color::Magenta,
+                        Some(TokenType::Comment) => Color::DarkGrey,
+                        Some(TokenType::Macro) => Color::Red,
+                        _ => Color::Reset,
+                    };
+                    (None, fg)
+                };
 
+                if run_style != Some(style) {
                     if let Some((prev_bg, prev_fg)) = run_style {
                         if let Some(bg) = prev_bg {
                             queue!(writer, SetBackgroundColor(bg))?;
@@ -233,24 +223,73 @@ fn render_pane_viewport<W: Write>(
                             Print(&run_text),
                             ResetColor
                         )?;
+                        run_text.clear();
                     }
+                    run_style = Some(style);
                 }
+                if visible_cols == grapheme.width {
+                    run_text.push_str(grapheme.display_text());
+                } else {
+                    run_text.extend(std::iter::repeat_n(' ', visible_cols));
+                }
+                printed_cols += visible_cols;
             }
-        } else if app.show_line_numbers && gutter_w > 0 {
-            render_gutter(writer, buffer_line, total_lines, gutter_w, None)?;
-            printed_cols += gutter_w;
-        }
 
-        if is_split {
-            let pad = rect.width.saturating_sub(printed_cols);
-            if pad > 0 {
-                queue!(writer, Print(" ".repeat(pad)))?;
+            if let Some((prev_bg, prev_fg)) = run_style {
+                if let Some(bg) = prev_bg {
+                    queue!(writer, SetBackgroundColor(bg))?;
+                }
+                queue!(
+                    writer,
+                    SetForegroundColor(prev_fg),
+                    Print(&run_text),
+                    ResetColor
+                )?;
             }
-        } else if printed_cols < rect.width {
+            finish_row(writer, rect.width, printed_cols, is_split)?;
+            screen_row += 1;
+            if screen_row == rect.height {
+                return Ok(());
+            }
+        }
+    }
+    for row in screen_row..rect.height {
+        queue!(writer, MoveTo(rect.left as u16, (rect.top + row) as u16))?;
+        if gutter_w > 0 {
+            render_gutter(writer, total_lines, total_lines, gutter_w, None)?;
+        }
+        finish_row(writer, rect.width, gutter_w, is_split)?;
+    }
+    Ok(())
+}
+
+fn token_at_byte(
+    tokens: &[lume_syntax::HighlightToken],
+    index: &mut usize,
+    byte: usize,
+) -> Option<TokenType> {
+    while tokens.get(*index).is_some_and(|t| t.end_byte <= byte) {
+        *index += 1;
+    }
+    tokens
+        .get(*index)
+        .filter(|t| t.start_byte <= byte)
+        .map(|t| t.token_type)
+}
+
+fn finish_row<W: Write>(
+    writer: &mut W,
+    width: usize,
+    printed: usize,
+    split: bool,
+) -> std::io::Result<()> {
+    if printed < width {
+        if split {
+            queue!(writer, Print(" ".repeat(width - printed)))?;
+        } else {
             queue!(writer, Clear(ClearType::UntilNewLine))?;
         }
     }
-
     Ok(())
 }
 
@@ -284,6 +323,7 @@ pub fn render_editor_viewport<W: Write>(
             active_tab_idx,
             scroll_row,
             scroll_col,
+            app.scroll_subrow,
             &cursors,
             false,
             true,
@@ -304,6 +344,7 @@ pub fn render_editor_viewport<W: Write>(
         p0.tab_idx,
         p0.scroll_row,
         p0.scroll_col,
+        p0.scroll_subrow,
         &p0.cursors,
         true,
         active_pane == 0,
@@ -346,6 +387,7 @@ pub fn render_editor_viewport<W: Write>(
             p1.tab_idx,
             p1.scroll_row,
             p1.scroll_col,
+            p1.scroll_subrow,
             &p1.cursors,
             true,
             active_pane == 1,

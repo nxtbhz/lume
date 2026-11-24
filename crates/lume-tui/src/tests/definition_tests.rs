@@ -705,6 +705,7 @@ fn definition_ctrl_click_uses_clicked_pane_and_text_position() {
         ..CliTargets::default()
     })
     .unwrap();
+    app.word_wrap = false;
     app.explorer.is_visible = false;
     app.terminal_width = 100;
     app.terminal_height = 24;
